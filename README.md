@@ -1,6 +1,6 @@
 # SMC Visualizer Pro — архитектурное ТЗ v2.0
 
-> **Статус:** разработка, alpha v0.4.0. Дата ревизии: 2026-10-06.
+> **Статус:** разработка, alpha v0.4.1. Дата ревизии: 2026-10-06.
 > **Платформа:** TradingView · Pine Script v6 · indicator (v1.x) → strategy + автоматизация через внешний шлюз (v2.0+).
 > **Источник требований:** исходное ТЗ v1 — [`docs/00-source-tz-v1.md`](docs/00-source-tz-v1.md).
 
@@ -11,10 +11,16 @@
 | 0.1.0 | Ядро, структура, ликвидность, зоны, контекст, визуальный слой, Ribbon, Dashboard, алерты | Компилируется и работает в TradingView |
 | 0.2.0 | История на всём видимом графике, архив объектов, настройка Visibility, цвета сессий, подписи вне свечей | Замечания пользователя учтены в 0.3.0 |
 | 0.3.0 | HTF Feed (P5), равномерная разметка всего видимого графика, видимость сессий, подписи в правой колонке | Собрана, синтаксис проверен офлайн, ждёт проверки в TradingView |
-| **0.4.0** | Сетапы Sweep Reversal и Continuation, скоринг и грейды, Entry/SL/TP, композиция на графике, алерты сетапов (P7–P8) | Собрана, синтаксис проверен офлайн, ждёт проверки в TradingView |
+| 0.4.0 | Сетапы Sweep Reversal и Continuation, скоринг и грейды, Entry/SL/TP, композиция на графике, алерты сетапов (P7–P8) | Не компилируется в TradingView: «Pine compilation was timed out» — заменена 0.4.1 |
+| **0.4.1** | Два индикатора из одних исходников (ADR-13): **SMC Visualizer Pro** и **SMC Pro · Setups**; оптимизация по профайлеру; подпись настроек `cfg` | Собрана, синтаксис проверен офлайн, ждёт проверки в TradingView |
 | 0.5.0 | Алерты и webhook JSON (P9), Setup Path и Inspect (P10) | План |
 
-**Быстрый старт:** скопируйте `dist/SMC_Visualizer_Pro.pine` в Pine Editor → Add to chart. Чек-лист проверки — [`tests/README.md`](tests/README.md). Как устроен код — [`DEVELOPMENT.md`](DEVELOPMENT.md). Изменения — [`CHANGELOG.md`](CHANGELOG.md).
+**Быстрый старт (с v0.4.1 — два индикатора):**
+1. `dist/SMC_Visualizer_Pro.pine` → Pine Editor → New indicator → вставить → **Add to chart**. Структура, ликвидность, зоны, HTF, история, Ribbon, Dashboard, алерты структуры.
+2. `dist/SMC_Pro_Setups.pine` → ещё один новый индикатор → **Add to chart**. Сетапы Entry / SL / TP, скоринг, панель Setup, алерты сетапов.
+3. Настройки движков (структура, ликвидность, OB, FVG, диапазон, сессии, HTF, Advanced) в обоих должны совпадать: число **`cfg`** в панели Setup и в Dashboard SMC Visualizer Pro (Expanded → строка MODE) одинаковое. Иначе сетапы строятся по другой разметке, чем нарисована.
+
+Почему два: один скрипт v0.4.0 перестал укладываться в лимит времени компиляции TradingView (подробно — ADR-13 в [`docs/02-architecture.md`](docs/02-architecture.md#413-реестр-архитектурных-решений-adr)). Чек-лист проверки — [`tests/README.md`](tests/README.md). Как устроен код — [`DEVELOPMENT.md`](DEVELOPMENT.md). Изменения — [`CHANGELOG.md`](CHANGELOG.md).
 
 ## Зачем этот пакет документов
 
@@ -78,6 +84,7 @@
 | Сетап — единая композиция Entry / SL / TP с карточкой `LONG · A+ 8.4 · Sweep → CHoCH → FVG → OTE` | §14.8 |
 | Webhook: схема `smcvp.event` v1, один батч на бар, `msg_id`, `cfg_hash`, SNAPSHOT | §12 |
 | Модульные исходники → монолитная сборка (IP invite-only) | §4.11, ADR-04 |
+| Два индикатора из одних исходников: SMC Visualizer Pro + SMC Pro · Setups, бюджет компиляции ≤ 34 тыс. токенов, подпись настроек `cfg` | §4.11, ADR-13 |
 
 ## Объём и сроки v1.0
 

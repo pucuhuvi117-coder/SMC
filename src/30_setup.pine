@@ -72,12 +72,13 @@ f_pickPoi(Setup s, array<Zone> zs) =>
     int nLeg = 0
     if span > 0
         for z in zs
-            bool legOb = z.kind == ZK_OB and z.brkId == s.shiftBrkId
-            bool legFvg = z.kind == ZK_FVG and z.bar >= s.legBar
-            if z.tf == TF_CHART and z.dir == d and z.state == ZS_FRESH and (legOb or legFvg)
-                nLeg += 1
-                if d == 1 ? z.top <= eq : z.bottom >= eq
-                    cand.push(z)
+            if z.tf == TF_CHART and z.dir == d and z.state == ZS_FRESH
+                bool legOb = z.kind == ZK_OB and z.brkId == s.shiftBrkId
+                bool legFvg = z.kind == ZK_FVG and z.bar >= s.legBar
+                if legOb or legFvg
+                    nLeg += 1
+                    if d == 1 ? z.top <= eq : z.bottom >= eq
+                        cand.push(z)
     int m = cand.size()
     Zone best = na
     Zone alt = na
@@ -105,8 +106,8 @@ f_pickPoi(Setup s, array<Zone> zs) =>
                                 cBot := math.max(a.bottom, o.bottom)
         // 2 · single zones: FVG in OTE → OB in OTE → closest to EQ; the runner-up is the alt POI
         if not combo
-            float p1 = -10.0
-            float p2 = -10.0
+            float p1 = -1.0e10
+            float p2 = -1.0e10
             for a in cand
                 bool inOte = a.top >= bLo and a.bottom <= bHi
                 float p = (inOte ? (a.kind == ZK_FVG ? 3.0 : 2.0) : 1.0) - math.abs((d == 1 ? a.top : a.bottom) - eq) / span
@@ -231,6 +232,7 @@ f_htfAgainst(Setup s, array<Zone> zs, float pxTo) =>
     for z in zs
         if z.tf != TF_CHART and z.dir == -s.dir and z.state == ZS_FRESH and z.top >= lo and z.bottom <= hi
             hit := true
+            break
     hit
 
 f_fac(string acc, string name, float pts) =>
@@ -290,6 +292,7 @@ f_setScore(Setup s, Ctx x, array<Zone> zs) =>
     for z in zs
         if z.tf != TF_CHART and z.dir == d and z.state < ZS_FILLED and z.top >= s.entryBot and z.bottom <= s.entryTop
             htfPoi := true
+            break
     if htfPoi
         float hp = agg ? 1.0 : 0.5
         gP += hp
@@ -399,10 +402,15 @@ f_setAdvance(Core c, Setup s, StructState sw, StructState si, array<Liq> lv, arr
     int d = s.dir
     Brk opp = d == 1 ? sw.newDn : sw.newUp
     bool oppChoch = not na(opp) and opp.kind == BK_CHOCH
+    // A terminal transition before the entry is recorded here and applied once at the end. The stages below are
+    // mutually exclusive on s.state, which still holds its pre-end value, so no later stage can run after it.
+    int endSt = 0
+    string endWhy = ""
     // 1 · SWEEP_SEEN: wait for the shift against the sweep
     if s.state == SS_SWEEP
         if d == 1 ? close < s.sweepExt : close > s.sweepExt
-            f_setEnd(c, s, SS_EXPIRED, "SWEEP_FAILED")
+            endSt := SS_EXPIRED
+            endWhy := "SWEEP_FAILED"
         else
             if d == 1 ? low < s.sweepExt : high > s.sweepExt
                 s.sweepExt := d == 1 ? low : high
@@ -411,7 +419,8 @@ f_setAdvance(Core c, Setup s, StructState sw, StructState si, array<Liq> lv, arr
                 f_setShift(s, b)
                 s.kz := kzNow
             else if bar_index - s.sweepBar >= i_nShift
-                f_setEnd(c, s, SS_EXPIRED, "NO_SHIFT_IN_WINDOW")
+                endSt := SS_EXPIRED
+                endWhy := "NO_SHIFT_IN_WINDOW"
     // 2 · SHIFTED: the range follows the leg until a POI in the right half appears
     if s.state == SS_SHIFTED
         if bar_index > s.shiftBar
@@ -427,18 +436,23 @@ f_setAdvance(Core c, Setup s, StructState sw, StructState si, array<Liq> lv, arr
             f_setChain(s)
             f_setEmit(c, s, EV_SETUP_FORMING, close, s.model, SS_FORMING, na, s.chain)
         else if (d == 1 ? close < invLvl : close > invLvl) or oppChoch
-            f_setEnd(c, s, SS_EXPIRED, oppChoch ? "OPPOSITE_CHOCH" : "CLOSE_BEYOND")
+            endSt := SS_EXPIRED
+            endWhy := oppChoch ? "OPPOSITE_CHOCH" : "CLOSE_BEYOND"
         else if bar_index - s.shiftBar >= i_expiry
-            f_setEnd(c, s, SS_EXPIRED, pc == 0 ? "NO_POI" : d == 1 ? "POI_IN_PREMIUM" : "POI_IN_DISCOUNT")
+            endSt := SS_EXPIRED
+            endWhy := pc == 0 ? "NO_POI" : d == 1 ? "POI_IN_PREMIUM" : "POI_IN_DISCOUNT"
     // 3 · FORMING: build the plan, score it, promote to READY (checks are repeated every bar)
     if s.state == SS_FORMING
         float invLvl = s.model == SM_REV ? s.sweepExt : d == 1 ? s.rLo : s.rHi
         if d == 1 ? close < invLvl : close > invLvl
-            f_setEnd(c, s, SS_INVALID, "CLOSE_BEYOND " + f_px(invLvl))
+            endSt := SS_INVALID
+            endWhy := "CLOSE_BEYOND " + f_px(invLvl)
         else if oppChoch
-            f_setEnd(c, s, SS_INVALID, "OPPOSITE_CHOCH")
+            endSt := SS_INVALID
+            endWhy := "OPPOSITE_CHOCH"
         else if f_poiBroken(s)
-            f_setEnd(c, s, SS_INVALID, "POI_BROKEN")
+            endSt := SS_INVALID
+            endWhy := "POI_BROKEN"
         else
             string fail = f_setPlan(s, lv)
             if fail == ""
@@ -451,14 +465,14 @@ f_setAdvance(Core c, Setup s, StructState sw, StructState si, array<Liq> lv, arr
                     fail := "GRADE_LOW"
             s.why := fail
             if fail == ""
-                f_setChain(s)
                 s.state := SS_READY
                 s.stageBar := bar_index
                 s.readyBar := bar_index
                 s.readyT := time
                 f_setEmit(c, s, EV_SETUP_READY, s.entry, s.score, s.rrFinal, s.grade, s.chain)
             else if bar_index - s.stageBar >= i_expiry
-                f_setEnd(c, s, SS_EXPIRED, fail)
+                endSt := SS_EXPIRED
+                endWhy := fail
     // 4 · READY: wait for the entry from the next bar on; cancel rules before it (§10.2)
     if s.state == SS_READY and bar_index > s.readyBar
         if d == 1 ? low <= s.entry : high >= s.entry
@@ -468,17 +482,23 @@ f_setAdvance(Core c, Setup s, StructState sw, StructState si, array<Liq> lv, arr
             s.trigT := time
             f_setEmit(c, s, EV_SETUP_TRIGGERED, s.entry, s.score, s.rrFinal, s.grade)
         else if d == 1 ? close < s.inv : close > s.inv
-            f_setEnd(c, s, SS_INVALID, "CLOSE_BEYOND " + f_px(s.inv))
+            endSt := SS_INVALID
+            endWhy := "CLOSE_BEYOND " + f_px(s.inv)
         else if oppChoch
-            f_setEnd(c, s, SS_INVALID, "OPPOSITE_CHOCH")
+            endSt := SS_INVALID
+            endWhy := "OPPOSITE_CHOCH"
         else if f_poiBroken(s)
-            f_setEnd(c, s, SS_INVALID, "POI_BROKEN")
+            endSt := SS_INVALID
+            endWhy := "POI_BROKEN"
         else if d == 1 ? high >= s.tp1 : low <= s.tp1
-            f_setEnd(c, s, SS_MISSED, "TP1_BEFORE_ENTRY")
+            endSt := SS_MISSED
+            endWhy := "TP1_BEFORE_ENTRY"
         else if bar_index - s.readyBar >= i_expiry
-            f_setEnd(c, s, SS_EXPIRED, "EXPIRY")
+            endSt := SS_EXPIRED
+            endWhy := "EXPIRY"
         else if i_reqKz and s.kz and not kzNow
-            f_setEnd(c, s, SS_EXPIRED, "SESSION_END")
+            endSt := SS_EXPIRED
+            endWhy := "SESSION_END"
     // 5 · ACTIVE: SL first when SL and TP fall on one bar (§20.3); BE after TP1 (option)
     if f_setActive(s)
         bool hitSl = d == 1 ? low <= s.sl : high >= s.sl
@@ -512,67 +532,73 @@ f_setAdvance(Core c, Setup s, StructState sw, StructState si, array<Liq> lv, arr
                 s.endT := time
             else if s.tpHit > 0
                 s.state := s.tpHit == 1 ? SS_TP1 : SS_TP2
+    if endSt != 0
+        f_setEnd(c, s, endSt, endWhy)
     true
 
-// ── One confirmed-bar step: advance live setups, then open new ones from this bar's events
+// ── One confirmed-bar step: advance live setups, then open new ones from this bar's events.
+// One loop and ONE f_setAdvance call site, in the original order: j in [0, n) live setups newest first
+// (advance, continuation bonus, retire); j in [n, n + nb) the sweeps of this bar (SWEEP_REVERSAL);
+// then four break candidates (CONTINUATION). A new setup is advanced at once, before the next candidate.
+// nb is read before the loop: events emitted while advancing are SETUP_* and never a sweep.
 f_setupStep(Core c, array<Setup> ss, array<Setup> arch, StructState sw, StructState si, array<Liq> lv, array<Zone> zs, Ctx x, bool kzNow) =>
     int n = ss.size()
-    if n > 0
-        for i = n - 1 to 0
-            Setup s = ss.get(i)
-            f_setAdvance(c, s, sw, si, lv, zs, x, kzNow)
-            // continuation bonus: internal liquidity swept on the pullback before the entry
-            if s.model == SM_CONT and (s.state == SS_FORMING or s.state == SS_READY)
-                if f_evFlag(c, EV_LIQ_SWEPT, s.dir, na)
-                    s.contSweep := true
-            if s.state >= SS_WIN
-                Setup done = ss.remove(i)
-                if not na(done.poi)
-                    arch.push(done)
-                    if arch.size() > SETUP_ARCH_CAP
-                        arch.shift()
+    int nb = i_smRev ? c.barEvents.size() : 0
     bool htfRel = x.htfOk and not x.htfLow
     bool cons = i_setPreset == SetPreset.conservative
-    // SWEEP_REVERSAL: every sweep on this bar opens a hypothesis in the reaction direction
-    if i_smRev
-        int nb = c.barEvents.size()
-        if nb > 0
-            for k = 0 to nb - 1
-                Event e = c.barEvents.get(k)
-                if e.typ == EV_LIQ_SWEPT
-                    int d = e.dir
-                    bool htfOkDir = not (htfRel and x.htfTrend == -d and cons) and (not i_reqHtf or (htfRel and x.htfTrend == d))
-                    Liq lq = na
-                    for l in lv
-                        if l.id == e.ref
-                            lq := l
-                    if htfOkDir and not na(lq)
-                        Setup s = f_setOpen(c, ss, arch, SM_REV, d)
-                        if not na(s)
-                            s.sweepEvId := e.id
-                            s.sweptLiqId := lq.id
-                            s.sweepExt := nz(lq.ext, d == 1 ? low : high)
-                            s.sweepMajor := lq.major or lq.tf != TF_CHART
-                            s.sweepTag := f_htfPrefix(lq.tf) + (d == 1 ? "SSL" : "BSL") + (lq.kind == LK_SWING ? (lq.touches >= 2 ? " ≡" + str.tostring(lq.touches) : "") : " " + lq.tag)
-                            s.sweepBar := bar_index
-                            // a shift on the sweep bar itself counts (sweep and CHoCH on one bar, §12.3)
-                            f_setAdvance(c, s, sw, si, lv, zs, x, kzNow)
-    // CONTINUATION: BOS with the swing trend and a real leg (swing, or internal inside a swing trend)
-    if i_smCont
-        for k = 0 to 3
+    for j = 0 to n + nb + 3
+        bool isLive = j < n
+        Setup s = na
+        if isLive
+            s := ss.get(n - 1 - j)
+        else if j < n + nb
+            // SWEEP_REVERSAL: every sweep on this bar opens a hypothesis in the reaction direction
+            Event e = c.barEvents.get(j - n)
+            if e.typ == EV_LIQ_SWEPT
+                int d = e.dir
+                bool htfOkDir = not (htfRel and x.htfTrend == -d and cons) and (not i_reqHtf or (htfRel and x.htfTrend == d))
+                Liq lq = na
+                for l in lv
+                    if l.id == e.ref
+                        lq := l
+                if htfOkDir and not na(lq)
+                    s := f_setOpen(c, ss, arch, SM_REV, d)
+                    if not na(s)
+                        s.sweepEvId := e.id
+                        s.sweptLiqId := lq.id
+                        s.sweepExt := nz(lq.ext, d == 1 ? low : high)
+                        s.sweepMajor := lq.major or lq.tf != TF_CHART
+                        s.sweepTag := f_htfPrefix(lq.tf) + (d == 1 ? "SSL" : "BSL") + (lq.kind == LK_SWING ? (lq.touches >= 2 ? " ≡" + str.tostring(lq.touches) : "") : " " + lq.tag)
+                        s.sweepBar := bar_index
+        else if i_smCont
+            // CONTINUATION: BOS with the swing trend and a real leg (swing, or internal inside a swing trend)
+            int k = j - n - nb
             Brk b = k == 0 ? sw.newUp : k == 1 ? sw.newDn : k == 2 ? si.newUp : si.newDn
             if not na(b)
                 int d = b.dir
                 bool okB = b.kind == BK_BOS and nz(b.disp) >= i_shiftDisp and sw.trend == d and not b.shadowed
                 bool htfOkDir = (not cons or (htfRel and x.htfTrend == d)) and (not i_reqHtf or (htfRel and x.htfTrend == d))
                 if okB and htfOkDir and (not i_reqKz or kzNow)
-                    Setup s = f_setOpen(c, ss, arch, SM_CONT, d)
+                    s := f_setOpen(c, ss, arch, SM_CONT, d)
                     if not na(s)
                         s.sweepExt := b.legExt0
                         s.sweepBar := bar_index
                         f_setShift(s, b)
                         s.kz := kzNow
-                        f_setAdvance(c, s, sw, si, lv, zs, x, kzNow)
+        if not na(s)
+            // a shift on the sweep bar itself counts (sweep and CHoCH on one bar, §12.3)
+            f_setAdvance(c, s, sw, si, lv, zs, x, kzNow)
+            if isLive
+                // continuation bonus: internal liquidity swept on the pullback before the entry
+                if s.model == SM_CONT and (s.state == SS_FORMING or s.state == SS_READY)
+                    if f_evFlag(c, EV_LIQ_SWEPT, s.dir, na)
+                        s.contSweep := true
+                if s.state >= SS_WIN
+                    Setup done = ss.remove(n - 1 - j)
+                    if not na(done.poi)
+                        arch.push(done)
+                        if arch.size() > SETUP_ARCH_CAP
+                            arch.shift()
     true
 
 // Focus setup for the Ribbon, the Dashboard and the price-scale markers: the most advanced

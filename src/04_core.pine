@@ -89,8 +89,6 @@ f_emit(Core c, int typ, int dir, float price, int ref, int cause, int tier, floa
             c.lastHtfStruct := e
     if typ == EV_LIQ_SWEPT or (typ == EV_LIQ_TAKEN and v3 == 1)
         c.lastLiq := e
-    if i_log
-        log.info(str.format("EV|{0}|{1}|{2}|tf={3}|dir={4}|px={5}|ref={6}|cause={7}|tier={8}|v1={9}|v2={10}|v3={11}|{12}", e.id, f_evName(typ), f_timeStr(time), tf, dir, f_px(price), ref, cause, tier, v1, v2, v3, s1))
     e
 
 // True if the current bar emitted an event of this type (dir 0 = any; v1Eq na = any; tf -1 = any)
@@ -101,3 +99,9 @@ f_evFlag(Core c, int typ, int dir, float v1Eq, int tf = -1) =>
             found := true
             break
     found
+
+// Debug journal (i_log): one line per event of the bar, in emission order. Called once per confirmed bar.
+f_logEvents(Core c) =>
+    for e in c.barEvents
+        log.info(str.format("EV|{0}|{1}|{2}|tf={3}|dir={4}|px={5}|ref={6}|cause={7}|tier={8}|v1={9}|v2={10}|v3={11}|{12}", e.id, f_evName(e.typ), f_timeStr(e.t), e.tf, e.dir, f_px(e.price), e.ref, e.cause, e.tier, e.v1, e.v2, e.v3, e.s1))
+    true

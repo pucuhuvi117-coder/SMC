@@ -22,9 +22,9 @@ f_setPlanText(Setup s) =>
 // Full explanation (§9.7) for the card tooltip
 f_setTip(Setup s) =>
     string head = f_sideName(s.dir) + " · " + str.upper(f_modelName(s.model)) + (na(s.readyBar) ? " · FORMING" : " · " + f_gradeName(s.grade) + " " + str.tostring(s.score, "0.0") + "/10")
-    string body = s.chainMid + (s.factors != "" ? "\n" + s.factors : "\n")
+    string detail = s.chainMid + (s.factors != "" ? "\n" + s.factors : "\n")
     string plan = na(s.readyBar) ? (s.why != "" ? "waiting: " + f_reasonText(s.why) : "waiting for a valid plan") : f_setPlanText(s)
-    head + "\n" + body + plan + "\nANALYTICAL · not executed. The score measures how complete the setup is, not a win probability."
+    head + "\n" + detail + plan + "\nANALYTICAL · not executed. The score measures how complete the setup is, not a win probability."
 
 f_card(LabelPool p, int x, float y, string txt, color tc, color bg, string sz, string tip) =>
     label lb = p.takeLabel()

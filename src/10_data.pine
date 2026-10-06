@@ -36,9 +36,10 @@ float plI = ta.pivotlow(low, inLen, inLen)
 
 // Sessions clock (A.15): tracked on intraday charts up to 1H
 bool sesOk = timeframe.isintraday and timeframe.in_seconds() <= 3600
-int tAsia = time(timeframe.period, specAsia, sesTz)
-int tLon = time(timeframe.period, specLon, sesTz)
-int tNy = time(timeframe.period, specNy, sesTz)
+// The session clock is read only where it can be used: not on charts above 1H and not for switched-off sessions
+int tAsia = sesOk and i_asiaOn ? time(timeframe.period, specAsia, sesTz) : na
+int tLon = sesOk and i_lonOn ? time(timeframe.period, specLon, sesTz) : na
+int tNy = sesOk and i_nyOn ? time(timeframe.period, specNy, sesTz) : na
 bool inAsia = sesOk and i_asiaOn and not na(tAsia)
 bool inLon = sesOk and i_lonOn and not na(tLon)
 bool inNy = sesOk and i_nyOn and not na(tNy)

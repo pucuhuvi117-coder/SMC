@@ -1,7 +1,17 @@
 //@version=6
 // ═══════════════════════════════════════════════════════════════════════════════
+//#if setups
+//  SMC Pro · Setups · build {{VERSION}} · {{DATE}}
+//  Companion of SMC Visualizer Pro: same engines and settings, plus the setup engine (ADR-13).
+//#else
 //  SMC Visualizer Pro · build {{VERSION}} · {{DATE}}
+//  Structure, liquidity, zones and context. Setups live in the companion "SMC Pro · Setups" (ADR-13).
+//#endif
 //  Generated from /src by build/build.py. Do not edit dist/ by hand.
 //  Architecture: docs/02-architecture.md · Detectors: docs/appendix-a-detection-spec.md
 // ═══════════════════════════════════════════════════════════════════════════════
+//#if setups
+indicator("SMC Pro · Setups", shorttitle = "SMC Setups", overlay = true, max_boxes_count = 100, max_lines_count = 200, max_labels_count = 100)
+//#else
 indicator("SMC Visualizer Pro", shorttitle = "SMC Pro", overlay = true, max_boxes_count = 500, max_lines_count = 500, max_labels_count = 500)
+//#endif

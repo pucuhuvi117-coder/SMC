@@ -98,14 +98,17 @@ f_ctxBuild(Ctx x, StructState sw, StructState si, Range r, float pd, array<Liq> 
         left := sa.endT
     x.sessCode := code
     x.minsLeft := na(left) ? na : math.max(0, int(math.round((left - time_close) / 60000.0)))
-    Liq nb = na
-    Liq ns = na
-    for l in lv
-        if (l.state == LS_ACTIVE or l.state == LS_PENDING) and l.major
-            if l.side == 1 and l.price > close and (na(nb) or l.price < nb.price)
-                nb := l
-            if l.side == -1 and l.price < close and (na(ns) or l.price > ns.price)
-                ns := l
-    x.nextBsl := nb
-    x.nextSsl := ns
+    // nextBsl / nextSsl are read only by the Dashboard TARGET rows, which show the last confirmed state:
+    // scan the registry on the last confirmed historical bar and on realtime bars instead of on all history
+    if barstate.islastconfirmedhistory or barstate.isrealtime or barstate.islast
+        Liq nb = na
+        Liq ns = na
+        for l in lv
+            if (l.state == LS_ACTIVE or l.state == LS_PENDING) and l.major
+                if l.side == 1 and l.price > close and (na(nb) or l.price < nb.price)
+                    nb := l
+                if l.side == -1 and l.price < close and (na(ns) or l.price > ns.price)
+                    ns := l
+        x.nextBsl := nb
+        x.nextSsl := ns
     true

@@ -1,6 +1,8 @@
 // ═══ 90 · MAIN PIPELINE ═════════════════════════════════════════════════════════
 // Fixed engine order per bar (docs §4.5): Data → Structure → Liquidity → Zones → Context → Setup.
-// Logic runs only on confirmed bars; visuals run only on the last bar.
+// Logic runs only on confirmed bars; visuals run only on the last bar. The engine part is shared
+// by both indicators (ADR-13); the Setup step, markers and setup visuals exist in SMC Pro · Setups,
+// the history renderers and Ribbon / Dashboard / Debug in SMC Visualizer Pro.
 
 // ── Logical state (registry: live sets + archives of finished objects)
 var Core core = Core.new(barEvents = array.new<Event>(), history = array.new<Event>(), histCap = mc.debug ? 1000 : 300)
@@ -18,8 +20,10 @@ var Sess sNy = Sess.new("New York AM killzone", "NY KZ", "NYH", "NYL", specNy)
 var array<SessBox> sessHist = array.new<SessBox>()
 var array<Brk> htfBreaks = array.new<Brk>()
 var Ctx ctx = Ctx.new()
+//#if setups
 var array<Setup> setups = array.new<Setup>()
 var array<Setup> setupArch = array.new<Setup>()
+//#endif
 var float confClose = na
 // Per-bar close and ATR, so a scrolled-back view can rank objects at any past bar
 var array<float> histClose = array.new<float>()
@@ -53,12 +57,11 @@ if barstate.isconfirmed
         core.lastDispDnBar := bar_index
     // Sessions (feed session high/low key levels)
     if sesOk
-        f_sessStep(core, sAsia, inAsia, liqs, sessHist)
-        f_sessStep(core, sLon, inLon, liqs, sessHist)
-        f_sessStep(core, sNy, inNy, liqs, sessHist)
+        for q = 0 to 2
+            f_sessStep(core, q == 0 ? sAsia : q == 1 ? sLon : sNy, q == 0 ? inAsia : q == 1 ? inLon : inNy, liqs, sessHist)
     // Structure: internal, then swing
-    f_structStep(core, stI, phI, plI)
-    f_structStep(core, stS, phS, plS)
+    for q = 0 to 1
+        f_structStep(core, q == 0 ? stI : stS, q == 0 ? phI : phS, q == 0 ? plI : plS)
     Brk iUp = stI.newUp
     Brk iDn = stI.newDn
     if not na(iUp) and not na(stS.newUp)
@@ -107,25 +110,25 @@ if barstate.isconfirmed
         f_fvgNew(core, zones, 1)
     if fvgDn
         f_fvgNew(core, zones, -1)
-    if not na(stS.newUp)
-        f_obFromBreak(core, zones, stS.newUp, stS)
-    if not na(stS.newDn)
-        f_obFromBreak(core, zones, stS.newDn, stS)
-    if i_obInternal
-        if not na(iUp)
-            if not iUp.shadowed
-                f_obFromBreak(core, zones, iUp, stS)
-        if not na(iDn)
-            if not iDn.shadowed
-                f_obFromBreak(core, zones, iDn, stS)
+    // order: swing up, swing down, then internal up, internal down (internal only if enabled and not shadowed by a swing break)
+    for q = 0 to 3
+        Brk obB = q == 0 ? stS.newUp : q == 1 ? stS.newDn : q == 2 ? iUp : iDn
+        if not na(obB) and (q < 2 or i_obInternal)
+            if not obB.shadowed
+                f_obFromBreak(core, zones, obB, stS)
     // Context
     f_rangeStep(core, rng, stS, rangeArch)
     float pdNow = f_pdStep(core, rng)
     f_ctxBuild(ctx, stS, stI, rng, pdNow, liqs, sAsia, sLon, sNy, htfOk, htfLowHist, hBias)
+    //#if setups
     // Setups (P7): never during warm-up (AC-08)
     if i_setups and core.warm
         f_setupStep(core, setups, setupArch, stS, stI, liqs, zones, ctx, sLon.on or sNy.on)
+    //#endif
+    if i_log
+        f_logEvents(core)
 
+//#if setups
 // Price-scale markers (§14.9): entry, SL and TP1 of the focus setup once it has a plan
 var float pmE = na
 var float pmSL = na
@@ -139,6 +142,7 @@ if barstate.isconfirmed
 plot(i_priceMarkers ? pmE : na, "Setup entry", color = C_SIG, display = display.price_scale, editable = false)
 plot(i_priceMarkers ? pmSL : na, "Setup SL", color = C_BEAR, display = display.price_scale, editable = false)
 plot(i_priceMarkers ? pmTP : na, "Setup TP1", color = C_BULL, display = display.price_scale, editable = false)
+//#endif
 
 // ── Visible range (§15 AC-M16): bar indices of the leftmost and rightmost visible bars.
 // Using these built-ins makes the script recalculate when the chart is scrolled or zoomed.
@@ -152,6 +156,7 @@ if not na(vpRT) and time <= vpRT
     vpBarR := bar_index
 
 // ── Visual pools (created once; creation order = z-order, §13.13)
+//#if core
 var BoxPool pWash = BoxPool.new(array.new<box>())
 var BoxPool pRngBox = BoxPool.new(array.new<box>())
 var BoxPool pZone = BoxPool.new(array.new<box>())
@@ -160,10 +165,6 @@ var LinePool pMid = LinePool.new(array.new<line>())
 var LinePool pLvl = LinePool.new(array.new<line>())
 var LinePool pStr = LinePool.new(array.new<line>())
 var LabelPool pLab = LabelPool.new(array.new<label>())
-// setup composition pools come last, so compositions sit above zones and levels
-var BoxPool pSetBox = BoxPool.new(array.new<box>())
-var LinePool pSetLine = LinePool.new(array.new<line>())
-var LabelPool pSetLab = LabelPool.new(array.new<label>())
 if barstate.isfirst
     f_fillBoxPool(pWash, mc.poolWash)
     f_fillBoxPool(pRngBox, 6)
@@ -173,20 +174,31 @@ if barstate.isfirst
     f_fillLinePool(pLvl, mc.poolLvl)
     f_fillLinePool(pStr, mc.poolStr)
     f_fillLabelPool(pLab, mc.poolLab)
+//#else
+var BoxPool pSetBox = BoxPool.new(array.new<box>())
+var LinePool pSetLine = LinePool.new(array.new<line>())
+var LabelPool pSetLab = LabelPool.new(array.new<label>())
+if barstate.isfirst
     f_fillBoxPool(pSetBox, i_setups ? mc.poolSetBox : 0)
     f_fillLinePool(pSetLine, i_setups ? mc.poolSetLine : 0)
     f_fillLabelPool(pSetLab, i_setups ? mc.poolSetLab : 0)
+//#endif
 
 // ── Panels
-var table tRibbon = vRibbon ? table.new(f_pos(i_ribbonPos), 7, 1, bgcolor = color.new(C_PANEL, F_PANEL), frame_color = C_PBORDER, frame_width = 1, border_color = C_PBORDER, border_width = 1) : na
+//#if core
+var table tRibbon = vRibbon ? table.new(f_pos(i_ribbonPos), 6, 1, bgcolor = color.new(C_PANEL, F_PANEL), frame_color = C_PBORDER, frame_width = 1, border_color = C_PBORDER, border_width = 1) : na
 var table tDash = vDash ? table.new(f_pos(i_dashPos), 2, DASH_ROWS, bgcolor = color.new(C_PANEL, F_PANEL), frame_color = C_PBORDER, frame_width = 1, border_width = 0) : na
 var table tDebug = mc.debug and i_debugTable ? table.new(position.middle_left, 2, 16, bgcolor = color.new(C_PANEL, F_PANEL), frame_color = C_PBORDER, frame_width = 1, border_width = 0) : na
+//#else
+var table tSetup = i_setups and i_setPanel ? table.new(f_pos(i_setPanelPos), 2, SET_PANEL_ROWS, bgcolor = color.new(C_PANEL, F_PANEL), frame_color = C_PBORDER, frame_width = 1, border_width = 0) : na
+//#endif
 
 // ── Render pass (last bar only; call order decides who gets the label budget)
 if barstate.islast
     float px = na(confClose) ? close : confClose
-    int rightT = time + i_rightExt * barMs
     View view = f_buildView(vpBarL, vpBarR, histClose, histAtr, histBase, px)
+    //#if core
+    int rightT = time + i_rightExt * barMs
     pWash.used := 0
     pRngBox.used := 0
     pZone.used := 0
@@ -195,9 +207,6 @@ if barstate.islast
     pLvl.used := 0
     pStr.used := 0
     pLab.used := 0
-    pSetBox.used := 0
-    pSetLine.used := 0
-    pSetLab.used := 0
     array<Tag> tags = array.new<Tag>()
     f_renderZones(view, pZone, pMid, tags, zones, zoneArch, rightT, histClose, histAtr, histBase)
     f_renderLevels(view, pLvl, tags, liqs, liqArch, rightT)
@@ -216,7 +225,6 @@ if barstate.islast
         f_renderBreaks(view, pStr, pLab, stI.breaks, view.vp ? mc.internalWin : mc.internalEvents, true)
     if vSwingLabels
         f_renderSwings(view, pLab, stS, view.vp ? mc.swingLabelWin : 30)
-    f_renderSetups(view, pSetBox, pSetLine, pSetLab, setups, setupArch)
     f_finishBoxes(pWash)
     f_finishBoxes(pRngBox)
     f_finishBoxes(pZone)
@@ -225,10 +233,17 @@ if barstate.islast
     f_finishLines(pLvl)
     f_finishLines(pStr)
     f_finishLabels(pLab)
+    f_ribbon(tRibbon, ctx, core, view.live)
+    f_dashboard(tDash, ctx, core, stI, rng, view.live)
+    f_debugTable(tDebug, view, core, zones, zoneArch, liqs, liqArch, pZone, pWash, pRngBox, pMid, pLvl, pStr, pRngLine, pLab)
+    //#else
+    pSetBox.used := 0
+    pSetLine.used := 0
+    pSetLab.used := 0
+    f_renderSetups(view, pSetBox, pSetLine, pSetLab, setups, setupArch)
     f_finishBoxes(pSetBox)
     f_finishLines(pSetLine)
     f_finishLabels(pSetLab)
     Setup focus = i_setups ? f_focusSetup(setups, 0) : na
-    f_ribbon(tRibbon, ctx, core, view.live, focus)
-    f_dashboard(tDash, ctx, core, stI, rng, view.live, focus)
-    f_debugTable(tDebug, view, core, zones, zoneArch, liqs, liqArch, pZone, pWash, pRngBox, pMid, pLvl, pStr, pRngLine, pLab, setups, setupArch, pSetBox, pSetLine, pSetLab)
+    f_setupPanel(tSetup, ctx, core, view.live, focus)
+    //#endif

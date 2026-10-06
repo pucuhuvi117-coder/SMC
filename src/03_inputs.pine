@@ -20,9 +20,12 @@ i_visibility = input.enum(Visibility.standard, "Visibility", tooltip = "Shifts t
 i_palette = input.enum(PaletteOpt.standard, "Palette", tooltip = "Color-blind safe replaces green/red with blue/orange (Okabe–Ito). Direction is always duplicated by arrows and position.", group = G_PROF, display = display.none)
 
 // ── 1 · Visual experience
+//#if core
 i_histView = input.enum(HistView.visible, "History view", tooltip = "Visible range: draws structure, zones, levels and sweeps for the part of the chart on screen, with even density across it. Scroll or zoom out to see history.\nRecent only: focuses on the latest bars (v0.1 behaviour).\nThe script recalculates when the visible range changes.", group = G_VIS, display = display.none)
 i_rightExt = input.int(5, "Extend right (bars)", minval = 3, maxval = 100, tooltip = "How far active zones and levels extend to the right of the last candle.", group = G_VIS, display = display.none)
+//#endif
 i_verb = input.enum(Verbosity.brief, "Label verbosity", tooltip = "Icons: arrows only for minor objects. Short: BOS↑, SSL ✕. Full: adds prices and displacement (shown in Analysis/Debug).", group = G_VIS, display = display.none)
+//#if core
 i_smartLabels = input.bool(true, "Smart Labels", tooltip = "Merge right-edge tags that are too close to read separately.", group = G_VIS, display = display.none)
 i_autoHide = input.bool(true, "Auto Hide Old Objects", inline = "hist", group = G_VIS, display = display.none)
 i_histDepth = input.int(1500, "depth (bars)", minval = 100, maxval = 20000, inline = "hist", tooltip = "Objects born earlier than this many bars ago are not drawn (active key levels excepted). Capped by the display mode.", group = G_VIS, display = display.none)
@@ -35,8 +38,16 @@ i_ribbonPos = input.string("Bottom Center", "", options = ["Bottom Center", "Top
 i_showDash = input.bool(true, "Show Dashboard", inline = "dash", group = G_VIS, display = display.none)
 i_dashPos = input.string("Top Right", "", options = ["Top Right", "Top Left", "Bottom Right", "Bottom Left"], inline = "dash", tooltip = "Hidden in Clean mode: the Ribbon carries the context there. Use Custom mode to combine a clean chart with the Dashboard.", group = G_VIS, display = display.none)
 i_dashSize = input.string("Compact", "Dashboard size", options = ["Compact", "Expanded"], group = G_VIS, display = display.none)
+//#else
+// Setups indicator: no zones or history are drawn; display filters read by the shared engines are fixed
+i_smartLabels = true
+i_reduceMinorFvg = true
+i_reduceMinorOb = true
+//#endif
 i_panelSize = input.enum(PanelSize.normal, "Panel text size", tooltip = "Text size of the Context Ribbon and the Dashboard.", group = G_VIS, display = display.none)
+//#if core
 i_showGauge = input.bool(true, "Show Range Gauge", tooltip = "Vertical scale right of price: dealing range, EQ, OTE and the current price location.", group = G_VIS, display = display.none)
+//#endif
 
 // ── 2 · Structure
 i_preset = input.enum(StructPreset.intraday, "Structure preset", tooltip = "Pivot lengths swing/internal: Scalp 5/2, Intraday 10/3, Swing 20/5. Manual uses the lengths below.", group = G_STR, display = display.none)
@@ -45,9 +56,11 @@ i_inLen = input.int(3, "", minval = 2, maxval = 20, inline = "len", tooltip = "M
 i_brk = input.enum(BreakSrc.onClose, "Break confirmation", tooltip = "Close: a candle must close beyond the swing (default). Wick: any trade beyond counts.", group = G_STR, display = display.none)
 i_eqTol = input.float(0.10, "Equal H/L tolerance (×ATR)", minval = 0.0, maxval = 1.0, step = 0.01, group = G_STR, display = display.none)
 i_kLeg = input.float(1.5, "MSS min leg displacement (×ATR)", minval = 0.5, maxval = 5.0, step = 0.1, tooltip = "A CHoCH becomes MSS when its leg moved at least this much and left a fair value gap.", group = G_STR, display = display.none)
+//#if core
 i_showSwingStruct = input.bool(true, "Swing BOS/CHoCH", inline = "sd", group = G_STR, display = display.none)
 i_showInternal = input.bool(true, "Internal", inline = "sd", group = G_STR, display = display.none)
 i_showSwingLabels = input.bool(true, "HH/HL labels", inline = "sd", tooltip = "Internal structure and swing labels are shown in Analysis, Debug and Custom modes.", group = G_STR, display = display.none)
+//#endif
 
 // ── 3 · Liquidity
 i_maxSweepPen = input.float(1.0, "Max sweep penetration (×ATR)", minval = 0.1, maxval = 5.0, step = 0.1, tooltip = "Deeper runs beyond a level count as TAKEN (price accepted), not as a sweep.", group = G_LIQ, display = display.none)
@@ -60,10 +73,12 @@ i_tsWindow = input.int(10, "CHoCH within", minval = 3, maxval = 50, inline = "ts
 i_keyDay = input.bool(true, "PDH/PDL", inline = "key", group = G_LIQ, display = display.none)
 i_keyWeek = input.bool(true, "PWH/PWL", inline = "key", group = G_LIQ, display = display.none)
 i_keySess = input.bool(true, "Session H/L", inline = "key", tooltip = "Key levels: previous day/week high-low (intraday charts) and Asia/London/NY session high-low.", group = G_LIQ, display = display.none)
+//#if core
 i_showLevels = input.bool(true, "Levels", inline = "ld", group = G_LIQ, display = display.none)
 i_showSweeps = input.bool(true, "Sweeps", inline = "ld", group = G_LIQ, display = display.none)
 i_showSwept = input.bool(true, "Swept history", inline = "ld", group = G_LIQ, display = display.none)
 i_levelsPerSide = input.int(2, "Major levels per side", minval = 1, maxval = 10, group = G_LIQ, display = display.none)
+//#endif
 
 // ── 4 · Order blocks
 i_obZone = input.enum(ObZone.bodyWick, "OB zone", tooltip = "Full: high–low of the OB candle. Body+Wick: body edge to the far wick. Body: body only. Oversized zones fall back to Body.", group = G_OB, display = display.none)
@@ -76,9 +91,11 @@ i_volMult = input.float(1.5, "× SMA20", minval = 1.0, maxval = 5.0, step = 0.1,
 i_mitRule = input.enum(MitRule.half, "Mitigation rule", tooltip = "When an order block counts as mitigated: first touch, 50% (mean threshold) or full depth.", group = G_OB, display = display.none)
 i_breakers = input.bool(true, "Breaker & Mitigation Block", tooltip = "A broken OB flips polarity: Breaker if its leg swept external liquidity, Mitigation Block otherwise.", group = G_OB, display = display.none)
 i_obInternal = input.bool(false, "OB from internal breaks", group = G_OB, display = display.none)
+//#if core
 i_showOB = input.bool(true, "Order Blocks", inline = "obv", group = G_OB, display = display.none)
 i_obMid = input.bool(true, "Midline", inline = "obv", group = G_OB, display = display.none)
 i_showMitigated = input.bool(true, "Mitigated", inline = "obv", group = G_OB, display = display.none)
+//#endif
 
 // ── 5 · Fair value gaps
 i_fvgMin = input.float(0.30, "Min size (×ATR)", minval = 0.0, maxval = 2.0, step = 0.05, group = G_FVG, display = display.none)
@@ -86,14 +103,18 @@ i_fillRule = input.enum(FillRule.wick, "Fill rule", group = G_FVG, display = dis
 i_ignoreGaps = input.bool(true, "Ignore session gaps", tooltip = "Skip gaps created by overnight or weekend openings on intraday charts.", group = G_FVG, display = display.none)
 i_fvgMidDir = input.bool(true, "Require middle candle direction", group = G_FVG, display = display.none)
 i_ifvg = input.bool(true, "Inversion (IFVG)", tooltip = "A gap closed through by a body flips polarity.", group = G_FVG, display = display.none)
+//#if core
 i_showFVG = input.bool(true, "FVG", inline = "fv", group = G_FVG, display = display.none)
 i_fvgCE = input.bool(true, "CE line", inline = "fv", group = G_FVG, display = display.none)
 i_shrink = input.bool(true, "Shrink on fill", inline = "fv", group = G_FVG, display = display.none)
+//#endif
 
 // ── 6 · Dealing range
 i_oteLo = input.float(0.62, "OTE band", minval = 0.5, maxval = 0.95, step = 0.005, inline = "ote", group = G_RNG, display = display.none)
 i_oteHi = input.float(0.79, "–", minval = 0.5, maxval = 0.95, step = 0.005, inline = "ote", tooltip = "Retracement band of the dealing range; 0.705 is drawn as the sweet spot.", group = G_RNG, display = display.none)
+//#if core
 i_pdView = input.enum(PdView.eqOte, "PD view", tooltip = "Off / Equilibrium only / Equilibrium + OTE band / full premium-discount wash.", group = G_RNG, display = display.none)
+//#endif
 
 // ── 7 · Sessions
 i_tz = input.string("America/New_York", "Session timezone", tooltip = "IANA timezone. Daylight saving time is handled automatically.", group = G_SES, display = display.none)
@@ -104,24 +125,37 @@ i_lonOn = input.bool(true, "London KZ", inline = "lo", group = G_SES, display = 
 i_lonS = input.session("0200-0500", "", inline = "lo", group = G_SES, display = display.none)
 i_nyOn = input.bool(true, "NY AM KZ", inline = "ny", group = G_SES, display = display.none)
 i_nyS = input.session("0700-1000", "", inline = "ny", group = G_SES, display = display.none)
+//#if core
 i_sesFill = input.int(80, "Session fill transparency", minval = 0, maxval = 100, tooltip = "0 = solid, 100 = invisible. Borders and names always stay clearly visible.", group = G_SES, display = display.none)
 i_sesCustom = input.bool(false, "Custom colors", inline = "sc", group = G_SES, display = display.none)
 i_sesColAsia = input.color(#B39DDB, "Asia", inline = "sc", group = G_SES, display = display.none)
 i_sesColLon = input.color(#4FC3F7, "London", inline = "sc", group = G_SES, display = display.none)
 i_sesColNy = input.color(#FFB74D, "NY", inline = "sc", tooltip = "Off: colors adapt to the chart theme (light tints on dark charts, deeper tones on light charts) and contrast with blue backgrounds. On: these colors are used as they are.", group = G_SES, display = display.none)
 i_sesView = input.enum(SesView.rangeBox, "Session view", tooltip = "Sessions are tracked on intraday charts up to 1 hour.", group = G_SES, display = display.none)
+//#else
+i_sesCustom = false
+i_sesColAsia = #B39DDB
+i_sesColLon = #4FC3F7
+i_sesColNy = #FFB74D
+//#endif
 
 // ── 8 · Multi-timeframe (HTF Feed, docs §4.7)
 i_htfMode = input.enum(HtfMode.auto, "Higher timeframe", inline = "htf", tooltip = "Auto: ≤1m→15m, ≤5m→1H, ≤1H→4H, ≤4H→D, D→W, W→M. Manual: the timeframe on the right. Only confirmed HTF bars are used (no repaint).", group = G_MTF, display = display.none)
 i_htfTf = input.timeframe("240", "", inline = "htf", group = G_MTF, display = display.none)
 i_htfLen = input.int(5, "HTF swing length", minval = 2, maxval = 20, tooltip = "Pivot length on the higher timeframe.", group = G_MTF, display = display.none)
 i_minHtfBars = input.int(100, "Min HTF bars for bias", minval = 20, maxval = 1000, tooltip = "With fewer confirmed higher-timeframe bars the HTF bias is treated as unknown (A.16) and the Ribbon shows ⚠.", group = G_MTF, display = display.none)
+//#if core
 i_htfStruct = input.bool(true, "HTF structure", inline = "hv", group = G_MTF, display = display.none)
 i_htfOB = input.bool(true, "HTF OB", inline = "hv", group = G_MTF, display = display.none)
 i_htfFVG = input.bool(false, "HTF FVG", inline = "hv", group = G_MTF, display = display.none)
+//#else
+i_htfOB = true
+i_htfFVG = false
+//#endif
 i_htfLiq = input.bool(true, "HTF liquidity", inline = "hv", group = G_MTF, display = display.none)
 
 // ── 9 · Setups (analytical: drawn and alerted, never executed)
+//#if setups
 i_setups = input.bool(true, "Setup engine", tooltip = "Sweep Reversal and Continuation setups with Entry / SL / TP, confluence score and grade. Analytical only: no orders are placed.", group = G_SET, display = display.none)
 i_smRev = input.bool(true, "Sweep Reversal", inline = "sm", group = G_SET, display = display.none)
 i_smCont = input.bool(true, "Continuation", inline = "sm", tooltip = "Sweep Reversal: liquidity sweep → CHoCH/MSS against it → FVG/OB in discount (long) / premium (short). Continuation: BOS with the trend → FVG/OB in discount / premium.", group = G_SET, display = display.none)
@@ -145,13 +179,18 @@ i_beAfterTp1 = input.bool(true, "Move SL to entry after TP1", group = G_SET, dis
 i_showPlan = input.bool(true, "Show Entry/SL/TP", inline = "sp", group = G_SET, display = display.none)
 i_priceMarkers = input.bool(false, "Price-scale markers", inline = "sp", tooltip = "Entry, SL and TP1 of the focus setup as values on the price scale.", group = G_SET, display = display.none)
 i_alertGrade = input.enum(GradeOpt.a, "Alert min grade", tooltip = "Setup READY alerts fire only from this grade.", group = G_SET, display = display.none)
+i_setPanel = input.bool(true, "Setup panel", inline = "spn", group = G_SET, display = display.none)
+i_setPanelPos = input.string("Bottom Right", "", options = ["Bottom Right", "Top Right", "Bottom Left", "Top Left", "Bottom Center"], inline = "spn", tooltip = "Setup, quality, plan and invalidation of the focus setup, and the settings signature cfg (must match SMC Visualizer Pro).", group = G_SET, display = display.none)
+//#endif
 
 // ── 11 · Advanced
 i_atrLen = input.int(14, "ATR length", minval = 5, maxval = 200, tooltip = "Volatility unit for every threshold expressed in ×ATR.", group = G_ADV, display = display.none)
 i_kBody = input.float(1.0, "Displacement body ×ATR", minval = 0.3, maxval = 3.0, step = 0.1, inline = "disp", group = G_ADV, display = display.none)
 i_minBodyRatio = input.float(0.6, "body/range", minval = 0.3, maxval = 0.95, step = 0.05, inline = "disp", group = G_ADV, display = display.none)
+//#if core
 i_showIds = input.bool(true, "Debug: IDs, states and R on objects", group = G_ADV, display = display.none)
 i_debugTable = input.bool(true, "Debug: budget table", group = G_ADV, display = display.none)
+//#endif
 i_log = input.bool(false, "Debug: log events to Pine Logs", tooltip = "One CSV-like line per event. Used for golden-journal regression (docs §27.5).", group = G_ADV, display = display.none)
 
 // ── Effective configuration (Config Resolver, docs §4.4)
@@ -181,6 +220,54 @@ specAsia = f_sesSpec("2000-0000", "0000-0600", i_asiaS)
 specLon = f_sesSpec("0200-0500", "0700-1000", i_lonS)
 specNy = f_sesSpec("0700-1000", "1200-1500", i_nyS)
 
+// Engine settings signature (ADR-13): both indicators show it; equal numbers mean the engines run
+// with the same settings, so the setups are built on the structure the main indicator draws.
+// Session specs and the timezone enter by length only.
+f_sigAdd(int acc, float v) =>
+    (acc * 31 + int(math.round(nz(v) * 1000))) % 999983
+
+f_cfgSig() =>
+    int a = 7
+    a := f_sigAdd(a, swLen)
+    a := f_sigAdd(a, inLen)
+    a := f_sigAdd(a, i_brk == BreakSrc.wick ? 1 : 0)
+    a := f_sigAdd(a, i_eqTol)
+    a := f_sigAdd(a, i_kLeg)
+    a := f_sigAdd(a, i_maxSweepPen)
+    a := f_sigAdd(a, i_reclaimBars)
+    a := f_sigAdd(a, i_oldAge)
+    a := f_sigAdd(a, i_liqTol)
+    a := f_sigAdd(a, i_eqMaxBars)
+    a := f_sigAdd(a, i_tsMinAge)
+    a := f_sigAdd(a, i_tsWindow)
+    a := f_sigAdd(a, (i_keyDay ? 1 : 0) + (i_keyWeek ? 2 : 0) + (i_keySess ? 4 : 0))
+    a := f_sigAdd(a, i_obZone == ObZone.full ? 0 : i_obZone == ObZone.bodyWick ? 1 : 2)
+    a := f_sigAdd(a, (i_obReqDisp ? 1 : 0) + (i_volFilter ? 2 : 0) + (i_breakers ? 4 : 0) + (i_obInternal ? 8 : 0))
+    a := f_sigAdd(a, i_obDispMin)
+    a := f_sigAdd(a, obMin)
+    a := f_sigAdd(a, obMax)
+    a := f_sigAdd(a, i_volMult)
+    a := f_sigAdd(a, i_mitRule == MitRule.touch ? 0 : i_mitRule == MitRule.half ? 1 : 2)
+    a := f_sigAdd(a, i_fvgMin)
+    a := f_sigAdd(a, i_fillRule == FillRule.wick ? 0 : i_fillRule == FillRule.closeEdge ? 1 : 2)
+    a := f_sigAdd(a, (i_ignoreGaps ? 1 : 0) + (i_fvgMidDir ? 2 : 0) + (i_ifvg ? 4 : 0))
+    a := f_sigAdd(a, oteLo)
+    a := f_sigAdd(a, oteHi)
+    a := f_sigAdd(a, i_sesPreset == SesPreset.ictNy ? 0 : i_sesPreset == SesPreset.originalUtc ? 1 : 2)
+    a := f_sigAdd(a, (i_asiaOn ? 1 : 0) + (i_lonOn ? 2 : 0) + (i_nyOn ? 4 : 0))
+    a := f_sigAdd(a, str.length(sesTz) * 10000 + str.length(specAsia) * 100 + str.length(specLon) * 10 + str.length(specNy))
+    a := f_sigAdd(a, i_htfMode == HtfMode.auto ? 0 : i_htfMode == HtfMode.manual ? 1 : 2)
+    a := f_sigAdd(a, timeframe.in_seconds(i_htfTf) / 60)
+    a := f_sigAdd(a, i_htfLen)
+    a := f_sigAdd(a, i_minHtfBars)
+    a := f_sigAdd(a, i_htfLiq ? 1 : 0)
+    a := f_sigAdd(a, i_atrLen)
+    a := f_sigAdd(a, i_kBody)
+    a := f_sigAdd(a, i_minBodyRatio)
+    a
+
+var int cfgSig = f_cfgSig()
+
 // Display mode ceilings (docs §15.3, §19.2). Recent view uses structEvents / sweptShow / sessions;
 // visible-range view uses the *Win caps, split evenly across time segments so the whole
 // screen is covered. Pool sizes keep every mode within the 500-object limits.
@@ -195,14 +282,16 @@ f_modeCfg(DisplayMode m) =>
 var ModeCfg mc = f_modeCfg(i_mode)
 
 // Effective visibility: mode ceiling AND user toggle (ADR-09)
+verbLevel = switch i_verb
+    Verbosity.icons => 0
+    Verbosity.brief => 1
+    => 3
+labelLvl = math.min(verbLevel, mc.labelLevel)
+//#if core
 pdLevelUser = switch i_pdView
     PdView.off => 0
     PdView.eqOnly => 1
     PdView.eqOte => 2
-    => 3
-verbLevel = switch i_verb
-    Verbosity.icons => 0
-    Verbosity.brief => 1
     => 3
 vSwingStruct = i_showSwingStruct and mc.structEvents > 0
 vInternal = i_showInternal and mc.internalEvents > 0
@@ -223,7 +312,15 @@ nZonesSide = mc.debug ? mc.zonesPerSide : math.min(i_zonesPerSide, mc.zonesPerSi
 nMajorSide = mc.debug ? mc.majorPerSide : math.min(i_levelsPerSide, mc.majorPerSide)
 nMinorSide = i_reduceMinorLiq ? math.min(1, mc.minorPerSide) : mc.minorPerSide
 histDepth = i_autoHide ? math.min(i_histDepth, mc.hist) : mc.hist
-labelLvl = math.min(verbLevel, mc.labelLevel)
+//#else
+// Setups indicator: zone filters for the (unused) history archive, and the visible-range view
+// for past setups in Analysis / Debug
+vOB = true
+vFVG = true
+vHistory = true
+histDepth = mc.hist
+//#endif
+//#if setups
 // Setups: READY threshold by preset (§9.6), display floor = mode floor and user choice (ADR-09)
 f_gradeOf(GradeOpt g) =>
     switch g
@@ -235,6 +332,7 @@ setReadyGrade = i_setPreset == SetPreset.conservative ? GR_A : i_setPreset == Se
 setShowGrade = mc.debug ? GR_C : math.max(mc.gradeFloor, f_gradeOf(i_minGrade))
 setAlertGrade = f_gradeOf(i_alertGrade)
 vPlan = i_setups and i_showPlan
+//#endif
 panelSz = switch i_panelSize
     PanelSize.small => size.small
     PanelSize.large => size.large
