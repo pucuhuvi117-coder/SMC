@@ -143,7 +143,7 @@ f_obLife(Core c, array<Zone> zs, Zone z) =>
         if z.kind == ZK_OB and i_breakers
             bool swept = z.lvl == LV_SWG or (not na(z.extRef) and not na(z.legExt) and (bull ? z.legExt > z.extRef : z.legExt < z.extRef))
             int nk = swept ? ZK_BB : ZK_MB
-            Zone nz = Zone.new(id = f_nextId(c), kind = nk, dir = -z.dir, state = ZS_FRESH, top = z.top, bottom = z.bottom, bar = z.bar, t = z.t, born = bar_index, bornT = time, strength = z.strength * 0.9, disp = z.disp, parent = z.id, brkId = z.brkId, lvl = z.lvl, tf = z.tf)
+            Zone nz = Zone.new(id = f_nextId(c), kind = nk, dir = -z.dir, state = ZS_FRESH, top = z.top, bottom = z.bottom, bar = z.bar, t = z.t, born = bar_index, bornT = time, strength = z.strength * 0.9, disp = z.disp, parent = z.id, brkId = z.brkId, lvl = z.lvl, tf = z.tf, hBorn = hLastBars)
             zs.push(nz)
             z.state := ZS_CONVERTED
             f_emit(c, EV_ZONE_CONVERTED, nz.dir, (nz.top + nz.bottom) / 2, nz.id, be.id, 2, nk, z.id, na, f_kindTag(nk), z.tf)
@@ -189,7 +189,7 @@ f_fvgLife(Core c, array<Zone> zs, Zone z) =>
             Event fe = f_zoneEvent(c, z, EV_ZONE_FILLED, 3)
             bool inv = i_ifvg and (bull ? close < z.bottom : close > z.top)
             if inv
-                Zone nz = Zone.new(id = f_nextId(c), kind = ZK_IFVG, dir = -z.dir, state = ZS_FRESH, top = z.top, bottom = z.bottom, bar = z.bar, t = z.t, born = bar_index, bornT = time, strength = z.strength, disp = z.disp, parent = z.id, lvl = z.lvl, tf = z.tf)
+                Zone nz = Zone.new(id = f_nextId(c), kind = ZK_IFVG, dir = -z.dir, state = ZS_FRESH, top = z.top, bottom = z.bottom, bar = z.bar, t = z.t, born = bar_index, bornT = time, strength = z.strength, disp = z.disp, parent = z.id, lvl = z.lvl, tf = z.tf, hBorn = hLastBars)
                 zs.push(nz)
                 z.state := ZS_CONVERTED
                 f_emit(c, EV_ZONE_CONVERTED, nz.dir, (nz.top + nz.bottom) / 2, nz.id, fe.id, 2, ZK_IFVG, z.id, na, "IFVG", z.tf)
@@ -206,11 +206,13 @@ f_zoneShown(Zone z) =>
     kindOk and minorOk
 
 // Only zones the history view can ever draw are archived, so the archive reaches further back:
-// shown by the display settings, and close enough to price when they ended (§15 M6).
+// shown by the display settings, and within the distance window of price at some point of
+// their life (a view scrolled back to that moment ranks them there, §15 M6).
 f_archiveZone(array<Zone> arch, Zone z) =>
     bool htf = z.tf != TF_CHART
     float dist = close > z.top ? (close - z.top) / vu : close < z.bottom ? (z.bottom - close) / vu : 0.0
-    bool keep = f_zoneShown(z) and (mc.debug or dist <= mc.distMax * (htf ? 2 : 1))
+    float dEff = na(z.nearD) ? dist : math.min(dist, z.nearD)
+    bool keep = f_zoneShown(z) and (mc.debug or dEff <= mc.distMax * (htf ? 2 : 1))
     if keep
         arch.push(z)
         if arch.size() > ZONE_ARCH_CAP
@@ -231,9 +233,13 @@ f_zoneStep(Core c, array<Zone> zs, array<Zone> arch) =>
                         f_obLife(c, zs, z)
                 if z.state < ZS_FILLED
                     float dist = close > z.top ? close - z.top : close < z.bottom ? z.bottom - close : 0.0
+                    // closest approach in ATR while alive: decides whether the archive keeps it
+                    z.nearD := na(z.nearD) ? dist / vu : math.min(z.nearD, dist / vu)
                     bool htf = z.tf != TF_CHART
-                    int maxAge = (z.kind == ZK_FVG or z.kind == ZK_IFVG ? FVG_MAX_AGE : OB_MAX_AGE) * (htf ? htfAgeMult : 1)
-                    if bar_index - z.born > maxAge or dist > ZONE_MAX_DIST * vu * (htf ? htfDistMult : 1.0)
+                    int maxAge = z.kind == ZK_FVG or z.kind == ZK_IFVG ? FVG_MAX_AGE : OB_MAX_AGE
+                    // HTF zones count their age in HTF bars (also right on session instruments)
+                    int age = htf ? hLastBars - nz(z.hBorn, hLastBars) : bar_index - z.born
+                    if age > maxAge or dist > ZONE_MAX_DIST * vu * (htf ? htfDistMult : 1.0)
                         z.state := ZS_EXPIRED
                         z.endBar := bar_index
                         z.endT := time

@@ -5,7 +5,7 @@
 
 // HTF pivot → major liquidity level (never clustered with chart levels)
 f_liqAddHtf(Core c, array<Liq> lv, int side, float price, int t0) =>
-    Liq nl = Liq.new(id = f_nextId(c), side = side, kind = LK_SWING, tf = TF_HTF1, price = price, bar = bar_index, t = t0, born = bar_index, lastBar = bar_index, touches = 1, major = true, state = LS_ACTIVE, lvl = LV_SWG, tag = side == 1 ? "BSL" : "SSL")
+    Liq nl = Liq.new(id = f_nextId(c), side = side, kind = LK_SWING, tf = TF_HTF1, price = price, bar = bar_index, t = t0, born = bar_index, lastBar = bar_index, touches = 1, major = true, state = LS_ACTIVE, lvl = LV_SWG, tag = side == 1 ? "BSL" : "SSL", hBorn = hLastBars)
     lv.push(nl)
     f_emit(c, EV_LIQ_NEW, side, price, nl.id, na, 2, LK_SWING, na, na, "HTF " + nl.tag, TF_HTF1)
     nl
@@ -21,7 +21,7 @@ f_zoneAddHtf(Core c, array<Zone> zs, int kind, int dir, float top, float bot, in
                 ok := false
                 break
     if ok
-        Zone z = Zone.new(id = f_nextId(c), kind = kind, dir = dir, state = ZS_FRESH, top = top, bottom = bot, bar = bar_index, t = t0, born = bar_index, bornT = time, unfilled = kind == ZK_FVG ? (dir == 1 ? top : bot) : na, strength = 0.8, disp = 0.0, lvl = LV_SWG, tf = TF_HTF1)
+        Zone z = Zone.new(id = f_nextId(c), kind = kind, dir = dir, state = ZS_FRESH, top = top, bottom = bot, bar = bar_index, t = t0, born = bar_index, bornT = time, unfilled = kind == ZK_FVG ? (dir == 1 ? top : bot) : na, strength = 0.8, disp = 0.0, lvl = LV_SWG, tf = TF_HTF1, hBorn = hLastBars)
         zs.push(z)
         f_emit(c, EV_ZONE_NEW, dir, (top + bot) / 2, z.id, na, 2, kind, top, bot, "HTF " + f_kindTag(kind), TF_HTF1)
     ok

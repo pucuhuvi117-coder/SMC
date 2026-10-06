@@ -103,7 +103,9 @@ f_liqStep(Core c, array<Liq> lv, array<Liq> arch, int chochIntDir) =>
                 if x.state == LS_ACTIVE or x.state == LS_PENDING
                     bool htf = x.tf != TF_CHART
                     x.major := htf or x.kind != LK_SWING or x.touches >= 2 or bar_index - x.bar >= i_oldAge
-                    if math.abs(close - x.price) > LIQ_MAX_DIST * vu * (htf ? htfDistMult : 1.0) or bar_index - x.bar > LIQ_MAX_AGE * (htf ? htfAgeMult : 1)
+                    // HTF levels count their age in HTF bars (also right on session instruments)
+                    int age = htf ? hLastBars - nz(x.hBorn, hLastBars) : bar_index - x.bar
+                    if math.abs(close - x.price) > LIQ_MAX_DIST * vu * (htf ? htfDistMult : 1.0) or age > LIQ_MAX_AGE
                         x.state := LS_EXPIRED
                         x.endBar := bar_index
                         x.endT := time

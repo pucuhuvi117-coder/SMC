@@ -206,6 +206,7 @@ type Liq
     int sweepType = 0
     int lvl = 1
     string tag = ""
+    int hBorn
 
 // Unified zone model for OB / BB / MB / FVG / IFVG (§8.3, ADR-07)
 type Zone
@@ -233,6 +234,8 @@ type Zone
     int lvl = 1
     int tf = 0
     bool fallback = false
+    int hBorn
+    float nearD
 
 // Dealing range (§7.5). state: 0 none, 1 developing, 2 established.
 type Range
@@ -347,6 +350,7 @@ type View
     array<float> segAtr
     float winLo
     float winHi
+    int tL
 
 // Visual pools: drawings are created once and reused (§4.9)
 type BoxPool

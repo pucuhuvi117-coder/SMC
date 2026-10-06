@@ -168,16 +168,19 @@ f_buildView(int vpBarL, int vpBarR, array<float> hc, array<float> ha, int hb, fl
         v.segEnd.push(e)
         v.segPx.push(e >= bar_index ? pxLive : f_histAt(hc, hb, e, pxLive))
         v.segAtr.push(e >= bar_index ? vu : f_histAt(ha, hb, e, vu))
-    // price span of the window (closes), for label spacing that follows the zoom
-    float lo = na
-    float hi = na
-    for k = iL to iR
-        float c = k >= bar_index ? pxLive : f_histAt(hc, hb, k, na)
-        if not na(c)
-            lo := na(lo) ? c : math.min(lo, c)
-            hi := na(hi) ? c : math.max(hi, c)
-    v.winLo := lo
-    v.winHi := hi
+    // visible range only: left edge time (label clamping) and price span of the closes
+    // (label spacing that follows the zoom)
+    if vp
+        v.tL := chart.left_visible_bar_time
+        float lo = na
+        float hi = na
+        for k = iL to iR
+            float c = k >= bar_index ? pxLive : f_histAt(hc, hb, k, na)
+            if not na(c)
+                lo := na(lo) ? c : math.min(lo, c)
+                hi := na(hi) ? c : math.max(hi, c)
+        v.winLo := lo
+        v.winHi := hi
     v
 
 // Segment that contains a bar index (the last segment for anything at or beyond the right edge)
@@ -272,7 +275,9 @@ f_drawZone(BoxPool pz, LinePool pm, array<Tag> tags, Zone z, float r, int mergeN
 
 // Candidates are grouped by virtual segment: vs = 2 × time segment + 1 for zones alive at the
 // segment's anchor, 2 × segment for zones that finished inside it (history). Side caps apply
-// per virtual segment, so history never competes with active zones near the live edge.
+// per virtual segment, and zones alive at the right edge have their own pool share, so history
+// never competes with active zones near the live edge. History picks are first spread over
+// time slots, so strong zones bunched in one burst do not leave the rest of a segment empty.
 f_renderZones(View v, BoxPool pz, LinePool pm, array<Tag> tags, array<Zone> liveZ, array<Zone> archZ, int rightT, array<float> hc, array<float> ha, int hb) =>
     array<Zone> cz = array.new<Zone>()
     array<float> keys = array.new<float>()
@@ -282,6 +287,7 @@ f_renderZones(View v, BoxPool pz, LinePool pm, array<Tag> tags, array<Zone> live
     array<bool> ghostIx = array.new<bool>()
     // boxes narrower than this are invisible slivers at the current zoom
     int sliver = math.max(2, int((v.iR - v.iL) / 200))
+    array<int> slotIx = array.new<int>()
     for src = 0 to 1
         array<Zone> arr = src == 0 ? liveZ : archZ
         for z in arr
@@ -307,8 +313,9 @@ f_renderZones(View v, BoxPool pz, LinePool pm, array<Tag> tags, array<Zone> live
                         // its birth (no bias to short-lived boxes). Clean (no TTL) shows finished
                         // zones only when the chart is scrolled back into history.
                         histRank := true
-                        int lb = z.kind == ZK_BB or z.kind == ZK_MB or z.kind == ZK_IFVG ? z.born : z.bar
-                        ok := (mc.ttl > 0 or not v.live) and z.endBar - lb >= sliver
+                        // width as drawn (HTF boxes start at the HTF candle, before ingestion)
+                        int wBars = int((z.endT - f_zoneLeftT(z)) / barMs)
+                        ok := (mc.ttl > 0 or not v.live) and wBars >= sliver
                         anchor := z.born
                         px := f_histAt(hc, hb, z.endBar, px)
                         atr := f_histAt(ha, hb, z.endBar, atr)
@@ -323,24 +330,34 @@ f_renderZones(View v, BoxPool pz, LinePool pm, array<Tag> tags, array<Zone> live
                             segIx.push(vs)
                             anchorPx.push(px)
                             ghostIx.push(ghost)
+                            slotIx.push(math.min(endEff, v.iR) - v.iL)
     int m = cz.size()
     int cap = pz.items.size()
-    int budget = math.max(1, int(cap / v.segs))
+    // pool shares: one per time segment plus one for the zones alive at the right edge
+    int budget = math.max(1, int(cap / (v.segs + 1)))
+    int nsl = math.max(1, budget * v.segs)
+    int wv = math.max(1, v.iR - v.iL + 1)
     array<int> picked = array.new<int>()
     array<int> mergeN = array.new<int>()
     if m > 0 and cap > 0
         array<int> ord = keys.sort_indices(order.descending)
         // counters per virtual segment: OB above/below, FVG above/below, HTF above/below, inside
         array<int> cnt = array.new<int>(v.segs * 14, 0)
-        array<int> used = array.new<int>(v.segs, 0)
+        array<int> used = array.new<int>(v.segs + 1, 0)
         array<bool> done = array.new<bool>(m, false)
-        // pass 1: every time segment gets its share of the pool; pass 2: leftovers, best first
-        for pass = 0 to 1
+        array<bool> slotUsed = array.new<bool>(nsl, false)
+        // pass 0: history, one zone per time slot; pass 1: each share filled best first;
+        // pass 2: leftovers, best first
+        for pass = 0 to 2
             for k = 0 to m - 1
                 int oi = ord.get(k)
                 int vs = segIx.get(oi)
                 int seg = int(vs / 2)
-                if not done.get(oi) and picked.size() < cap and (pass == 1 or used.get(seg) < budget)
+                bool hist = vs % 2 == 0
+                int bi = hist ? seg : v.segs
+                int sl = math.max(0, math.min(nsl - 1, int(slotIx.get(oi) * nsl / wv)))
+                bool gate = pass == 2 or (used.get(bi) < budget and (pass == 1 or (hist and not slotUsed.get(sl))))
+                if not done.get(oi) and picked.size() < cap and gate
                     Zone z = cz.get(oi)
                     float px = anchorPx.get(oi)
                     bool htf = z.tf != TF_CHART
@@ -371,7 +388,8 @@ f_renderZones(View v, BoxPool pz, LinePool pm, array<Tag> tags, array<Zone> live
                             picked.push(oi)
                             mergeN.push(1)
                             cnt.set(ci, cnt.get(ci) + 1)
-                            used.set(seg, used.get(seg) + 1)
+                            used.set(bi, used.get(bi) + 1)
+                            slotUsed.set(sl, true)
                             done.set(oi, true)
     int pn2 = picked.size()
     if pn2 > 0
@@ -553,23 +571,52 @@ f_renderBreaks(View v, LinePool pl, LabelPool pb, array<Brk> brks, int cap, bool
         int tr = htf ? OP_STRONG : internal ? OP_SOFT : recent ? OP_STRONG : OP_MEDIUM
         f_line(pl, b.swingT, b.price, b.t, b.price, color.new(hue, tr), internal ? line.style_dotted : line.style_dashed, htf ? 2 : 1)
         string nm = b.kind == BK_BOS ? "BOS" : b.mss ? "MSS" : "CHoCH"
-        string txt = f_htfPrefix(b.tf) + (internal ? "i" : "") + nm + f_arrow(b.dir)
+        string base = f_htfPrefix(b.tf) + (internal ? "i" : "") + nm + f_arrow(b.dir)
         if labelLvl == 0 and internal
-            txt := f_arrow(b.dir)
+            base := f_arrow(b.dir)
+        string txt = base
         if labelLvl >= 2 and not internal and recent
             txt := txt + " " + f_px(b.price)
         if labelLvl >= 3 and not na(b.disp)
             txt := txt + " · " + str.tostring(b.disp, "0.0") + " ATR"
         if mc.debug and i_showIds
             txt := "#" + str.tostring(b.id) + " " + txt
-        // Chart-TF labels start at the pivot and run toward the break, on the side of the level
-        // the leg has not reached yet, so they stay off the breakout candles. A span far
-        // narrower than its text keeps only the line at wide zoom.
-        bool roomy = htf or not v.vp or na(b.swingBar) or (b.bar - b.swingBar) * 120 >= v.iR - v.iL
-        if roomy
-            int lx = htf ? int((b.swingT + b.t) / 2) : b.swingT
-            string lst = htf ? (b.dir == 1 ? label.style_label_down : label.style_label_up) : b.dir == 1 ? label.style_label_lower_left : label.style_label_upper_left
-            f_label(pb, lx, b.price, txt, color.new(hue, internal ? OP_MEDIUM : recent or htf ? OP_SOLID : 15), lst, internal ? size.tiny : size.small, f_brkTip(b), yloc.price)
+            base := txt
+        color tc = color.new(hue, internal ? OP_MEDIUM : recent or htf ? OP_SOLID : 15)
+        string sz = internal ? size.tiny : size.small
+        // Placement (VIS-11). Text width is estimated in bars for a ~1300 px plot. Chart-TF labels
+        // run from the pivot toward the break (the side of the level the leg had not reached), or
+        // left of the pivot over its own clear bars; the longest text that fits is used (full,
+        // short, arrow), and a label that fits nowhere leaves only the line. Anchors are clamped
+        // to the left edge of the visible range, so breaks near it keep their labels.
+        if htf
+            int lx = int((b.swingT + b.t) / 2)
+            if not na(v.tL)
+                lx := math.max(lx, v.tL)
+            f_label(pb, lx, b.price, txt, tc, b.dir == 1 ? label.style_label_down : label.style_label_up, sz, f_brkTip(b), yloc.price)
+        else
+            bool clamp = v.vp and not na(v.tL) and not na(b.swingBar) and b.swingBar < v.iL
+            int x0 = clamp ? v.iL : nz(b.swingBar, b.bar)
+            int lx = clamp ? v.tL : b.swingT
+            string show = txt
+            bool right = true
+            if v.vp
+                float bpp = (v.iR - v.iL + 1) / 1300.0
+                float chW = internal ? 6.0 : 7.5
+                float spanR = b.bar - x0
+                float spanL = clamp ? 0.0 : float(internal ? inLen : swLen)
+                show := ""
+                for tx in array.from(txt, base, f_arrow(b.dir))
+                    float need = (str.length(tx) + 1) * chW * bpp
+                    if show == ""
+                        if spanR >= need
+                            show := tx
+                        else if spanL >= need and x0 - need >= v.iL
+                            show := tx
+                            right := false
+            if show != ""
+                string lst = right ? (b.dir == 1 ? label.style_label_lower_left : label.style_label_upper_left) : (b.dir == 1 ? label.style_label_lower_right : label.style_label_upper_right)
+                f_label(pb, lx, b.price, show, tc, lst, sz, f_brkTip(b), yloc.price)
     sel.size()
 
 f_renderSwings(View v, LabelPool pb, StructState st, int cap) =>
@@ -608,8 +655,10 @@ f_drawRangeBody(BoxPool prb, LinePool prl, array<Tag> tags, int dir, float hi, f
         float oTop = dir == 1 ? hi - oteLo * span : lo + oteHi * span
         float oBot = dir == 1 ? hi - oteHi * span : lo + oteLo * span
         float sweet = dir == 1 ? hi - 0.705 * span : lo + 0.705 * span
-        f_box(prb, t0, t1, oTop, oBot, color.new(C_SIG, F_FAINT), color(na), 1, line.style_solid, labelLvl > 0 and withTag ? "OTE" : "", color.new(C_SIG, OP_MEDIUM), text.align_right)
+        f_box(prb, t0, t1, oTop, oBot, color.new(C_SIG, F_FAINT), color(na), 1, line.style_solid, "", color(na), text.align_right)
         f_line(prl, t0, sweet, t1, sweet, color.new(C_SIG, OP_SOFT), line.style_dotted, 1)
+        if withTag and labelLvl > 0
+            tags.push(Tag.new((oTop + oBot) / 2, "OTE", color.new(C_SIG, OP_MEDIUM), "OTE band " + f_px(oBot) + " – " + f_px(oTop) + " · sweet spot " + f_px(sweet)))
     true
 
 f_renderRange(View v, BoxPool prb, LinePool prl, LabelPool pb, array<Tag> tags, Range r, array<RangeSnap> arch, float pxLive, int rightT) =>

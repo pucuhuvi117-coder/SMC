@@ -155,5 +155,5 @@ f_debugTable(table tb, View v, Core c, array<Zone> zs, array<Zone> za, array<Liq
         row := f_dashRow(tb, row, "CHART", nonStdChart ? "non-standard" : "standard", nonStdChart ? C_WARN : C_TEXT, "", sz)
         row := f_dashRow(tb, row, "LENGTHS", "swing " + str.tostring(swLen) + " · int " + str.tostring(inLen), C_TEXT, "", sz)
         row := f_dashRow(tb, row, "SESSIONS", sesOk ? sesTz : "off (TF > 1H)", C_TEXT, specAsia + " · " + specLon + " · " + specNy, sz)
-        row := f_dashRow(tb, row, "HTF", htfOk ? htfLabel + " (" + htfTf + ") · " + str.tostring(nz(hBars)) + " bars · x" + str.tostring(htfAgeMult) : htfBadCfg ? "⚠ not above chart TF" : "off", htfOk and not htfLowHist ? C_TEXT : C_WARN, "Higher timeframe, confirmed HTF bars, lifetime multiplier (distance ×" + str.tostring(htfDistMult, "0.0") + ")", sz)
+        row := f_dashRow(tb, row, "HTF", htfOk ? htfLabel + " (" + htfTf + ") · " + str.tostring(hLastBars) + " bars" : htfBadCfg ? "⚠ not above chart TF" : "off", htfOk and not htfLowHist ? C_TEXT : C_WARN, "Higher timeframe and confirmed HTF bars. HTF objects age in HTF bars; distance limit ×" + str.tostring(htfDistMult, "0.0"), sz)
     true
