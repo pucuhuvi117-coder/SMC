@@ -1105,7 +1105,9 @@ f_htfState(int len) =>
         f_candRing(cd, rO, rH, rL, rC, rT, f_ringPick(rD, d >= 0 ? d - 1 : n - 1, o, -1))
         f_candRing(ce, rO, rH, rL, rC, rT, f_ringPick(rD, fb >= 0 ? fb - 1 : n - 1, o, -1))
     // 3 · breaks (A.4) and the order block of the breaking leg (A.7). The break time is the
-    // close of the breaking HTF bar, so lines end where the break was confirmed.
+    // close of the breaking HTF bar, so lines end where the break was confirmed. A candidate
+    // that is the breaking candle itself (outside bar that is also the new leg origin) is
+    // never used: the chart engine's window ends at d − 1.
     float srcUp = i_brk == BreakSrc.wick ? high : close
     float srcDn = i_brk == BreakSrc.wick ? low : close
     if not refHDone and not na(refH) and srcUp > refH
@@ -1117,7 +1119,7 @@ f_htfState(int len) =>
         trend := 1
         refHDone := true
         array<float> cand = upImp ? cu : cb
-        if not na(cand.get(4)) and (upImp or not i_obReqDisp)
+        if not na(cand.get(4)) and int(cand.get(4)) != time and (upImp or not i_obReqDisp)
             [gTop, gBot, gOk] = f_obGeom(1, cand.get(0), cand.get(1), cand.get(2), cand.get(3), atr)
             if gOk
                 ouSeq += 1
@@ -1133,7 +1135,7 @@ f_htfState(int len) =>
         trend := -1
         refLDone := true
         array<float> cand = dnImp ? cd : ce
-        if not na(cand.get(4)) and (dnImp or not i_obReqDisp)
+        if not na(cand.get(4)) and int(cand.get(4)) != time and (dnImp or not i_obReqDisp)
             [gTop, gBot, gOk] = f_obGeom(-1, cand.get(0), cand.get(1), cand.get(2), cand.get(3), atr)
             if gOk
                 odSeq += 1
@@ -2390,8 +2392,10 @@ f_renderZones(View v, BoxPool pz, LinePool pm, array<Tag> tags, array<Zone> live
                         // its birth (no bias to short-lived boxes). Clean (no TTL) shows finished
                         // zones only when the chart is scrolled back into history.
                         histRank := true
-                        // width as drawn (HTF boxes start at the HTF candle, before ingestion)
-                        int wBars = int((z.endT - f_zoneLeftT(z)) / barMs)
+                        // width in bars as drawn; for an HTF box the part before ingestion (from
+                        // the HTF candle) is estimated from time
+                        bool conv = z.kind == ZK_BB or z.kind == ZK_MB or z.kind == ZK_IFVG
+                        int wBars = z.endBar - (conv ? z.born : z.bar) + (htf and not conv ? int((z.bornT - z.t) / barMs) : 0)
                         ok := (mc.ttl > 0 or not v.live) and wBars >= sliver
                         anchor := z.born
                         px := f_histAt(hc, hb, z.endBar, px)
@@ -2430,8 +2434,10 @@ f_renderZones(View v, BoxPool pz, LinePool pm, array<Tag> tags, array<Zone> live
                 int oi = ord.get(k)
                 int vs = segIx.get(oi)
                 int seg = int(vs / 2)
-                bool hist = vs % 2 == 0
-                int bi = hist ? seg : v.segs
+                // the right-edge share is only for zones alive at the right edge of the view
+                bool edge = vs % 2 == 1 and seg == v.segs - 1
+                bool hist = not edge
+                int bi = edge ? v.segs : seg
                 int sl = math.max(0, math.min(nsl - 1, int(slotIx.get(oi) * nsl / wv)))
                 bool gate = pass == 2 or (used.get(bi) < budget and (pass == 1 or (hist and not slotUsed.get(sl))))
                 if not done.get(oi) and picked.size() < cap and gate
@@ -2668,9 +2674,11 @@ f_renderBreaks(View v, LinePool pl, LabelPool pb, array<Brk> brks, int cap, bool
         // to the left edge of the visible range, so breaks near it keep their labels.
         if htf
             int lx = int((b.swingT + b.t) / 2)
-            if not na(v.tL)
-                lx := math.max(lx, v.tL)
-            f_label(pb, lx, b.price, txt, tc, b.dir == 1 ? label.style_label_down : label.style_label_up, sz, f_brkTip(b), yloc.price)
+            bool hc = not na(v.tL) and lx < v.tL
+            if hc
+                lx := v.tL
+            string hst = hc ? (b.dir == 1 ? label.style_label_lower_left : label.style_label_upper_left) : b.dir == 1 ? label.style_label_down : label.style_label_up
+            f_label(pb, lx, b.price, txt, tc, hst, sz, f_brkTip(b), yloc.price)
         else
             bool clamp = v.vp and not na(v.tL) and not na(b.swingBar) and b.swingBar < v.iL
             int x0 = clamp ? v.iL : nz(b.swingBar, b.bar)

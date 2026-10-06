@@ -249,7 +249,9 @@ f_htfState(int len) =>
         f_candRing(cd, rO, rH, rL, rC, rT, f_ringPick(rD, d >= 0 ? d - 1 : n - 1, o, -1))
         f_candRing(ce, rO, rH, rL, rC, rT, f_ringPick(rD, fb >= 0 ? fb - 1 : n - 1, o, -1))
     // 3 · breaks (A.4) and the order block of the breaking leg (A.7). The break time is the
-    // close of the breaking HTF bar, so lines end where the break was confirmed.
+    // close of the breaking HTF bar, so lines end where the break was confirmed. A candidate
+    // that is the breaking candle itself (outside bar that is also the new leg origin) is
+    // never used: the chart engine's window ends at d − 1.
     float srcUp = i_brk == BreakSrc.wick ? high : close
     float srcDn = i_brk == BreakSrc.wick ? low : close
     if not refHDone and not na(refH) and srcUp > refH
@@ -261,7 +263,7 @@ f_htfState(int len) =>
         trend := 1
         refHDone := true
         array<float> cand = upImp ? cu : cb
-        if not na(cand.get(4)) and (upImp or not i_obReqDisp)
+        if not na(cand.get(4)) and int(cand.get(4)) != time and (upImp or not i_obReqDisp)
             [gTop, gBot, gOk] = f_obGeom(1, cand.get(0), cand.get(1), cand.get(2), cand.get(3), atr)
             if gOk
                 ouSeq += 1
@@ -277,7 +279,7 @@ f_htfState(int len) =>
         trend := -1
         refLDone := true
         array<float> cand = dnImp ? cd : ce
-        if not na(cand.get(4)) and (dnImp or not i_obReqDisp)
+        if not na(cand.get(4)) and int(cand.get(4)) != time and (dnImp or not i_obReqDisp)
             [gTop, gBot, gOk] = f_obGeom(-1, cand.get(0), cand.get(1), cand.get(2), cand.get(3), atr)
             if gOk
                 odSeq += 1
