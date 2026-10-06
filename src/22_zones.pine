@@ -106,7 +106,7 @@ f_obFromBreak(Core c, array<Zone> zs, Brk b, StructState swSt) =>
         if pass
             float extRef = b.lvl == LV_SWG ? na : f_swingBefore(swSt, dir, b.origBar)
             float strength = f_zoneStrength(b.disp, sz, vrMax) * (fb ? 0.7 : 1.0)
-            Zone z = Zone.new(id = f_nextId(c), kind = ZK_OB, dir = dir, state = touched ? ZS_TOUCHED : ZS_FRESH, top = top, bottom = bot, bar = j, t = tJ, born = bar_index, touches = touched ? 1 : 0, strength = strength, disp = b.disp, extRef = extRef, legExt = b.legExt1, brkId = b.id, lvl = b.lvl, tf = TF_CHART, fallback = fb)
+            Zone z = Zone.new(id = f_nextId(c), kind = ZK_OB, dir = dir, state = touched ? ZS_TOUCHED : ZS_FRESH, top = top, bottom = bot, bar = j, t = tJ, born = bar_index, bornT = time, touches = touched ? 1 : 0, strength = strength, disp = b.disp, extRef = extRef, legExt = b.legExt1, brkId = b.id, lvl = b.lvl, tf = TF_CHART, fallback = fb)
             zs.push(z)
             f_emit(c, EV_ZONE_NEW, dir, (top + bot) / 2, z.id, b.evId, 2, ZK_OB, top, bot, "OB")
             created := true
@@ -119,7 +119,7 @@ f_fvgNew(Core c, array<Zone> zs, int dir) =>
     float sz = top - bot
     bool disp = dir == 1 ? isDispUp[1] : isDispDn[1]
     float strength = 0.6 * (disp ? math.min(1.0, body[1] / vu / 2.0) : 0.2) + 0.4 * math.min(1.0, sz / vu)
-    Zone z = Zone.new(id = f_nextId(c), kind = ZK_FVG, dir = dir, state = ZS_FRESH, top = top, bottom = bot, bar = bar_index - 2, t = time[2], born = bar_index, unfilled = dir == 1 ? top : bot, strength = strength, disp = disp ? body[1] / vu : 0.0, lvl = LV_SWG, tf = TF_CHART)
+    Zone z = Zone.new(id = f_nextId(c), kind = ZK_FVG, dir = dir, state = ZS_FRESH, top = top, bottom = bot, bar = bar_index - 2, t = time[2], born = bar_index, bornT = time, unfilled = dir == 1 ? top : bot, strength = strength, disp = disp ? body[1] / vu : 0.0, lvl = LV_SWG, tf = TF_CHART)
     zs.push(z)
     int cause = disp ? (dir == 1 ? c.lastDispUpId : c.lastDispDnId) : na
     f_emit(c, EV_ZONE_NEW, dir, (top + bot) / 2, z.id, cause, 2, ZK_FVG, top, bot, "FVG")
@@ -143,7 +143,7 @@ f_obLife(Core c, array<Zone> zs, Zone z) =>
         if z.kind == ZK_OB and i_breakers
             bool swept = z.lvl == LV_SWG or (not na(z.extRef) and not na(z.legExt) and (bull ? z.legExt > z.extRef : z.legExt < z.extRef))
             int nk = swept ? ZK_BB : ZK_MB
-            Zone nz = Zone.new(id = f_nextId(c), kind = nk, dir = -z.dir, state = ZS_FRESH, top = z.top, bottom = z.bottom, bar = z.bar, t = z.t, born = bar_index, strength = z.strength * 0.9, disp = z.disp, parent = z.id, brkId = z.brkId, lvl = z.lvl, tf = z.tf)
+            Zone nz = Zone.new(id = f_nextId(c), kind = nk, dir = -z.dir, state = ZS_FRESH, top = z.top, bottom = z.bottom, bar = z.bar, t = z.t, born = bar_index, bornT = time, strength = z.strength * 0.9, disp = z.disp, parent = z.id, brkId = z.brkId, lvl = z.lvl, tf = z.tf)
             zs.push(nz)
             z.state := ZS_CONVERTED
             f_emit(c, EV_ZONE_CONVERTED, nz.dir, (nz.top + nz.bottom) / 2, nz.id, be.id, 2, nk, z.id, na, f_kindTag(nk))
@@ -189,7 +189,7 @@ f_fvgLife(Core c, array<Zone> zs, Zone z) =>
             Event fe = f_zoneEvent(c, z, EV_ZONE_FILLED, 3)
             bool inv = i_ifvg and (bull ? close < z.bottom : close > z.top)
             if inv
-                Zone nz = Zone.new(id = f_nextId(c), kind = ZK_IFVG, dir = -z.dir, state = ZS_FRESH, top = z.top, bottom = z.bottom, bar = z.bar, t = z.t, born = bar_index, strength = z.strength, disp = z.disp, parent = z.id, lvl = z.lvl, tf = z.tf)
+                Zone nz = Zone.new(id = f_nextId(c), kind = ZK_IFVG, dir = -z.dir, state = ZS_FRESH, top = z.top, bottom = z.bottom, bar = z.bar, t = z.t, born = bar_index, bornT = time, strength = z.strength, disp = z.disp, parent = z.id, lvl = z.lvl, tf = z.tf)
                 zs.push(nz)
                 z.state := ZS_CONVERTED
                 f_emit(c, EV_ZONE_CONVERTED, nz.dir, (nz.top + nz.bottom) / 2, nz.id, fe.id, 2, ZK_IFVG, z.id, na, "IFVG")
@@ -197,8 +197,14 @@ f_fvgLife(Core c, array<Zone> zs, Zone z) =>
                 z.state := ZS_FILLED
     true
 
-// Confirmed-bar step for all zones: lifecycle, expiry, cleanup, cap
-f_zoneStep(Core c, array<Zone> zs, int keep) =>
+f_archiveZone(array<Zone> arch, Zone z) =>
+    arch.push(z)
+    if arch.size() > ZONE_ARCH_CAP
+        arch.shift()
+    true
+
+// Confirmed-bar step for live zones: lifecycle, expiry, then finished zones move to the archive
+f_zoneStep(Core c, array<Zone> zs, array<Zone> arch) =>
     int n = zs.size()
     if n > 0
         for i = n - 1 to 0
@@ -217,13 +223,12 @@ f_zoneStep(Core c, array<Zone> zs, int keep) =>
                         z.endBar := bar_index
                         z.endT := time
                         f_zoneEvent(c, z, EV_ZONE_EXPIRED, 4)
-            else if bar_index - z.endBar > keep
-                zs.remove(i)
-    if zs.size() > ZONE_CAP
-        int idx = 0
-        for [i, z] in zs
             if z.state >= ZS_FILLED
-                idx := i
-                break
-        zs.remove(idx)
+                f_archiveZone(arch, zs.remove(i))
+    if zs.size() > ZONE_CAP
+        Zone old = zs.shift()
+        old.state := ZS_EXPIRED
+        old.endBar := bar_index
+        old.endT := time
+        f_archiveZone(arch, old)
     true

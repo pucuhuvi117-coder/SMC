@@ -57,8 +57,9 @@ f_liqTaken(Core c, Liq x, float pen) =>
     string sideTxt = x.side == 1 ? "BSL" : "SSL"
     f_emit(c, EV_LIQ_TAKEN, x.side, x.price, x.id, na, 2, pen / vu, na, x.major ? 1.0 : 0.0, sideTxt + " " + x.tag)
 
-// Confirmed-bar step: sweep / taken checks, major flag, expiry, turtle soup, cleanup (A.13)
-f_liqStep(Core c, array<Liq> lv, int keep, int chochIntDir) =>
+// Confirmed-bar step: sweep / taken checks, major flag, expiry, turtle soup (A.13).
+// Finished levels move to the archive (history rendering) once the turtle-soup window has passed.
+f_liqStep(Core c, array<Liq> lv, array<Liq> arch, int chochIntDir) =>
     int n = lv.size()
     float maxPen = i_maxSweepPen * vu
     float tb = syminfo.mintick
@@ -100,10 +101,19 @@ f_liqStep(Core c, array<Liq> lv, int keep, int chochIntDir) =>
             else
                 if x.state == LS_SWEPT and chochIntDir == -x.side and x.sweepType < SWEEP_TURTLE and bar_index - x.endBar <= i_tsWindow and x.endBar - x.bar >= i_tsMinAge
                     x.sweepType := SWEEP_TURTLE
-                if bar_index - x.endBar > keep
-                    lv.remove(i)
+                if bar_index - x.endBar > i_tsWindow
+                    arch.push(lv.remove(i))
+                    if arch.size() > LIQ_ARCH_CAP
+                        arch.shift()
     if lv.size() > LIQ_CAP
-        lv.shift()
+        Liq old = lv.shift()
+        if old.state == LS_ACTIVE or old.state == LS_PENDING
+            old.state := LS_EXPIRED
+            old.endBar := bar_index
+            old.endT := time
+        arch.push(old)
+        if arch.size() > LIQ_ARCH_CAP
+            arch.shift()
     true
 
 // Session tracking: start / running high-low / end → history box + key levels (A.15)
@@ -119,6 +129,7 @@ f_sessStep(Core c, Sess s, bool inNow, array<Liq> lv, array<SessBox> hist) =>
         s.hi := high
         s.lo := low
         s.t0 := time
+        s.b0 := bar_index
         s.endT := f_sessEndT(s.spec, sesTz)
         f_emit(c, EV_SESSION_START, 0, open, na, na, 3, na, na, na, s.code)
     else if inNow and s.on
@@ -126,8 +137,8 @@ f_sessStep(Core c, Sess s, bool inNow, array<Liq> lv, array<SessBox> hist) =>
         s.lo := math.min(s.lo, low)
     else if not inNow and s.on
         s.on := false
-        hist.push(SessBox.new(s.code, s.hi, s.lo, s.t0, time))
-        if hist.size() > 40
+        hist.push(SessBox.new(s.code, s.hi, s.lo, s.t0, time, s.b0, bar_index - 1))
+        if hist.size() > SESS_CAP
             hist.shift()
         f_emit(c, EV_SESSION_END, 0, close, na, na, 3, s.hi, s.lo, na, s.code)
         if i_keySess

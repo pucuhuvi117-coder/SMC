@@ -14,9 +14,12 @@ G_ADV = "🛠 11 · ADVANCED"
 // ── 0 · Profile
 i_mode = input.enum(DisplayMode.normal, "Display Mode", tooltip = "Clean: minimum for execution. Normal: everyday analysis. Analysis: internal structure, swing labels, history. Debug: IDs, relevance scores, hidden objects, budget table. Custom: Analysis ceiling, the toggles below decide.\nThe mode is a ceiling: toggles can only hide what the mode allows. Calculations never change between modes.", group = G_PROF, display = display.none)
 i_theme = input.enum(ThemeOpt.auto, "Theme", tooltip = "Auto detects dark or light from the chart background color.", group = G_PROF, display = display.none)
+i_visibility = input.enum(Visibility.standard, "Visibility", tooltip = "Shifts the transparency of every zone, level and line: Subtle is lighter, Bold is denser. Candles stay on top either way.", group = G_PROF, display = display.none)
 i_palette = input.enum(PaletteOpt.standard, "Palette", tooltip = "Color-blind safe replaces green/red with blue/orange (Okabe–Ito). Direction is always duplicated by arrows and position.", group = G_PROF, display = display.none)
 
 // ── 1 · Visual experience
+i_histView = input.enum(HistView.visible, "History view", tooltip = "Visible range: draws structure, zones, levels and sweeps for the part of the chart on screen, with even density across it. Scroll or zoom out to see history.\nRecent only: focuses on the latest bars (v0.1 behaviour).\nThe script recalculates when the visible range changes.", group = G_VIS, display = display.none)
+i_rightExt = input.int(5, "Extend right (bars)", minval = 3, maxval = 100, tooltip = "How far active zones and levels extend to the right of the last candle.", group = G_VIS, display = display.none)
 i_verb = input.enum(Verbosity.brief, "Label verbosity", tooltip = "Icons: arrows only for minor objects. Short: BOS↑, SSL ✕. Full: adds prices and displacement (shown in Analysis/Debug).", group = G_VIS, display = display.none)
 i_smartLabels = input.bool(true, "Smart Labels", tooltip = "Merge right-edge tags that are too close to read separately.", group = G_VIS, display = display.none)
 i_autoHide = input.bool(true, "Auto Hide Old Objects", inline = "hist", group = G_VIS, display = display.none)
@@ -98,6 +101,9 @@ i_lonOn = input.bool(true, "London KZ", inline = "lo", group = G_SES, display = 
 i_lonS = input.session("0200-0500", "", inline = "lo", group = G_SES, display = display.none)
 i_nyOn = input.bool(true, "NY AM KZ", inline = "ny", group = G_SES, display = display.none)
 i_nyS = input.session("0700-1000", "", inline = "ny", group = G_SES, display = display.none)
+i_sesColAsia = input.color(color.new(#7E57C2, 86), "Colors: Asia", inline = "sc", group = G_SES, display = display.none)
+i_sesColLon = input.color(color.new(#2962FF, 86), "London", inline = "sc", group = G_SES, display = display.none)
+i_sesColNy = input.color(color.new(#FF9800, 86), "NY", inline = "sc", tooltip = "Fill color and opacity of each session box. The border uses the same color, denser.", group = G_SES, display = display.none)
 i_sesView = input.enum(SesView.rangeBox, "Session view", tooltip = "Sessions are tracked on intraday charts up to 1 hour.", group = G_SES, display = display.none)
 
 // ── 11 · Advanced
@@ -135,14 +141,15 @@ specAsia = f_sesSpec("2000-0000", "0000-0600", i_asiaS)
 specLon = f_sesSpec("0200-0500", "0700-1000", i_lonS)
 specNy = f_sesSpec("0700-1000", "1200-1500", i_nyS)
 
-// Display mode ceilings (docs §15.3, §19.2). Field order matches ModeCfg.
+// Display mode ceilings (docs §15.3, §19.2). Recent view uses structEvents / sweptShow / sessions;
+// visible-range view uses the *Win caps. Pool sizes keep every mode within the 500-object limits.
 f_modeCfg(DisplayMode m) =>
     switch m
-        DisplayMode.clean => ModeCfg.new(1, 0, false, 1, 1, 0, 1, 3.0, 0.55, 0, 500, false, 1, false, 0, false, 1, false)
-        DisplayMode.normal => ModeCfg.new(3, 0, false, 2, 2, 1, 3, 6.0, 0.40, 10, 1500, true, 2, true, 4, true, 2, false)
-        DisplayMode.analysis => ModeCfg.new(15, 15, true, 6, 6, 4, 15, 12.0, 0.25, 50, 5000, true, 2, true, 20, true, 3, false)
-        DisplayMode.debug => ModeCfg.new(30, 30, true, 20, 20, 20, 30, 1000.0, 0.0, 100000, 100000, true, 3, true, 30, true, 3, true)
-        => ModeCfg.new(15, 15, true, 6, 6, 4, 15, 12.0, 0.25, 50, 5000, true, 3, true, 20, true, 3, false)
+        DisplayMode.clean => ModeCfg.new(structEvents = 1, internalEvents = 0, swingLabels = false, zonesPerSide = 1, majorPerSide = 1, minorPerSide = 0, sweptShow = 1, distMax = 3.0, theta = 0.55, ttl = 0, hist = 500, mitigated = false, pdCap = 1, gauge = false, sessions = 0, dashboard = false, labelLevel = 1, debug = false, structWin = 4, internalWin = 0, swingLabelWin = 0, sweepWin = 4, sessWin = 0, rangeWin = 1, poolZone = 16, poolWash = 4, poolLvl = 24, poolStr = 8, poolLab = 30)
+        DisplayMode.normal => ModeCfg.new(structEvents = 3, internalEvents = 0, swingLabels = false, zonesPerSide = 2, majorPerSide = 2, minorPerSide = 1, sweptShow = 3, distMax = 6.0, theta = 0.40, ttl = 10, hist = 1500, mitigated = true, pdCap = 2, gauge = true, sessions = 4, dashboard = true, labelLevel = 2, debug = false, structWin = 30, internalWin = 0, swingLabelWin = 0, sweepWin = 20, sessWin = 20, rangeWin = 6, poolZone = 48, poolWash = 24, poolLvl = 70, poolStr = 40, poolLab = 90)
+        DisplayMode.analysis => ModeCfg.new(structEvents = 15, internalEvents = 15, swingLabels = true, zonesPerSide = 6, majorPerSide = 6, minorPerSide = 4, sweptShow = 15, distMax = 12.0, theta = 0.25, ttl = 50, hist = 5000, mitigated = true, pdCap = 2, gauge = true, sessions = 20, dashboard = true, labelLevel = 3, debug = false, structWin = 80, internalWin = 60, swingLabelWin = 60, sweepWin = 50, sessWin = 40, rangeWin = 12, poolZone = 120, poolWash = 44, poolLvl = 140, poolStr = 140, poolLab = 260)
+        DisplayMode.debug => ModeCfg.new(structEvents = 30, internalEvents = 30, swingLabels = true, zonesPerSide = 20, majorPerSide = 20, minorPerSide = 20, sweptShow = 30, distMax = 1000.0, theta = 0.0, ttl = 100000, hist = 100000, mitigated = true, pdCap = 3, gauge = true, sessions = 30, dashboard = true, labelLevel = 3, debug = true, structWin = 120, internalWin = 60, swingLabelWin = 60, sweepWin = 80, sessWin = 60, rangeWin = 12, poolZone = 160, poolWash = 60, poolLvl = 140, poolStr = 160, poolLab = 300)
+        => ModeCfg.new(structEvents = 15, internalEvents = 15, swingLabels = true, zonesPerSide = 6, majorPerSide = 6, minorPerSide = 4, sweptShow = 15, distMax = 12.0, theta = 0.25, ttl = 50, hist = 5000, mitigated = true, pdCap = 3, gauge = true, sessions = 20, dashboard = true, labelLevel = 3, debug = false, structWin = 80, internalWin = 60, swingLabelWin = 60, sweepWin = 50, sessWin = 40, rangeWin = 12, poolZone = 120, poolWash = 44, poolLvl = 140, poolStr = 140, poolLab = 260)
 
 var ModeCfg mc = f_modeCfg(i_mode)
 
@@ -169,6 +176,7 @@ vPd = math.min(pdLevelUser, mc.pdCap)
 vGauge = i_showGauge and mc.gauge
 vSessN = i_sesView == SesView.off ? 0 : mc.sessions
 vRibbon = i_showRibbon
+vHistory = i_histView == HistView.visible
 vDash = i_showDash and mc.dashboard
 nZonesSide = mc.debug ? mc.zonesPerSide : math.min(i_zonesPerSide, mc.zonesPerSide)
 nMajorSide = mc.debug ? mc.majorPerSide : math.min(i_levelsPerSide, mc.majorPerSide)

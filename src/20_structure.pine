@@ -20,7 +20,7 @@ f_makeSwing(Core c, StructState st, int side, float price) =>
             tg := side == 1 ? (d > 0 ? "HH" : "LH") : (d > 0 ? "HL" : "LL")
     Swing sw = Swing.new(id = f_nextId(c), side = side, lvl = st.lvl, price = price, bar = bar_index - st.len, t = time[st.len], confirmBar = bar_index, tag = tg, eq = eq, broken = false)
     st.swings.push(sw)
-    if st.swings.size() > 200
+    if st.swings.size() > SWING_CAP
         st.swings.shift()
     if side == 1
         st.lastHigh := sw
@@ -130,7 +130,7 @@ f_breakUp(Core c, StructState st) =>
     st.trend := 1
     st.protLow := st.upOrigLow
     st.breaks.push(b)
-    if st.breaks.size() > 300
+    if st.breaks.size() > BRK_CAP
         st.breaks.shift()
     Event e = f_emit(c, kind == BK_BOS ? EV_BOS : EV_CHOCH, 1, rh.price, b.id, cause, st.lvl == LV_SWG ? 1 : 3, st.lvl, disp, mss ? 1.0 : 0.0, initial ? "initial" : "")
     b.evId := e.id
@@ -153,7 +153,7 @@ f_breakDn(Core c, StructState st) =>
     st.trend := -1
     st.protHigh := st.dnOrigHigh
     st.breaks.push(b)
-    if st.breaks.size() > 300
+    if st.breaks.size() > BRK_CAP
         st.breaks.shift()
     Event e = f_emit(c, kind == BK_BOS ? EV_BOS : EV_CHOCH, -1, rl.price, b.id, cause, st.lvl == LV_SWG ? 1 : 3, st.lvl, disp, mss ? 1.0 : 0.0, initial ? "initial" : "")
     b.evId := e.id

@@ -86,6 +86,17 @@ LIQ_MAX_AGE = 1000
 EQ_BAND = 0.02
 ZONE_CAP = 250
 LIQ_CAP = 150
+// Archive of finished objects for history rendering (v0.2): not iterated per bar
+ZONE_ARCH_CAP = 800
+LIQ_ARCH_CAP = 800
+RANGE_ARCH_CAP = 300
+SESS_CAP = 400
+BRK_CAP = 1000
+SWING_CAP = 1000
+// Visible-range rendering: a wide view is split into time segments with their own anchor
+SEG_BARS = 150
+SEG_MAX = 6
+HIST_CAP = 90000
 // History buffer for dynamic offsets and the guard that keeps every lookback below it
 MAXBACK = 600
 MAXBACK_GUARD = 550

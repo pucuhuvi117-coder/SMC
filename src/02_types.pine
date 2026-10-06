@@ -63,6 +63,15 @@ enum SesView
     rangeBox = "Range box"
     off = "Off"
 
+enum Visibility
+    subtle = "Subtle"
+    standard = "Standard"
+    bold = "Bold"
+
+enum HistView
+    visible = "Visible range"
+    recent = "Recent only"
+
 // Immutable fact about a state transition, emitted on a confirmed bar (§6.2)
 type Event
     int id
@@ -197,6 +206,7 @@ type Zone
     int bar
     int t
     int born
+    int bornT
     int endBar
     int endT
     int touches = 0
@@ -222,8 +232,19 @@ type Range
     int hiBar
     int loBar
     int t0
+    int b0
     int pdZone = 0
     bool inOte = false
+
+// Finished dealing range kept for history rendering
+type RangeSnap
+    int dir
+    float hi
+    float lo
+    int t0
+    int t1
+    int b0
+    int b1
 
 type Sess
     string name
@@ -235,6 +256,7 @@ type Sess
     float hi
     float lo
     int t0
+    int b0
     int endT
 
 type SessBox
@@ -243,6 +265,8 @@ type SessBox
     float lo
     int t0
     int t1
+    int b0
+    int b1
 
 // Market context snapshot for Ribbon / Dashboard (§8.3)
 type Ctx
@@ -279,6 +303,30 @@ type ModeCfg
     bool dashboard
     int labelLevel
     bool debug
+    int structWin
+    int internalWin
+    int swingLabelWin
+    int sweepWin
+    int sessWin
+    int rangeWin
+    int poolZone
+    int poolWash
+    int poolLvl
+    int poolStr
+    int poolLab
+
+// What the render pass draws: a bar window, split into time segments. Each segment ranks
+// objects against its own anchor (close and ATR at the segment's last bar), so a wide or
+// scrolled-back view keeps the same density as the live edge (docs §15, AC-M16).
+type View
+    bool vp
+    bool live
+    int iL
+    int iR
+    int segs = 1
+    array<int> segEnd
+    array<float> segPx
+    array<float> segAtr
 
 // Visual pools: drawings are created once and reused (§4.9)
 type BoxPool

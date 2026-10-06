@@ -3,9 +3,13 @@
 // the Ribbon and Dashboard (Appendix A.14, A.16, A.17, §7.5).
 
 // Dealing range follows swing-level breaks: protected extreme → far extreme of the leg
-f_rangeStep(Core c, Range r, StructState sw) =>
+f_rangeStep(Core c, Range r, StructState sw, array<RangeSnap> arch) =>
     Brk bu = sw.newUp
     Brk bd = sw.newDn
+    if r.state > 0 and (not na(bu) or not na(bd))
+        arch.push(RangeSnap.new(r.dir, r.hi, r.lo, r.t0, time, r.b0, bar_index))
+        if arch.size() > RANGE_ARCH_CAP
+            arch.shift()
     if not na(bu)
         r.id := f_nextId(c)
         r.dir := 1
@@ -15,6 +19,7 @@ f_rangeStep(Core c, Range r, StructState sw) =>
         r.hi := bu.legExt1
         r.hiBar := bar_index
         r.t0 := bu.origT
+        r.b0 := bu.origBar
         r.inOte := false
         f_emit(c, EV_RANGE_NEW, 1, (r.hi + r.lo) / 2, r.id, bu.evId, 3, r.hi, r.lo, 1)
     else if not na(bd)
@@ -26,6 +31,7 @@ f_rangeStep(Core c, Range r, StructState sw) =>
         r.lo := bd.legExt1
         r.loBar := bar_index
         r.t0 := bd.origT
+        r.b0 := bd.origBar
         r.inOte := false
         f_emit(c, EV_RANGE_NEW, -1, (r.hi + r.lo) / 2, r.id, bd.evId, 3, r.hi, r.lo, 1)
     else if r.state > 0

@@ -33,11 +33,11 @@ f_pdText(Ctx x, bool longForm) =>
 f_pdColor(Ctx x) =>
     na(x.pd) ? C_NEUT : x.pdZone == 1 ? C_BEAR : x.pdZone == -1 ? C_BULL : C_NEUT
 
-f_statusText(Core c) =>
-    not c.warm ? "WARMING UP" : nonStdChart ? "⚠ NON-STANDARD CHART" : ""
+f_statusText(Core c, bool liveView) =>
+    not c.warm ? "WARMING UP" : nonStdChart ? "⚠ NON-STANDARD CHART" : not liveView ? "◀ HISTORY VIEW" : ""
 
 // Context Ribbon: STR │ SESSION │ PD │ LIQ │ status
-f_ribbon(table tb, Ctx x, Core c) =>
+f_ribbon(table tb, Ctx x, Core c, bool liveView) =>
     if not na(tb)
         string sz = size.small
         string s0 = x.ranging ? "STR ◆ RANGE" : x.swTrend == 1 ? "STR ▲ BULL" : x.swTrend == -1 ? "STR ▼ BEAR" : "STR —"
@@ -54,11 +54,11 @@ f_ribbon(table tb, Ctx x, Core c) =>
                 int side = swept ? -le.dir : le.dir
                 s3 := (side == 1 ? "BSL" : "SSL") + (swept ? " ✕ " : " TAKEN ") + str.tostring(bar_index - le.bar) + "b"
         table.cell(tb, 3, 0, s3, text_color = s3 == "LIQ —" ? C_NEUT : C_LIQ, text_size = sz, tooltip = na(le) ? "No recent liquidity event" : le.s1 + " · " + f_px(le.price) + " · " + f_timeStr(le.t))
-        string s4 = f_statusText(c)
+        string s4 = f_statusText(c, liveView)
         if s4 == ""
             table.clear(tb, 4, 0)
         else
-            table.cell(tb, 4, 0, s4, text_color = C_WARN, text_size = sz, tooltip = "Signals and alerts are suppressed during warm-up (first " + str.tostring(warmBars) + " bars).")
+            table.cell(tb, 4, 0, s4, text_color = C_WARN, text_size = sz, tooltip = not liveView ? "The chart shows history for the visible range. Ribbon and Dashboard always describe the latest bar." : "Signals and alerts are suppressed during warm-up (first " + str.tostring(warmBars) + " bars).")
     true
 
 f_dashRow(table tb, int row, string k, string v, color vc, string tip, string sz) =>
@@ -67,7 +67,7 @@ f_dashRow(table tb, int row, string k, string v, color vc, string tip, string sz
     row + 1
 
 // Dashboard: answers instead of statistics (§14.5). Rows for HTF, SETUP and QUALITY arrive with P5/P7.
-f_dashboard(table tb, Ctx x, Core c, StructState si, Range r) =>
+f_dashboard(table tb, Ctx x, Core c, StructState si, Range r, bool liveView) =>
     if not na(tb)
         bool exp = i_dashSize == "Expanded"
         string sz = exp ? size.small : size.tiny
@@ -94,7 +94,7 @@ f_dashboard(table tb, Ctx x, Core c, StructState si, Range r) =>
             string inT = x.inTrend == 1 ? "BULLISH" : x.inTrend == -1 ? "BEARISH" : "—"
             row := f_dashRow(tb, row, "INTERNAL", inT, f_dirColor(x.inTrend), "Internal structure trend", sz)
             row := f_dashRow(tb, row, "MODE", str.tostring(i_mode) + " · v" + BUILD, C_NEUT, "Display mode and build", sz)
-        string stt = f_statusText(c)
+        string stt = f_statusText(c, liveView)
         if stt != ""
             row := f_dashRow(tb, row, "STATUS", stt, C_WARN, "Signals and alerts are suppressed during warm-up", sz)
         if mc.labelLevel >= 3 and exp
@@ -112,7 +112,7 @@ f_dashboard(table tb, Ctx x, Core c, StructState si, Range r) =>
     true
 
 // Debug table (§19.1): budgets, registries, data health
-f_debugTable(table tb, Core c, array<Zone> zs, array<Liq> lv, BoxPool pz, BoxPool pw, BoxPool prb, LinePool pm, LinePool pl, LinePool ps, LinePool prl, LabelPool pb) =>
+f_debugTable(table tb, View v, Core c, array<Zone> zs, array<Zone> za, array<Liq> lv, array<Liq> la, BoxPool pz, BoxPool pw, BoxPool prb, LinePool pm, LinePool pl, LinePool ps, LinePool prl, LabelPool pb) =>
     if not na(tb)
         string sz = size.tiny
         int zLive = 0
@@ -128,8 +128,9 @@ f_debugTable(table tb, Core c, array<Zone> zs, array<Liq> lv, BoxPool pz, BoxPoo
         int row = 0
         row := f_dashRow(tb, row, "BUILD", "v" + BUILD + " · " + str.tostring(i_mode), C_TEXT, "", sz)
         row := f_dashRow(tb, row, "BARS", str.tostring(bar_index + 1) + (c.warm ? " · warm" : " · warming up"), c.warm ? C_TEXT : C_WARN, "Warm-up: " + str.tostring(warmBars) + " bars", sz)
-        row := f_dashRow(tb, row, "ZONES", str.tostring(zLive) + " live / " + str.tostring(zs.size()), C_TEXT, "Registry cap " + str.tostring(ZONE_CAP), sz)
-        row := f_dashRow(tb, row, "LEVELS", str.tostring(lLive) + " live / " + str.tostring(lv.size()), C_TEXT, "Registry cap " + str.tostring(LIQ_CAP), sz)
+        row := f_dashRow(tb, row, "VIEW", (v.vp ? "visible " : "recent ") + str.tostring(v.iL) + "–" + str.tostring(v.iR) + " · " + str.tostring(v.segs) + " seg" + (v.live ? "" : " · history"), C_TEXT, "Bar window drawn and number of time segments", sz)
+        row := f_dashRow(tb, row, "ZONES", str.tostring(zLive) + " live / " + str.tostring(zs.size()) + " · arch " + str.tostring(za.size()), C_TEXT, "Live cap " + str.tostring(ZONE_CAP) + " · archive cap " + str.tostring(ZONE_ARCH_CAP), sz)
+        row := f_dashRow(tb, row, "LEVELS", str.tostring(lLive) + " live / " + str.tostring(lv.size()) + " · arch " + str.tostring(la.size()), C_TEXT, "Live cap " + str.tostring(LIQ_CAP) + " · archive cap " + str.tostring(LIQ_ARCH_CAP), sz)
         row := f_dashRow(tb, row, "EVENTS", str.tostring(c.barEvents.size()) + " bar · " + str.tostring(c.history.size()) + " hist", C_TEXT, "Event bus: current bar / history ring", sz)
         row := f_dashRow(tb, row, "BOXES", str.tostring(boxUsed) + " / " + str.tostring(boxCap), C_TEXT, "Drawn / pool size (platform limit 500)", sz)
         row := f_dashRow(tb, row, "LINES", str.tostring(lineUsed) + " / " + str.tostring(lineCap), C_TEXT, "Drawn / pool size (platform limit 500)", sz)

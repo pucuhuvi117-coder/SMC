@@ -1,6 +1,8 @@
 // ═══ 60 · VISUAL TOKENS ═════════════════════════════════════════════════════════
 // Design system tokens (docs/04-visual-design-system.md §13.3–13.7). Renderers use only
 // these values: hue = meaning, form = entity type, transparency = state × relevance.
+// v0.2: transparency scale retuned after the first visual test (zones and sessions were
+// too faint) and made adjustable with the Visibility setting.
 
 // Theme (§13.4): luminance of the chart background, or manual override
 float bgLum = 0.2126 * color.r(chart.bg_color) + 0.7152 * color.g(chart.bg_color) + 0.0722 * color.b(chart.bg_color)
@@ -10,36 +12,49 @@ bool isCvd = i_palette == PaletteOpt.cvd
 // Hue tokens (Standard / Color-blind safe × Dark / Light)
 color C_BULL = isCvd ? (isDark ? #56B4E9 : #0072B2) : (isDark ? #22AB94 : #089981)
 color C_BEAR = isCvd ? (isDark ? #E69F00 : #D55E00) : (isDark ? #F7525F : #F23645)
-color C_NEUT = isDark ? #8C909C : #6B7080
+color C_NEUT = isDark ? #9598A1 : #6B7080
 color C_LIQ = isCvd ? (isDark ? #D0D3DB : #3B3F4A) : (isDark ? #E3B341 : #A86F00)
 color C_SIG = isCvd ? (isDark ? #CC79A7 : #AA3377) : (isDark ? #4C8DFF : #2962FF)
 color C_WARN = isCvd ? (isDark ? #F0E442 : #9C6B00) : (isDark ? #FF9F1A : #E65100)
 color C_MITI = isCvd ? (isDark ? #9C9EA6 : #8A8C94) : (isDark ? #9C83D6 : #7B5CC4)
-color C_INV = isDark ? #5A5E6A : #B8BBC4
+color C_INV = isDark ? #6A6E7A : #A9ADB8
 color C_TEXT = chart.fg_color
 color C_PANEL = isDark ? #1E222D : #F0F3FA
 color C_PBORDER = isDark ? #2A2E39 : #D1D4DC
 
-// Line / text transparency (§13.5)
+// Visibility offset: Subtle lighter, Bold denser (applies to fills and non-text lines)
+visOff = switch i_visibility
+    Visibility.subtle => 8
+    Visibility.bold => -12
+    => 0
+
+f_tok(int base) =>
+    math.max(0, math.min(97, base + visOff))
+
+// Line transparency (§13.5)
 OP_SOLID = 0
-OP_STRONG = 15
-OP_MEDIUM = 40
-OP_SOFT = 65
-OP_FAINT = 80
+OP_STRONG = f_tok(10)
+OP_MEDIUM = f_tok(30)
+OP_SOFT = f_tok(50)
+OP_FAINT = f_tok(65)
 
 // Fill transparency (§13.5)
-F_FOCUS = 70
-F_STRONG = 76
-F_BASE = 82
-F_LIGHT = 88
-F_FAINT = 92
-F_WASH = 96
-F_GHOST = 98
+F_FOCUS = f_tok(65)
+F_STRONG = f_tok(70)
+F_BASE = f_tok(76)
+F_LIGHT = f_tok(80)
+F_FAINT = f_tok(86)
+F_WASH = f_tok(92)
+F_GHOST = f_tok(95)
 F_PANEL = 10
 
-// Relevance modulation: transp_eff = min(base + round((1 - R) × 12), 97)
+// Relevance modulation (§16.4): less important objects fade a little, never to invisible
 f_tr(int base, float r) =>
-    math.min(base + math.round((1.0 - r) * 12.0), 97)
+    math.max(0, math.min(94, base + math.round((1.0 - r) * 6.0)))
 
 f_dirColor(int d) =>
     d > 0 ? C_BULL : d < 0 ? C_BEAR : C_NEUT
+
+// Session colors come from the settings (fill = the chosen color and opacity)
+f_sesColor(string code) =>
+    code == "ASIA" ? i_sesColAsia : code == "LON KZ" ? i_sesColLon : i_sesColNy
