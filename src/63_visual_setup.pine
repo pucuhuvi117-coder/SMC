@@ -47,30 +47,33 @@ f_drawSetup(BoxPool pb, LinePool pl, LabelPool plb, Setup s, bool past) =>
     bool planned = not na(s.readyBar)
     bool active = f_setActive(s)
     bool done = s.state >= SS_WIN
-    bool bad = s.state == SS_SL or s.state == SS_INVALID
-    bool lapsed = s.state == SS_EXPIRED or s.state == SS_MISSED
+    // v0.4.2: finished setups must stay readable on dark charts (user feedback "barely visible").
+    // A trade that was entered shows its outcome hue (win green, stop red) over a faded plan;
+    // one that ended before the entry (invalid, expired, missed) keeps only a neutral dashed zone.
+    bool noTrade = done and na(s.trigT)
+    color sig = noTrade ? C_NEUT : C_SIG
+    color rew = C_BULL
+    color rsk = C_BEAR
+    color outc = s.state == SS_WIN ? C_BULL : s.state == SS_SL ? C_BEAR : C_NEUT
     int x0 = planned ? s.readyT : s.shiftT
     int x1 = done ? math.max(s.endT, x0 + 5 * barMs) : math.max(x0 + 20 * barMs, time + 3 * barMs)
-    color sig = bad or lapsed ? C_INV : C_SIG
-    color rew = bad or lapsed ? C_INV : C_BULL
-    color rsk = bad or lapsed ? C_INV : C_BEAR
-    int lnT = done ? OP_FAINT : OP_SOLID
-    // entry zone (POI): outline while forming or lapsed, focus fill when READY / ACTIVE
-    bool outline = forming or lapsed
-    f_box(pb, x0, x1, s.entryTop, s.entryBot, color.new(sig, outline or done ? F_GHOST : F_FOCUS), color.new(sig, outline ? OP_SOFT : done ? OP_FAINT : OP_MEDIUM), 1, outline ? line.style_dashed : line.style_solid, "", color(na), text.align_right)
-    if planned and vPlan and not lapsed
+    int lnT = done ? OP_SOFT : OP_SOLID
+    // entry zone (POI): dashed outline while forming or for a setup without a trade, focus fill when READY / ACTIVE
+    bool outline = forming or noTrade
+    f_box(pb, x0, x1, s.entryTop, s.entryBot, color.new(sig, outline or done ? F_WASH : F_FOCUS), color.new(done ? outc : sig, OP_MEDIUM), 1, outline ? line.style_dashed : line.style_solid, "", color(na), text.align_right)
+    if planned and vPlan and not noTrade
         float e = s.entry
         float lastTp = f_tpAt(s, s.nTp)
         if i_mode != DisplayMode.clean
-            f_box(pb, x0, x1, math.max(e, lastTp), math.min(e, lastTp), color.new(rew, done ? F_GHOST : F_FAINT), color(na), 1, line.style_solid, "", color(na), text.align_right)
-            f_box(pb, x0, x1, math.max(e, s.slInit), math.min(e, s.slInit), color.new(rsk, done ? F_GHOST : F_FAINT), color(na), 1, line.style_solid, "", color(na), text.align_right)
+            f_box(pb, x0, x1, math.max(e, lastTp), math.min(e, lastTp), color.new(rew, done ? F_WASH : F_FAINT), color(na), 1, line.style_solid, "", color(na), text.align_right)
+            f_box(pb, x0, x1, math.max(e, s.slInit), math.min(e, s.slInit), color.new(rsk, done ? F_WASH : F_FAINT), color(na), 1, line.style_solid, "", color(na), text.align_right)
         f_line(pl, x0, e, x1, e, color.new(sig, lnT), line.style_solid, 2)
         f_line(pl, x0, s.slInit, x1, s.slInit, color.new(rsk, lnT), line.style_solid, 2)
         for n = 1 to 3
             if n <= s.nTp
                 float tp = f_tpAt(s, n)
                 bool hit = n <= s.tpHit
-                f_line(pl, x0, tp, x1, tp, color.new(rew, done or hit ? OP_FAINT : OP_MEDIUM), line.style_dashed, 1)
+                f_line(pl, x0, tp, x1, tp, color.new(rew, done or hit ? OP_SOFT : OP_MEDIUM), line.style_dashed, 1)
                 if not past and labelLvl > 0
                     f_label(plb, x1, tp, "TP" + str.tostring(n) + " " + f_px(tp) + " · " + str.tostring(f_rrAt(s, tp), "0.0") + "R" + (hit ? " ✓" : ""), color.new(rew, done ? OP_SOFT : OP_SOLID), label.style_label_left, size.tiny, (n == 1 ? s.tp1Tag : n == 2 ? s.tp2Tag : s.tp3Tag) + " · " + f_px(tp), yloc.price)
         if not past and labelLvl > 0
@@ -89,14 +92,14 @@ f_drawSetup(BoxPool pb, LinePool pl, LabelPool plb, Setup s, bool past) =>
             txt := head + "   E " + f_px(s.entry) + "\n" + s.chain + "\nRR 1:" + str.tostring(s.rrFinal, "0.0") + " · SL " + str.tostring(risk / vu, "0.0") + " ATR"
         else
             txt := head + "\n" + s.chain
-    float cy = planned and not lapsed ? s.entry : (s.entryTop + s.entryBot) / 2
-    color tc = done or forming ? color.new(sig, OP_MEDIUM) : sig
+    float cy = planned and not noTrade ? s.entry : (s.entryTop + s.entryBot) / 2
+    color tc = done ? outc : forming ? color.new(sig, OP_MEDIUM) : sig
     color bg = past ? color(na) : color.new(C_PANEL, done ? 40 : 15)
     f_card(plb, x1 + barMs, cy, txt, tc, bg, past ? size.tiny : size.small, f_setTip(s))
     true
 
 // Live: the focus composition per direction plus recently finished ones (TTL by outcome and
-// mode, §14.8). Analysis / Debug: up to setupPast older setups inside the visible window.
+// mode, §14.8). Older setups inside the visible window: up to setupPast (Normal 6, Analysis / Debug 10).
 f_setDoneTtl(Setup s) =>
     bool clean = i_mode == DisplayMode.clean
     s.state == SS_WIN ? (clean ? 10 : 30) : s.state == SS_SL or s.state == SS_INVALID ? (clean ? 5 : 30) : (clean ? 0 : 10)
