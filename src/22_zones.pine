@@ -223,23 +223,40 @@ f_archiveZone(array<Zone> arch, Zone z) =>
 f_zoneStep(Core c, array<Zone> zs, array<Zone> arch) =>
     int n = zs.size()
     if n > 0
+        // Bar values and limits are the same for every zone: read once (profiled hot loop, v0.3.0: 22% of a full run)
+        float cl = close
+        float hi = high
+        float lo = low
+        float vuNow = vu
+        int bi = bar_index
+        float distLim = ZONE_MAX_DIST * vuNow
+        float distLimHtf = distLim * htfDistMult
         for i = n - 1 to 0
             Zone z = zs.get(i)
             if z.state < ZS_FILLED
-                if z.born < bar_index
+                if z.born < bi
+                    // A lifecycle step changes nothing unless the bar reaches the zone (same test as `inZone` in
+                    // f_fvgLife / f_obLife). A close through the far edge implies it (low <= close < bottom <= top),
+                    // so only the running leg extreme of an OB still has to follow every bar.
+                    bool bull = z.dir == 1
+                    bool reached = bull ? lo <= z.top : hi >= z.bottom
                     if z.kind == ZK_FVG
-                        f_fvgLife(c, zs, z)
+                        if reached
+                            f_fvgLife(c, zs, z)
                     else
-                        f_obLife(c, zs, z)
+                        if z.kind == ZK_OB and not na(z.legExt)
+                            z.legExt := bull ? math.max(z.legExt, hi) : math.min(z.legExt, lo)
+                        if reached
+                            f_obLife(c, zs, z)
                 if z.state < ZS_FILLED
-                    float dist = close > z.top ? close - z.top : close < z.bottom ? z.bottom - close : 0.0
+                    float dist = cl > z.top ? cl - z.top : cl < z.bottom ? z.bottom - cl : 0.0
                     // closest approach in ATR while alive: decides whether the archive keeps it
-                    z.nearD := na(z.nearD) ? dist / vu : math.min(z.nearD, dist / vu)
+                    z.nearD := na(z.nearD) ? dist / vuNow : math.min(z.nearD, dist / vuNow)
                     bool htf = z.tf != TF_CHART
                     int maxAge = z.kind == ZK_FVG or z.kind == ZK_IFVG ? FVG_MAX_AGE : OB_MAX_AGE
                     // HTF zones count their age in HTF bars (also right on session instruments)
-                    int age = htf ? hLastBars - nz(z.hBorn, hLastBars) : bar_index - z.born
-                    if age > maxAge or dist > ZONE_MAX_DIST * vu * (htf ? htfDistMult : 1.0)
+                    int age = htf ? hLastBars - nz(z.hBorn, hLastBars) : bi - z.born
+                    if age > maxAge or dist > (htf ? distLimHtf : distLim)
                         z.state := ZS_EXPIRED
                         z.endBar := bar_index
                         z.endT := time
