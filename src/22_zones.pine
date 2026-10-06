@@ -98,7 +98,7 @@ f_obFromBreak(Core c, array<Zone> zs, Brk b, StructState swSt) =>
             if n > 0
                 for i = n - 1 to 0
                     Zone z = zs.get(i)
-                    if z.kind == ZK_OB and z.dir == dir and z.t == tJ
+                    if z.tf == TF_CHART and z.kind == ZK_OB and z.dir == dir and z.t == tJ
                         pass := false
                         if b.lvl > z.lvl
                             z.lvl := b.lvl
@@ -126,7 +126,7 @@ f_fvgNew(Core c, array<Zone> zs, int dir) =>
     z
 
 f_zoneEvent(Core c, Zone z, int typ, int tier, float v2 = na) =>
-    f_emit(c, typ, z.dir, close, z.id, na, tier, z.kind, v2, z.touches, f_kindTag(z.kind))
+    f_emit(c, typ, z.dir, close, z.id, na, tier, z.kind, v2, z.touches, f_kindTag(z.kind), z.tf)
 
 // Lifecycle for OB / BB / MB / IFVG (§7.3)
 f_obLife(Core c, array<Zone> zs, Zone z) =>
@@ -146,7 +146,7 @@ f_obLife(Core c, array<Zone> zs, Zone z) =>
             Zone nz = Zone.new(id = f_nextId(c), kind = nk, dir = -z.dir, state = ZS_FRESH, top = z.top, bottom = z.bottom, bar = z.bar, t = z.t, born = bar_index, bornT = time, strength = z.strength * 0.9, disp = z.disp, parent = z.id, brkId = z.brkId, lvl = z.lvl, tf = z.tf)
             zs.push(nz)
             z.state := ZS_CONVERTED
-            f_emit(c, EV_ZONE_CONVERTED, nz.dir, (nz.top + nz.bottom) / 2, nz.id, be.id, 2, nk, z.id, na, f_kindTag(nk))
+            f_emit(c, EV_ZONE_CONVERTED, nz.dir, (nz.top + nz.bottom) / 2, nz.id, be.id, 2, nk, z.id, na, f_kindTag(nk), z.tf)
         else
             z.state := ZS_INVALID
     else
@@ -192,16 +192,30 @@ f_fvgLife(Core c, array<Zone> zs, Zone z) =>
                 Zone nz = Zone.new(id = f_nextId(c), kind = ZK_IFVG, dir = -z.dir, state = ZS_FRESH, top = z.top, bottom = z.bottom, bar = z.bar, t = z.t, born = bar_index, bornT = time, strength = z.strength, disp = z.disp, parent = z.id, lvl = z.lvl, tf = z.tf)
                 zs.push(nz)
                 z.state := ZS_CONVERTED
-                f_emit(c, EV_ZONE_CONVERTED, nz.dir, (nz.top + nz.bottom) / 2, nz.id, fe.id, 2, ZK_IFVG, z.id, na, "IFVG")
+                f_emit(c, EV_ZONE_CONVERTED, nz.dir, (nz.top + nz.bottom) / 2, nz.id, fe.id, 2, ZK_IFVG, z.id, na, "IFVG", z.tf)
             else
                 z.state := ZS_FILLED
     true
 
+// Display filter shared with the renderer: kind toggles and minor-zone reduction (ADR-09)
+f_zoneShown(Zone z) =>
+    bool isOb = z.kind == ZK_OB or z.kind == ZK_BB or z.kind == ZK_MB
+    bool htf = z.tf != TF_CHART
+    bool kindOk = htf ? (z.kind == ZK_FVG or z.kind == ZK_IFVG ? i_htfFVG and vFVG : i_htfOB and vOB and (z.kind == ZK_OB or i_breakers)) : isOb ? vOB and (z.kind == ZK_OB or i_breakers) : vFVG
+    bool minorOk = mc.debug or htf or not ((i_reduceMinorOb and z.kind == ZK_OB and z.fallback) or (i_reduceMinorFvg and z.kind == ZK_FVG and z.strength < 0.35))
+    kindOk and minorOk
+
+// Only zones the history view can ever draw are archived, so the archive reaches further back:
+// shown by the display settings, and close enough to price when they ended (§15 M6).
 f_archiveZone(array<Zone> arch, Zone z) =>
-    arch.push(z)
-    if arch.size() > ZONE_ARCH_CAP
-        arch.shift()
-    true
+    bool htf = z.tf != TF_CHART
+    float dist = close > z.top ? (close - z.top) / vu : close < z.bottom ? (z.bottom - close) / vu : 0.0
+    bool keep = f_zoneShown(z) and (mc.debug or dist <= mc.distMax * (htf ? 2 : 1))
+    if keep
+        arch.push(z)
+        if arch.size() > ZONE_ARCH_CAP
+            arch.shift()
+    keep
 
 // Confirmed-bar step for live zones: lifecycle, expiry, then finished zones move to the archive
 f_zoneStep(Core c, array<Zone> zs, array<Zone> arch) =>
@@ -219,7 +233,7 @@ f_zoneStep(Core c, array<Zone> zs, array<Zone> arch) =>
                     float dist = close > z.top ? close - z.top : close < z.bottom ? z.bottom - close : 0.0
                     bool htf = z.tf != TF_CHART
                     int maxAge = (z.kind == ZK_FVG or z.kind == ZK_IFVG ? FVG_MAX_AGE : OB_MAX_AGE) * (htf ? htfAgeMult : 1)
-                    if bar_index - z.born > maxAge or dist > ZONE_MAX_DIST * vu * (htf ? 3 : 1)
+                    if bar_index - z.born > maxAge or dist > ZONE_MAX_DIST * vu * (htf ? htfDistMult : 1.0)
                         z.state := ZS_EXPIRED
                         z.endBar := bar_index
                         z.endT := time

@@ -90,12 +90,13 @@ EQ_BAND = 0.02
 ZONE_CAP = 250
 LIQ_CAP = 150
 // Archive of finished objects for history rendering (v0.2): not iterated per bar
-ZONE_ARCH_CAP = 800
-LIQ_ARCH_CAP = 800
-RANGE_ARCH_CAP = 300
-SESS_CAP = 400
-BRK_CAP = 1000
-SWING_CAP = 1000
+// v0.3: deep enough for a fully zoomed-out chart; only drawable objects are archived
+ZONE_ARCH_CAP = 4000
+LIQ_ARCH_CAP = 4000
+RANGE_ARCH_CAP = 600
+SESS_CAP = 1200
+BRK_CAP = 3000
+SWING_CAP = 3000
 // Visible-range rendering: a wide view is split into time segments with their own anchor
 SEG_BARS = 150
 SEG_MAX = 6

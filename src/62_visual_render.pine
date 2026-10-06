@@ -5,6 +5,8 @@
 // the live edge, which keeps the picture stable between realtime ticks (AC-M13).
 // v0.2: everything is drawn for a View — the visible range split into time segments,
 // or the recent window — so history keeps the same density as the live edge.
+// v0.3: each segment gets its share of every pool, and picks inside a segment are spread
+// over time slots, so the left part of the screen is never starved.
 
 // ── Pools
 f_fillBoxPool(BoxPool p, int n) =>
@@ -75,8 +77,7 @@ f_finishLabels(LabelPool p) =>
     p.used
 
 // ── Primitive setters
-// Box text is placed at the right edge by default: active boxes end right of the last
-// candle, so their tags never cover price action (user feedback v0.1).
+// Box text is only used for Debug IDs; zone tags go to the right-edge column (v0.3).
 f_box(BoxPool p, int l, int r, float top, float bot, color fill, color border, int bw, string bst, string txt, color tc, string halign) =>
     box b = p.takeBox()
     if not na(b)
@@ -117,15 +118,15 @@ f_label(LabelPool p, int x, float y, string txt, color tc, string st, string sz,
         label.set_textalign(lb, text.align_left)
     not na(lb)
 
-// ── Right-edge tags with Smart Labels merging (§14.7)
-f_drawTags(LabelPool p, array<Tag> tags, int x) =>
+// ── Right-edge tags with Smart Labels merging (§14.7). The merge distance grows with the
+// visible price span, so tags never print on top of each other when zoomed out.
+f_drawTags(LabelPool p, array<Tag> tags, int x, float sep) =>
     int n = tags.size()
     if n > 0
         array<float> ps = array.new<float>()
         for tg in tags
             ps.push(tg.price)
         array<int> idx = ps.sort_indices(order.ascending)
-        float sep = 0.35 * vu
         float curP = na
         string curT = ""
         string curTip = ""
@@ -159,13 +160,24 @@ f_buildView(int vpBarL, int vpBarR, array<float> hc, array<float> ha, int hb, fl
     if live
         iR := bar_index
     int w = iR - iL + 1
-    int segs = vp ? math.max(1, math.min(SEG_MAX, int(math.round(w / SEG_BARS)))) : 1
+    // v0.3: a segment is at most SEG_BARS wide, so even the default zoom has two anchors
+    int segs = vp ? math.max(1, math.min(SEG_MAX, int(math.ceil(w / SEG_BARS)))) : 1
     View v = View.new(vp, live, iL, iR, segs, array.new<int>(), array.new<float>(), array.new<float>())
     for s = 0 to segs - 1
         int e = s == segs - 1 ? iR : iL + int(math.round((s + 1) * w / segs)) - 1
         v.segEnd.push(e)
         v.segPx.push(e >= bar_index ? pxLive : f_histAt(hc, hb, e, pxLive))
         v.segAtr.push(e >= bar_index ? vu : f_histAt(ha, hb, e, vu))
+    // price span of the window (closes), for label spacing that follows the zoom
+    float lo = na
+    float hi = na
+    for k = iL to iR
+        float c = k >= bar_index ? pxLive : f_histAt(hc, hb, k, na)
+        if not na(c)
+            lo := na(lo) ? c : math.min(lo, c)
+            hi := na(hi) ? c : math.max(hi, c)
+    v.winLo := lo
+    v.winHi := hi
     v
 
 // Segment that contains a bar index (the last segment for anything at or beyond the right edge)
@@ -178,9 +190,35 @@ f_segOf(View v, int idx) =>
     s
 
 // Per-segment share of a window cap, so objects cover the whole screen instead of piling
-// up near the right edge (user feedback v0.2: "the chart is empty on the left")
+// up near the right edge (user feedback v0.2: "the chart is empty on the left"). Rounded
+// down, so the shares never add up to more than the cap and the pools behind it.
 f_quota(View v, int cap) =>
-    cap <= 0 ? 0 : math.max(1, int(math.ceil(cap / v.segs)))
+    cap <= 0 ? 0 : math.max(1, int(cap / v.segs))
+
+// Even spread inside segments (v0.3): candidates arrive in priority order. Pass 1 takes at most
+// one object per time slot, pass 2 fills each segment's quota in priority order. Returns the
+// indices of the picked candidates; index 0 is always picked first when anything is.
+f_spreadPick(View v, array<int> xs, array<int> sg, int q, int slots) =>
+    array<int> out = array.new<int>()
+    int m = xs.size()
+    if m > 0 and q > 0
+        int ns = math.max(1, slots)
+        int w = math.max(1, v.iR - v.iL + 1)
+        array<int> cnt = array.new<int>(v.segs, 0)
+        array<bool> slotUsed = array.new<bool>(ns, false)
+        array<bool> took = array.new<bool>(m, false)
+        for pass = 0 to 1
+            for k = 0 to m - 1
+                if not took.get(k)
+                    int s = sg.get(k)
+                    if cnt.get(s) < q
+                        int sl = math.max(0, math.min(ns - 1, int((xs.get(k) - v.iL) * ns / w)))
+                        if pass == 1 or not slotUsed.get(sl)
+                            took.set(k, true)
+                            slotUsed.set(sl, true)
+                            cnt.set(s, cnt.get(s) + 1)
+                            out.push(k)
+    out
 
 f_htfPrefix(int tf) =>
     tf != TF_CHART ? "◆" + htfLabel + " " : ""
@@ -190,14 +228,18 @@ f_htfPrefix(int tf) =>
 f_zoneLeftT(Zone z) =>
     z.kind == ZK_BB or z.kind == ZK_MB or z.kind == ZK_IFVG ? z.bornT : z.t
 
-f_drawZone(BoxPool pz, LinePool pm, Zone z, float r, int mergeN, int rightT, bool ghostEnded) =>
+f_zoneTip(Zone z) =>
+    (z.tf != TF_CHART ? htfLabel + " " : "") + f_kindTag(z.kind) + (z.dir == 1 ? " bullish" : " bearish") + " · " + f_zoneStateName(z.state) + "\n" + f_px(z.bottom) + " – " + f_px(z.top) + "\nsince " + f_timeStr(z.t)
+
+f_drawZone(BoxPool pz, LinePool pm, array<Tag> tags, Zone z, float r, int mergeN, int rightT, bool ghostEnded, bool liveView) =>
     bool liveNow = z.state < ZS_FILLED
     bool htf = z.tf != TF_CHART
     bool ghost = (mc.debug and r < mc.theta) or (not liveNow and ghostEnded)
     color hue = ghost ? C_INV : z.state == ZS_MITIGATED ? C_MITI : f_dirColor(z.dir)
-    int fillBase = not liveNow ? F_FAINT : z.kind == ZK_OB ? (z.state == ZS_FRESH ? (htf ? F_STRONG : F_BASE) : z.state == ZS_TOUCHED ? F_LIGHT : F_FAINT) : z.kind == ZK_MB ? F_FAINT : F_LIGHT
-    bool hasBorder = z.kind != ZK_FVG or htf
-    int borderBase = z.state == ZS_FRESH ? (htf ? OP_STRONG : OP_MEDIUM) : OP_SOFT
+    // finished zones stay readable as history: light fill plus a dotted border (v0.3)
+    int fillBase = not liveNow ? F_LIGHT : z.kind == ZK_OB ? (z.state == ZS_FRESH ? (htf ? F_STRONG : F_BASE) : z.state == ZS_TOUCHED ? F_LIGHT : F_FAINT) : z.kind == ZK_MB ? F_FAINT : F_LIGHT
+    bool hasBorder = z.kind != ZK_FVG or htf or not liveNow
+    int borderBase = not liveNow ? OP_SOFT : z.state == ZS_FRESH ? (htf ? OP_STRONG : OP_MEDIUM) : OP_SOFT
     string bst = z.kind == ZK_BB or z.kind == ZK_IFVG ? line.style_dashed : z.kind == ZK_MB or z.kind == ZK_FVG or z.state == ZS_MITIGATED or not liveNow ? line.style_dotted : line.style_solid
     int fT = ghost ? F_GHOST : f_tr(fillBase, r)
     color fillC = color.new(hue, fT)
@@ -215,35 +257,38 @@ f_drawZone(BoxPool pz, LinePool pm, Zone z, float r, int mergeN, int rightT, boo
     string tag = f_htfPrefix(z.tf) + f_kindTag(z.kind) + (mergeN > 1 ? " ×" + str.tostring(mergeN) : "")
     if dbg
         tag := "#" + str.tostring(z.id) + " " + tag + " " + f_zoneStateName(z.state) + " R" + str.tostring(r, "0.00")
-    // Text only on boxes that reach the empty area right of the last candle
-    string txt = dbg ? tag : not liveNow or labelLvl == 0 or top - bot < 0.25 * vu ? "" : tag
-    f_box(pz, lx, rx, top, bot, fillC, bdC, htf ? 2 : 1, bst, txt, color.new(hue, 0), text.align_right)
+    bool drawn = f_box(pz, lx, rx, top, bot, fillC, bdC, htf ? 2 : 1, bst, dbg ? tag : "", color.new(hue, 0), text.align_right)
+    // Tags of active zones join the right-edge column (Smart Labels) instead of sitting inside
+    // the box, so they never cover the last candles, whatever the zoom
+    if drawn and liveNow and liveView and labelLvl > 0 and not dbg
+        tags.push(Tag.new((z.top + z.bottom) / 2, tag, color.new(hue, 0), f_zoneTip(z)))
     bool isOb = z.kind == ZK_OB or z.kind == ZK_BB or z.kind == ZK_MB
-    if liveNow and ((isOb and i_obMid) or (not isOb and i_fvgCE))
+    if drawn and liveNow and ((isOb and i_obMid) or (not isOb and i_fvgCE))
         float mid = (z.top + z.bottom) / 2
         if mid <= top and mid >= bot
             int lt = z.state == ZS_CE ? OP_FAINT : f_tr(OP_SOFT, r)
             f_line(pm, lx, mid, rx, mid, color.new(hue, lt), line.style_dotted, 1)
-    true
+    drawn
 
-f_renderZones(View v, BoxPool pz, LinePool pm, array<Zone> liveZ, array<Zone> archZ, int rightT, array<float> hc, array<float> ha, int hb) =>
+// Candidates are grouped by virtual segment: vs = 2 × time segment + 1 for zones alive at the
+// segment's anchor, 2 × segment for zones that finished inside it (history). Side caps apply
+// per virtual segment, so history never competes with active zones near the live edge.
+f_renderZones(View v, BoxPool pz, LinePool pm, array<Tag> tags, array<Zone> liveZ, array<Zone> archZ, int rightT, array<float> hc, array<float> ha, int hb) =>
     array<Zone> cz = array.new<Zone>()
     array<float> keys = array.new<float>()
     array<float> rs = array.new<float>()
     array<int> segIx = array.new<int>()
     array<float> anchorPx = array.new<float>()
     array<bool> ghostIx = array.new<bool>()
+    // boxes narrower than this are invisible slivers at the current zoom
+    int sliver = math.max(2, int((v.iR - v.iL) / 200))
     for src = 0 to 1
         array<Zone> arr = src == 0 ? liveZ : archZ
         for z in arr
-            bool isOb = z.kind == ZK_OB or z.kind == ZK_BB or z.kind == ZK_MB
             bool htf = z.tf != TF_CHART
-            bool kindOk = htf ? (z.kind == ZK_FVG or z.kind == ZK_IFVG ? i_htfFVG and vFVG : i_htfOB and vOB and (z.kind == ZK_OB or i_breakers)) : isOb ? vOB and (z.kind == ZK_OB or i_breakers) : vFVG
             bool liveNow = z.state < ZS_FILLED
             int endEff = liveNow ? bar_index : z.endBar
-            bool inWin = z.born <= v.iR and endEff >= v.iL
-            bool minorOk = mc.debug or htf or not ((i_reduceMinorOb and z.kind == ZK_OB and z.fallback) or (i_reduceMinorFvg and z.kind == ZK_FVG and z.strength < 0.35))
-            if kindOk and inWin and minorOk and (z.state != ZS_MITIGATED or vMitigated)
+            if z.born <= v.iR and endEff >= v.iL and f_zoneShown(z) and (z.state != ZS_MITIGATED or vMitigated)
                 int seg = f_segOf(v, math.min(endEff, v.iR))
                 bool liveSeg = v.live and seg == v.segs - 1
                 int anchor = v.segEnd.get(seg)
@@ -251,71 +296,88 @@ f_renderZones(View v, BoxPool pz, LinePool pm, array<Zone> liveZ, array<Zone> ar
                 float atr = v.segAtr.get(seg)
                 bool ok = true
                 bool ghost = false
+                bool histRank = false
                 if endEff < anchor
-                    if liveSeg
-                        // recently finished near the live edge: short TTL, shown as a ghost
-                        ok := mc.ttl > 0 and z.state != ZS_CONVERTED and z.state != ZS_EXPIRED and bar_index - z.endBar <= mc.ttl
+                    bool recentEnd = mc.ttl > 0 and bar_index - z.endBar <= mc.ttl and z.state != ZS_CONVERTED and z.state != ZS_EXPIRED
+                    if liveSeg and recentEnd
+                        // just finished at the live edge: a ghost for a few bars
                         ghost := true
                     else
-                        // finished inside a history segment: rank it at the bar where price reached it
-                        anchor := z.endBar
+                        // finished earlier: ranked where price reached it, freshness counted from
+                        // its birth (no bias to short-lived boxes). Clean (no TTL) shows finished
+                        // zones only when the chart is scrolled back into history.
+                        histRank := true
+                        int lb = z.kind == ZK_BB or z.kind == ZK_MB or z.kind == ZK_IFVG ? z.born : z.bar
+                        ok := (mc.ttl > 0 or not v.live) and z.endBar - lb >= sliver
+                        anchor := z.born
                         px := f_histAt(hc, hb, z.endBar, px)
                         atr := f_histAt(ha, hb, z.endBar, atr)
                 if ok
                     if f_zoneDistAt(z, px, atr) <= mc.distMax * (htf ? 2 : 1)
                         float r = f_zoneRAt(z, px, atr, anchor, not ghost)
                         if r >= mc.theta or mc.debug or htf
+                            int vs = seg * 2 + (histRank ? 0 : 1)
                             cz.push(z)
                             rs.push(r)
-                            keys.push(seg + r * 0.999)
-                            segIx.push(seg)
+                            keys.push(vs + r * 0.999)
+                            segIx.push(vs)
                             anchorPx.push(px)
                             ghostIx.push(ghost)
     int m = cz.size()
     int cap = pz.items.size()
+    int budget = math.max(1, int(cap / v.segs))
     array<int> picked = array.new<int>()
     array<int> mergeN = array.new<int>()
-    if m > 0
+    if m > 0 and cap > 0
         array<int> ord = keys.sort_indices(order.descending)
-        // counters per segment: [OB above, OB below, FVG above, FVG below, HTF above, HTF below]
-        array<int> cnt = array.new<int>(v.segs * 6, 0)
-        for k = 0 to m - 1
-            int oi = ord.get(k)
-            Zone z = cz.get(oi)
-            int seg = segIx.get(oi)
-            float px = anchorPx.get(oi)
-            bool htf = z.tf != TF_CHART
-            bool isOb = z.kind == ZK_OB or z.kind == ZK_BB or z.kind == ZK_MB
-            bool above = z.bottom > px
-            bool below = z.top < px
-            int into = -1
-            int pn = picked.size()
-            if pn > 0 and not mc.debug
-                for q = 0 to pn - 1
-                    int pq = picked.get(q)
-                    Zone y = cz.get(pq)
-                    if into < 0 and segIx.get(pq) == seg and y.dir == z.dir and y.tf == z.tf
-                        float ov = math.min(y.top, z.top) - math.max(y.bottom, z.bottom)
-                        float sm = math.min(y.top - y.bottom, z.top - z.bottom)
-                        if sm > 0 and ov >= 0.5 * sm
-                            into := q
-            if into >= 0
-                mergeN.set(into, mergeN.get(into) + 1)
-            else if picked.size() < cap
-                int fam = htf ? 4 : isOb ? 0 : 2
-                int ci = seg * 6 + fam + (above ? 0 : 1)
-                int sideCap = htf ? math.max(1, nZonesSide - 1) : nZonesSide
-                bool sideOk = mc.debug or (not above and not below) or cnt.get(ci) < sideCap
-                if sideOk
-                    picked.push(oi)
-                    mergeN.push(1)
-                    if above or below
-                        cnt.set(ci, cnt.get(ci) + 1)
+        // counters per virtual segment: OB above/below, FVG above/below, HTF above/below, inside
+        array<int> cnt = array.new<int>(v.segs * 14, 0)
+        array<int> used = array.new<int>(v.segs, 0)
+        array<bool> done = array.new<bool>(m, false)
+        // pass 1: every time segment gets its share of the pool; pass 2: leftovers, best first
+        for pass = 0 to 1
+            for k = 0 to m - 1
+                int oi = ord.get(k)
+                int vs = segIx.get(oi)
+                int seg = int(vs / 2)
+                if not done.get(oi) and picked.size() < cap and (pass == 1 or used.get(seg) < budget)
+                    Zone z = cz.get(oi)
+                    float px = anchorPx.get(oi)
+                    bool htf = z.tf != TF_CHART
+                    bool isOb = z.kind == ZK_OB or z.kind == ZK_BB or z.kind == ZK_MB
+                    bool above = z.bottom > px
+                    bool below = z.top < px
+                    int into = -1
+                    int pn = picked.size()
+                    if pn > 0 and not mc.debug
+                        for q = 0 to pn - 1
+                            int pq = picked.get(q)
+                            if segIx.get(pq) == vs
+                                Zone y = cz.get(pq)
+                                if y.dir == z.dir and y.tf == z.tf
+                                    float ov = math.min(y.top, z.top) - math.max(y.bottom, z.bottom)
+                                    float sm = math.min(y.top - y.bottom, z.top - z.bottom)
+                                    if sm > 0 and ov >= 0.5 * sm
+                                        into := q
+                                        break
+                    if into >= 0
+                        mergeN.set(into, mergeN.get(into) + 1)
+                        done.set(oi, true)
+                    else
+                        int fam = htf ? 4 : isOb ? 0 : 2
+                        int ci = vs * 7 + (above or below ? fam + (above ? 0 : 1) : 6)
+                        int sideCap = htf and (above or below) ? math.max(1, nZonesSide - 1) : nZonesSide
+                        if mc.debug or cnt.get(ci) < sideCap
+                            picked.push(oi)
+                            mergeN.push(1)
+                            cnt.set(ci, cnt.get(ci) + 1)
+                            used.set(seg, used.get(seg) + 1)
+                            done.set(oi, true)
     int pn2 = picked.size()
     if pn2 > 0
         for q = 0 to pn2 - 1
             int oi = picked.get(q)
-            f_drawZone(pz, pm, cz.get(oi), rs.get(oi), mergeN.get(q), rightT, ghostIx.get(oi))
+            f_drawZone(pz, pm, tags, cz.get(oi), rs.get(oi), mergeN.get(q), rightT, ghostIx.get(oi), v.live)
     pn2
 
 // ── Liquidity levels (§14.12): levels alive at the window's right edge
@@ -406,7 +468,7 @@ f_renderLevels(View v, LinePool pl, array<Tag> tags, array<Liq> liveL, array<Liq
     shown
 
 // Liquidity history (§14.10, §14.12): swept / taken levels and past key levels that ended
-// inside the window, spread evenly over the time segments. Priority inside a segment:
+// inside the window, spread evenly over time. Priority inside a segment:
 // major sweeps → minor sweeps and major runs → past key levels → minor runs.
 f_renderSwept(View v, LinePool pl, LabelPool pb, array<Liq> liveL, array<Liq> archL) =>
     int ttlS = mc.ttl == 0 ? 20 : mc.ttl * 3
@@ -430,88 +492,107 @@ f_renderSwept(View v, LinePool pl, LabelPool pb, array<Liq> liveL, array<Liq> ar
                         cl.push(x)
                         segIx.push(seg)
                         keys.push(seg * 100000000.0 + pri * 10000000.0 + x.endBar)
-    int shown = 0
     int m = cl.size()
+    array<Liq> cand = array.new<Liq>()
+    array<int> xs = array.new<int>()
+    array<int> sg = array.new<int>()
     if m > 0
         array<int> ord = keys.sort_indices(order.descending)
-        array<int> cnt = array.new<int>(v.segs, 0)
-        for k = 0 to m - 1
-            int oi = ord.get(k)
-            int seg = segIx.get(oi)
-            if cnt.get(seg) < q
-                Liq x = cl.get(oi)
-                bool htf = x.tf != TF_CHART
-                bool major = x.major or htf
-                if vSwept or x.state == LS_SWEPT
-                    int tr = x.state == LS_EXPIRED ? OP_SOFT : major ? OP_MEDIUM : OP_FAINT
-                    f_line(pl, x.t, x.price, x.endT, x.price, color.new(C_LIQ, tr), x.state == LS_EXPIRED ? line.style_solid : line.style_dotted, htf or x.state == LS_EXPIRED ? 2 : 1)
-                if x.state == LS_SWEPT and vSweeps
-                    string sideTxt = x.side == 1 ? "BSL" : "SSL"
-                    string txt = major and labelLvl > 0 ? f_htfPrefix(x.tf) + sideTxt + " ✕" : "✕"
-                    string stype = x.sweepType == SWEEP_TURTLE ? "turtle soup" : x.sweepType == SWEEP_RECLAIM ? "reclaim" : "wick"
-                    float pen = na(x.ext) ? na : math.abs(x.ext - x.price) / vu
-                    string tip = (htf ? htfLabel + " " : "") + sideTxt + " swept (" + stype + ") · " + x.tag + " " + f_px(x.price) + "\npenetration " + str.tostring(pen, "0.00") + " ATR · " + f_timeStr(x.endT)
-                    f_label(pb, x.endT, x.price, txt, color.new(C_LIQ, major ? OP_SOLID : OP_MEDIUM), x.side == 1 ? label.style_label_down : label.style_label_up, major ? size.small : size.tiny, tip, x.side == 1 ? yloc.abovebar : yloc.belowbar)
-                else if x.state == LS_EXPIRED and labelLvl > 0
-                    f_label(pb, x.endT, x.price, "◆" + x.tag, color.new(C_LIQ, OP_MEDIUM), label.style_label_left, size.tiny, x.tag + " " + f_px(x.price) + " · " + f_timeStr(x.t), yloc.price)
-                cnt.set(seg, cnt.get(seg) + 1)
-                shown += 1
-    shown
+        for oi in ord
+            Liq x = cl.get(oi)
+            cand.push(x)
+            xs.push(x.endBar)
+            sg.push(segIx.get(oi))
+    array<int> sel = f_spreadPick(v, xs, sg, q, v.vp ? q * v.segs : 1)
+    for k in sel
+        Liq x = cand.get(k)
+        bool htf = x.tf != TF_CHART
+        bool major = x.major or htf
+        if vSwept or x.state == LS_SWEPT
+            int tr = x.state == LS_EXPIRED ? OP_SOFT : major ? OP_MEDIUM : OP_FAINT
+            f_line(pl, x.t, x.price, x.endT, x.price, color.new(C_LIQ, tr), x.state == LS_EXPIRED ? line.style_solid : line.style_dotted, htf or x.state == LS_EXPIRED ? 2 : 1)
+        if x.state == LS_SWEPT and vSweeps
+            string sideTxt = x.side == 1 ? "BSL" : "SSL"
+            string txt = major and labelLvl > 0 ? f_htfPrefix(x.tf) + sideTxt + " ✕" : "✕"
+            string stype = x.sweepType == SWEEP_TURTLE ? "turtle soup" : x.sweepType == SWEEP_RECLAIM ? "reclaim" : "wick"
+            float pen = na(x.ext) ? na : math.abs(x.ext - x.price) / vu
+            string tip = (htf ? htfLabel + " " : "") + sideTxt + " swept (" + stype + ") · " + x.tag + " " + f_px(x.price) + "\npenetration " + str.tostring(pen, "0.00") + " ATR · " + f_timeStr(x.endT)
+            f_label(pb, x.endT, x.price, txt, color.new(C_LIQ, major ? OP_SOLID : OP_MEDIUM), x.side == 1 ? label.style_label_down : label.style_label_up, major ? size.small : size.tiny, tip, x.side == 1 ? yloc.abovebar : yloc.belowbar)
+        else if x.state == LS_EXPIRED and labelLvl > 0
+            f_label(pb, x.endT, x.price, "◆" + x.tag, color.new(C_LIQ, OP_MEDIUM), label.style_label_left, size.tiny, x.tag + " " + f_px(x.price) + " · " + f_timeStr(x.t), yloc.price)
+    sel.size()
 
-// ── Structure (§13.12, AC-M14): breaks inside the window, evenly over segments, newest first
+// ── Structure (§13.12, AC-M14): breaks inside the window, spread evenly over time
 f_brkTip(Brk b) =>
     string nm = b.kind == BK_BOS ? "Break of Structure" : b.mss ? "Market Structure Shift (CHoCH + displacement + FVG)" : "Change of Character"
     string disp = na(b.disp) ? "" : " · leg " + str.tostring(b.disp, "0.0") + " ATR"
     (b.tf != TF_CHART ? htfLabel + " " : "") + nm + (b.dir == 1 ? " ↑" : " ↓") + " · " + (b.lvl == LV_SWG ? "swing" : "internal") + (b.initial ? " · first break" : "") + "\nlevel " + f_px(b.price) + disp + "\n" + f_timeStr(b.t)
 
 f_renderBreaks(View v, LinePool pl, LabelPool pb, array<Brk> brks, int cap, bool internal) =>
-    int shown = 0
     int n = brks.size()
     int q = v.vp ? f_quota(v, cap) : cap
+    array<Brk> cand = array.new<Brk>()
+    array<int> xs = array.new<int>()
+    array<int> sg = array.new<int>()
     if cap > 0 and n > 0
-        array<int> cnt = array.new<int>(v.segs, 0)
+        // breaks are stored in time order: walk back from the newest until the window's left edge
         for i = n - 1 to 0
             Brk b = brks.get(i)
-            if b.bar >= v.iL and b.bar <= v.iR and (not b.shadowed or mc.debug)
-                int seg = v.vp ? f_segOf(v, b.bar) : 0
-                if cnt.get(seg) < q
-                    bool htf = b.tf != TF_CHART
-                    bool recent = shown == 0
-                    color hue = f_dirColor(b.dir)
-                    int tr = htf ? OP_STRONG : internal ? OP_SOFT : recent ? OP_STRONG : OP_MEDIUM
-                    f_line(pl, b.swingT, b.price, b.t, b.price, color.new(hue, tr), internal ? line.style_dotted : line.style_dashed, htf ? 2 : 1)
-                    string nm = b.kind == BK_BOS ? "BOS" : b.mss ? "MSS" : "CHoCH"
-                    string txt = f_htfPrefix(b.tf) + (internal ? "i" : "") + nm + f_arrow(b.dir)
-                    if labelLvl == 0 and internal
-                        txt := f_arrow(b.dir)
-                    if labelLvl >= 2 and not internal and recent
-                        txt := txt + " " + f_px(b.price)
-                    if labelLvl >= 3 and not na(b.disp)
-                        txt := txt + " · " + str.tostring(b.disp, "0.0") + " ATR"
-                    if mc.debug and i_showIds
-                        txt := "#" + str.tostring(b.id) + " " + txt
-                    int mx = int((b.swingT + b.t) / 2)
-                    f_label(pb, mx, b.price, txt, color.new(hue, internal ? OP_MEDIUM : recent or htf ? OP_SOLID : 15), b.dir == 1 ? label.style_label_down : label.style_label_up, internal ? size.tiny : size.small, f_brkTip(b), yloc.price)
-                    cnt.set(seg, cnt.get(seg) + 1)
-                    shown += 1
-    shown
+            if b.bar < v.iL
+                break
+            if b.bar <= v.iR and (not b.shadowed or mc.debug)
+                cand.push(b)
+                xs.push(b.bar)
+                sg.push(v.vp ? f_segOf(v, b.bar) : 0)
+    array<int> sel = f_spreadPick(v, xs, sg, q, v.vp ? q * v.segs : 1)
+    for k in sel
+        Brk b = cand.get(k)
+        bool htf = b.tf != TF_CHART
+        bool recent = k == 0
+        color hue = f_dirColor(b.dir)
+        int tr = htf ? OP_STRONG : internal ? OP_SOFT : recent ? OP_STRONG : OP_MEDIUM
+        f_line(pl, b.swingT, b.price, b.t, b.price, color.new(hue, tr), internal ? line.style_dotted : line.style_dashed, htf ? 2 : 1)
+        string nm = b.kind == BK_BOS ? "BOS" : b.mss ? "MSS" : "CHoCH"
+        string txt = f_htfPrefix(b.tf) + (internal ? "i" : "") + nm + f_arrow(b.dir)
+        if labelLvl == 0 and internal
+            txt := f_arrow(b.dir)
+        if labelLvl >= 2 and not internal and recent
+            txt := txt + " " + f_px(b.price)
+        if labelLvl >= 3 and not na(b.disp)
+            txt := txt + " · " + str.tostring(b.disp, "0.0") + " ATR"
+        if mc.debug and i_showIds
+            txt := "#" + str.tostring(b.id) + " " + txt
+        // Chart-TF labels start at the pivot and run toward the break, on the side of the level
+        // the leg has not reached yet, so they stay off the breakout candles. A span far
+        // narrower than its text keeps only the line at wide zoom.
+        bool roomy = htf or not v.vp or na(b.swingBar) or (b.bar - b.swingBar) * 120 >= v.iR - v.iL
+        if roomy
+            int lx = htf ? int((b.swingT + b.t) / 2) : b.swingT
+            string lst = htf ? (b.dir == 1 ? label.style_label_down : label.style_label_up) : b.dir == 1 ? label.style_label_lower_left : label.style_label_upper_left
+            f_label(pb, lx, b.price, txt, color.new(hue, internal ? OP_MEDIUM : recent or htf ? OP_SOLID : 15), lst, internal ? size.tiny : size.small, f_brkTip(b), yloc.price)
+    sel.size()
 
 f_renderSwings(View v, LabelPool pb, StructState st, int cap) =>
-    int shown = 0
     int n = st.swings.size()
     int q = v.vp ? f_quota(v, cap) : cap
+    array<Swing> cand = array.new<Swing>()
+    array<int> xs = array.new<int>()
+    array<int> sg = array.new<int>()
     if cap > 0 and n > 0
-        array<int> cnt = array.new<int>(v.segs, 0)
         for i = n - 1 to 0
             Swing s = st.swings.get(i)
-            if s.bar >= v.iL and s.bar <= v.iR
-                int seg = v.vp ? f_segOf(v, s.bar) : 0
-                if cnt.get(seg) < q
-                    string tip = s.tag + " " + f_px(s.price) + " · " + f_timeStr(s.t)
-                    f_label(pb, s.t, s.price, s.tag, color.new(C_NEUT, OP_MEDIUM), s.side == 1 ? label.style_label_down : label.style_label_up, size.tiny, tip, yloc.price)
-                    cnt.set(seg, cnt.get(seg) + 1)
-                    shown += 1
-    shown
+            if s.bar < v.iL
+                break
+            if s.bar <= v.iR
+                cand.push(s)
+                xs.push(s.bar)
+                sg.push(v.vp ? f_segOf(v, s.bar) : 0)
+    array<int> sel = f_spreadPick(v, xs, sg, q, v.vp ? q * v.segs : 1)
+    for k in sel
+        Swing s = cand.get(k)
+        string tip = s.tag + " " + f_px(s.price) + " · " + f_timeStr(s.t)
+        f_label(pb, s.t, s.price, s.tag, color.new(C_NEUT, OP_MEDIUM), s.side == 1 ? label.style_label_down : label.style_label_up, size.tiny, tip, yloc.price)
+    sel.size()
 
 // ── Dealing range: EQ, OTE band, optional wash, Range Gauge (§14.13)
 f_drawRangeBody(BoxPool prb, LinePool prl, array<Tag> tags, int dir, float hi, float lo, int t0, int t1, bool developing, bool withTag) =>
@@ -535,30 +616,38 @@ f_renderRange(View v, BoxPool prb, LinePool prl, LabelPool pb, array<Tag> tags, 
     bool curOk = r.state > 0 and r.hi > r.lo
     bool drawn = false
     if vPd > 0
-        // Range active at the window's right edge gets EQ + OTE; older ranges get EQ only, spread over segments
+        // Range active at the window's right edge gets EQ + OTE; older ranges get EQ only, spread over time
         if curOk and r.b0 <= v.iR
             f_drawRangeBody(prb, prl, tags, r.dir, r.hi, r.lo, r.t0, rightT, r.state == 1, v.live)
             drawn := true
         int n = arch.size()
         if v.vp and n > 0
             int q = f_quota(v, mc.rangeWin - 1)
-            array<int> cnt = array.new<int>(v.segs, 0)
+            array<RangeSnap> cand = array.new<RangeSnap>()
+            array<int> xs = array.new<int>()
+            array<int> sg = array.new<int>()
             for i = n - 1 to 0
                 RangeSnap s = arch.get(i)
-                if s.b1 >= v.iL and s.b0 <= v.iR and s.hi > s.lo
-                    if not drawn and s.b0 <= v.iR and s.b1 >= v.iR
+                if s.b1 < v.iL
+                    break
+                if s.b0 <= v.iR and s.hi > s.lo
+                    if not drawn and s.b1 >= v.iR
                         f_drawRangeBody(prb, prl, tags, s.dir, s.hi, s.lo, s.t0, s.t1, false, false)
                         drawn := true
                     else
-                        int seg = f_segOf(v, math.min(s.b1, v.iR))
-                        if cnt.get(seg) < q
-                            float eq = (s.hi + s.lo) / 2
-                            f_line(prl, s.t0, eq, s.t1, eq, color.new(C_NEUT, OP_SOFT), line.style_dotted, 1)
-                            cnt.set(seg, cnt.get(seg) + 1)
+                        int xe = math.min(s.b1, v.iR)
+                        cand.push(s)
+                        xs.push(xe)
+                        sg.push(f_segOf(v, xe))
+            array<int> sel = f_spreadPick(v, xs, sg, q, q * v.segs)
+            for k in sel
+                RangeSnap s = cand.get(k)
+                float eq = (s.hi + s.lo) / 2
+                f_line(prl, s.t0, eq, s.t1, eq, color.new(C_NEUT, OP_SOFT), line.style_dotted, 1)
     if curOk and vGauge and v.live
         float span = r.hi - r.lo
         float eq = (r.hi + r.lo) / 2
-        // two bars right of the last candle (§14.13), clear of the right-edge tags
+        // two bars right of the last candle (§14.13); its value joins the right-edge tags
         int gx = time + 2 * barMs
         int gx2 = gx + barMs
         float oTop = r.dir == 1 ? r.hi - oteLo * span : r.lo + oteHi * span
@@ -568,37 +657,47 @@ f_renderRange(View v, BoxPool prb, LinePool prl, LabelPool pb, array<Tag> tags, 
         f_line(prl, gx, eq, gx2, eq, color.new(C_NEUT, OP_MEDIUM), line.style_solid, 1)
         float pdv = (pxLive - r.lo) / span
         string loc = pdv > 0.5 + EQ_BAND ? "PREMIUM" : pdv < 0.5 - EQ_BAND ? "DISCOUNT" : "EQUILIBRIUM"
-        f_label(pb, gx, math.max(r.lo, math.min(r.hi, pxLive)), "◀ " + str.tostring(math.round(pdv * 100)) + "%", C_TEXT, label.style_label_left, size.tiny, "Price in dealing range: " + loc + "\n0% = " + f_px(r.lo) + " · 100% = " + f_px(r.hi), yloc.price)
+        tags.push(Tag.new(math.max(r.lo, math.min(r.hi, pxLive)), "◀ " + str.tostring(math.round(pdv * 100)) + "%", C_TEXT, "Price in dealing range: " + loc + "\n0% = " + f_px(r.lo) + " · 100% = " + f_px(r.hi)))
     drawn
 
 // ── Sessions: colored range boxes with a clear border; the name sits above the session high,
-// off the candles (§14.14). Fill transparency comes from the settings.
-f_drawSession(BoxPool pw, LabelPool pb, string code, float hi, float lo, int t0, int t1, bool current) =>
+// off the candles (§14.14). Fill transparency comes from the settings. A history session gets
+// its name only when it is wide enough at the current zoom; the colour identifies it otherwise.
+f_drawSession(BoxPool pw, LabelPool pb, string code, float hi, float lo, int t0, int t1, bool current, bool withLabel) =>
     color c = f_sesColor(code)
     int ft = math.min(100, i_sesFill + (current ? 0 : 4))
-    f_box(pw, t0, t1, hi, lo, color.new(c, ft), color.new(c, current ? 0 : 25), current ? 2 : 1, current ? line.style_solid : line.style_dashed, "", color(na), text.align_right)
-    if labelLvl > 0
+    bool drawn = f_box(pw, t0, t1, hi, lo, color.new(c, ft), color.new(c, current ? 0 : 25), current ? 2 : 1, current ? line.style_solid : line.style_dashed, "", color(na), text.align_right)
+    if drawn and withLabel and labelLvl > 0
         f_label(pb, t0, hi, code, color.new(c, 0), label.style_label_lower_left, current ? size.small : size.tiny, code + " " + f_px(lo) + " – " + f_px(hi) + "\n" + f_timeStr(t0), yloc.price)
-    true
+    drawn
 
 f_renderSessions(View v, BoxPool pw, LabelPool pb, array<SessBox> hist, Sess sa, Sess sl, Sess sn) =>
-    int shown = 0
     int cap = v.vp ? mc.sessWin : vSessN - 1
     int q = v.vp ? f_quota(v, cap) : cap
+    int shown = 0
     if vSessN > 0
         if v.live
             for s in array.from(sa, sl, sn)
                 if s.on
-                    f_drawSession(pw, pb, s.code, s.hi, s.lo, s.t0, time, true)
+                    f_drawSession(pw, pb, s.code, s.hi, s.lo, s.t0, time, true, true)
         int n = hist.size()
         if n > 0 and q > 0
-            array<int> cnt = array.new<int>(v.segs, 0)
+            array<SessBox> cand = array.new<SessBox>()
+            array<int> xs = array.new<int>()
+            array<int> sg = array.new<int>()
             for i = n - 1 to 0
                 SessBox b = hist.get(i)
-                if b.b1 >= v.iL and b.b0 <= v.iR
-                    int seg = v.vp ? f_segOf(v, math.min(b.b1, v.iR)) : 0
-                    if cnt.get(seg) < q
-                        f_drawSession(pw, pb, b.code, b.hi, b.lo, b.t0, b.t1, false)
-                        cnt.set(seg, cnt.get(seg) + 1)
-                        shown += 1
+                if b.b1 < v.iL
+                    break
+                if b.b0 <= v.iR
+                    int xe = math.min(b.b1, v.iR)
+                    cand.push(b)
+                    xs.push(xe)
+                    sg.push(v.vp ? f_segOf(v, xe) : 0)
+            array<int> sel = f_spreadPick(v, xs, sg, q, v.vp ? q * v.segs : 1)
+            int w = v.iR - v.iL + 1
+            for k in sel
+                SessBox b = cand.get(k)
+                f_drawSession(pw, pb, b.code, b.hi, b.lo, b.t0, b.t1, false, (b.b1 - b.b0 + 1) * 30 >= w)
+            shown := sel.size()
     shown

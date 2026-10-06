@@ -7,8 +7,10 @@
 // on history and in realtime (no repaint, AC-25).
 //
 // Deviation from ADR-03 (recorded in CHANGELOG): detection here is a compact re-statement of
-// A.2/A.4/A.7/A.10 written with fixed-length lookbacks only, because the chart engines rely on
-// dynamic history offsets that the HTF context cannot size. Lifecycle (touch, mitigation,
+// A.2/A.4/A.7/A.10 written with fixed-length lookbacks and a small candle ring only, because
+// the chart engines rely on dynamic history offsets that the HTF context cannot size. HTF order
+// blocks follow the A.7 candle window but skip the integrity and volume filters; "Require
+// displacement" maps to "the leg had a displacement bar". Lifecycle (touch, mitigation,
 // conversion, sweeps) is NOT duplicated: HTF objects are ingested into the shared registries
 // and run through the same chart-side engines.
 
@@ -21,13 +23,16 @@ f_tfLabel(int sec) =>
     sec < 3600 ? str.tostring(math.round(sec / 60)) + "m" : sec < 86400 ? str.tostring(math.round(sec / 3600)) + "H" : sec < 604800 ? "D" : sec < 2419200 ? "W" : "M"
 
 string htfTf = i_htfMode == HtfMode.off ? "" : i_htfMode == HtfMode.manual ? i_htfTf : f_autoHtf()
-string htfReq = htfTf == "" ? timeframe.period : htfTf
 int chartSec = timeframe.in_seconds()
-int htfSec = timeframe.in_seconds(htfReq)
+int htfSec = timeframe.in_seconds(htfTf == "" ? timeframe.period : htfTf)
 bool htfOk = htfTf != "" and htfSec > chartSec
+// A manual HTF that is not above the chart timeframe is not requested at all (warning in the panels)
+bool htfBadCfg = i_htfMode == HtfMode.manual and not htfOk
+string htfReq = htfOk ? htfTf : timeframe.period
 string htfLabel = f_tfLabel(htfSec)
-// HTF objects live longer and farther from price than chart objects
-int htfAgeMult = htfOk ? math.max(1, math.min(10, int(htfSec / chartSec))) : 1
+// HTF objects live in HTF bars: lifetimes scale with the TF ratio, distance limits with its root
+int htfAgeMult = htfOk ? math.max(1, int(htfSec / chartSec)) : 1
+float htfDistMult = htfOk ? math.max(3.0, math.sqrt(htfSec / chartSec)) : 1.0
 
 // Order block geometry from a candle, same rules as A.7 step 4–5 (zone mode, size filter)
 f_obGeom(int dir, float o, float h, float l, float c, float atr) =>
@@ -46,14 +51,43 @@ f_obGeom(int dir, float o, float h, float l, float c, float atr) =>
     bool ok = not na(atr) and sz > 0 and sz >= obMin * atr and sz <= obMax * atr
     [top, bot, ok]
 
+// Order block candidates are kept as [open, high, low, close, time] (time stored as float)
+f_candSet(array<float> cd, float o, float h, float l, float c, int t) =>
+    cd.set(0, o)
+    cd.set(1, h)
+    cd.set(2, l)
+    cd.set(3, c)
+    cd.set(4, t)
+    true
+
+f_candRing(array<float> cd, array<float> rO, array<float> rH, array<float> rL, array<float> rC, array<int> rT, int k) =>
+    f_candSet(cd, rO.get(k), rH.get(k), rL.get(k), rC.get(k), rT.get(k))
+
+f_candCopy(array<float> dst, array<float> src) =>
+    for i = 0 to 4
+        dst.set(i, src.get(i))
+    true
+
+// A.7 window: the last opposite candle scanning back from k0 to origin − OB_NPRE, else the
+// origin candle. rD codes the ring candles: ±2 displacement, ±1 plain bull/bear, 0 doji.
+f_ringPick(array<int> rD, int k0, int o, int dir) =>
+    int j = o
+    int lo = math.max(0, o - OB_NPRE)
+    if k0 >= lo
+        for k = k0 to lo
+            int dk = rD.get(k)
+            if dir == 1 ? dk < 0 : dk > 0
+                j := k
+                break
+    j
+
 // Evaluated on every HTF bar inside request.security. Returns the previous (confirmed) HTF
-// bar's state: trend, last break, last pivots, last order block, last fair value gap.
+// bar's state: trend, last break and last order block per direction, last pivots, last fair
+// value gap, plus the open time and index of the current HTF bar.
 f_htfState(int len) =>
     float atr = ta.atr(i_atrLen)
     float ph = ta.pivothigh(high, len, len)
     float pl = ta.pivotlow(low, len, len)
-    float winLow = ta.lowest(low, len + 1)
-    float winHigh = ta.highest(high, len + 1)
     int pivT = time[len]
     float bodyH = math.abs(close - open)
     bool ratioOk = bodyH / math.max(high - low, syminfo.mintick) >= i_minBodyRatio
@@ -61,6 +95,27 @@ f_htfState(int len) =>
     bool dDn = close < open and not na(atr) and bodyH >= i_kBody * atr and ratioOk
     bool isBear = close < open
     bool isBull = close > open
+    // ring of the last len + 4 candles, current bar included: leg rebuilds at pivot confirmation
+    var array<float> rO = array.new<float>()
+    var array<float> rH = array.new<float>()
+    var array<float> rL = array.new<float>()
+    var array<float> rC = array.new<float>()
+    var array<int> rT = array.new<int>()
+    var array<int> rD = array.new<int>()
+    rO.push(open)
+    rH.push(high)
+    rL.push(low)
+    rC.push(close)
+    rT.push(time)
+    rD.push(dUp ? 2 : dDn ? -2 : isBull ? 1 : isBear ? -1 : 0)
+    if rO.size() > len + 4
+        rO.shift()
+        rH.shift()
+        rL.shift()
+        rC.shift()
+        rT.shift()
+        rD.shift()
+    int n = rO.size()
     // structure
     var int trend = 0
     var float refH = na
@@ -69,48 +124,43 @@ f_htfState(int len) =>
     var float refL = na
     var int refLT = na
     var bool refLDone = true
-    var int brkSeq = 0
-    var int brkDir = 0
-    var int brkKind = 0
-    var float brkPx = na
-    var int brkT = na
-    var int brkSwT = na
+    // breaks, one channel per direction (an outside bar can break both sides in wick mode)
+    var int buSeq = 0
+    var int buKind = 0
+    var float buPx = na
+    var int buT = na
+    var int buSwT = na
+    var int bdSeq = 0
+    var int bdKind = 0
+    var float bdPx = na
+    var int bdT = na
+    var int bdSwT = na
     var float phP = na
     var int phT = na
     var float plP = na
     var int plT = na
-    // last opposite candles seen so far
-    var float lbO = na
-    var float lbH = na
-    var float lbL = na
-    var float lbC = na
-    var int lbT = na
-    var float luO = na
-    var float luH = na
-    var float luL = na
-    var float luC = na
-    var int luT = na
-    // OB candidates: last opposite candle of the leg before its first displacement bar
+    // legs (A.7): origin, displacement seen (d), plain impulse candle seen (fallback d).
+    // cu / cd: last opposite candle before the first displacement bar of the leg;
+    // cb / ce: last opposite candle before the first candle in the leg direction.
     var float upOrig = na
     var bool upImp = false
-    var float cuO = na
-    var float cuH = na
-    var float cuL = na
-    var float cuC = na
-    var int cuT = na
+    var bool upBull = false
+    var array<float> cu = array.new<float>(5, na)
+    var array<float> cb = array.new<float>(5, na)
     var float dnOrig = na
     var bool dnImp = false
-    var float cdO = na
-    var float cdH = na
-    var float cdL = na
-    var float cdC = na
-    var int cdT = na
-    // outputs: last order block and last fair value gap
-    var int obSeq = 0
-    var int obDir = 0
-    var float obTop = na
-    var float obBot = na
-    var int obT = na
+    var bool dnBear = false
+    var array<float> cd = array.new<float>(5, na)
+    var array<float> ce = array.new<float>(5, na)
+    // outputs: last order block per direction and last fair value gap
+    var int ouSeq = 0
+    var float ouTop = na
+    var float ouBot = na
+    var int ouT = na
+    var int odSeq = 0
+    var float odTop = na
+    var float odBot = na
+    var int odT = na
     var int fvgSeq = 0
     var int fvgDir = 0
     var float fvgTop = na
@@ -121,116 +171,123 @@ f_htfState(int len) =>
         if low < upOrig
             upOrig := low
             upImp := false
-            if isBear
-                cuO := open
-                cuH := high
-                cuL := low
-                cuC := close
-                cuT := time
-            else
-                cuO := lbO
-                cuH := lbH
-                cuL := lbL
-                cuC := lbC
-                cuT := lbT
-        else if not upImp
-            if dUp
-                upImp := true
-            else if isBear
-                cuO := open
-                cuH := high
-                cuL := low
-                cuC := close
-                cuT := time
+            upBull := false
+            f_candRing(cu, rO, rH, rL, rC, rT, f_ringPick(rD, n - 1, n - 1, 1))
+            f_candCopy(cb, cu)
+        else
+            if not upImp
+                if dUp
+                    upImp := true
+                else if isBear
+                    f_candSet(cu, open, high, low, close, time)
+            if not upBull
+                if isBull
+                    upBull := true
+                else if isBear
+                    f_candSet(cb, open, high, low, close, time)
     if not na(dnOrig)
         if high > dnOrig
             dnOrig := high
             dnImp := false
-            if isBull
-                cdO := open
-                cdH := high
-                cdL := low
-                cdC := close
-                cdT := time
-            else
-                cdO := luO
-                cdH := luH
-                cdL := luL
-                cdC := luC
-                cdT := luT
-        else if not dnImp
-            if dDn
-                dnImp := true
-            else if isBull
-                cdO := open
-                cdH := high
-                cdL := low
-                cdC := close
-                cdT := time
-    // 2 · confirmed pivots become the new references; the leg restarts from the pivot window
+            dnBear := false
+            f_candRing(cd, rO, rH, rL, rC, rT, f_ringPick(rD, n - 1, n - 1, -1))
+            f_candCopy(ce, cd)
+        else
+            if not dnImp
+                if dDn
+                    dnImp := true
+                else if isBull
+                    f_candSet(cd, open, high, low, close, time)
+            if not dnBear
+                if isBear
+                    dnBear := true
+                else if isBull
+                    f_candSet(ce, open, high, low, close, time)
+    // 2 · confirmed pivots become the new references; the leg is rebuilt from the pivot window
     if not na(ph)
         phP := ph
         phT := pivT
         refH := ph
         refHT := pivT
         refHDone := false
-        upOrig := winLow
-        upImp := false
-        cuO := lbO
-        cuH := lbH
-        cuL := lbL
-        cuC := lbC
-        cuT := lbT
+        int o = n - 1
+        for k = n - 1 to math.max(0, n - 1 - len)
+            if rL.get(k) < rL.get(o)
+                o := k
+        int d = -1
+        int fb = -1
+        if o < n - 1
+            for k = o + 1 to n - 1
+                int dk = rD.get(k)
+                if fb < 0 and dk > 0
+                    fb := k
+                if d < 0 and dk == 2
+                    d := k
+        upOrig := rL.get(o)
+        upImp := d >= 0
+        upBull := fb >= 0
+        f_candRing(cu, rO, rH, rL, rC, rT, f_ringPick(rD, d >= 0 ? d - 1 : n - 1, o, 1))
+        f_candRing(cb, rO, rH, rL, rC, rT, f_ringPick(rD, fb >= 0 ? fb - 1 : n - 1, o, 1))
     if not na(pl)
         plP := pl
         plT := pivT
         refL := pl
         refLT := pivT
         refLDone := false
-        dnOrig := winHigh
-        dnImp := false
-        cdO := luO
-        cdH := luH
-        cdL := luL
-        cdC := luC
-        cdT := luT
-    // 3 · breaks (A.4) and the order block of the breaking leg (A.7)
+        int o = n - 1
+        for k = n - 1 to math.max(0, n - 1 - len)
+            if rH.get(k) > rH.get(o)
+                o := k
+        int d = -1
+        int fb = -1
+        if o < n - 1
+            for k = o + 1 to n - 1
+                int dk = rD.get(k)
+                if fb < 0 and dk < 0
+                    fb := k
+                if d < 0 and dk == -2
+                    d := k
+        dnOrig := rH.get(o)
+        dnImp := d >= 0
+        dnBear := fb >= 0
+        f_candRing(cd, rO, rH, rL, rC, rT, f_ringPick(rD, d >= 0 ? d - 1 : n - 1, o, -1))
+        f_candRing(ce, rO, rH, rL, rC, rT, f_ringPick(rD, fb >= 0 ? fb - 1 : n - 1, o, -1))
+    // 3 · breaks (A.4) and the order block of the breaking leg (A.7). The break time is the
+    // close of the breaking HTF bar, so lines end where the break was confirmed.
     float srcUp = i_brk == BreakSrc.wick ? high : close
     float srcDn = i_brk == BreakSrc.wick ? low : close
     if not refHDone and not na(refH) and srcUp > refH
-        brkKind := trend == -1 ? BK_CHOCH : BK_BOS
-        brkDir := 1
-        brkPx := refH
-        brkT := time
-        brkSwT := refHT
-        brkSeq += 1
+        buKind := trend == -1 ? BK_CHOCH : BK_BOS
+        buPx := refH
+        buT := nz(time_close, time)
+        buSwT := refHT
+        buSeq += 1
         trend := 1
         refHDone := true
-        if not na(cuT)
-            [gTop, gBot, gOk] = f_obGeom(1, cuO, cuH, cuL, cuC, atr)
+        array<float> cand = upImp ? cu : cb
+        if not na(cand.get(4)) and (upImp or not i_obReqDisp)
+            [gTop, gBot, gOk] = f_obGeom(1, cand.get(0), cand.get(1), cand.get(2), cand.get(3), atr)
             if gOk
-                obSeq += 1
-                obDir := 1
-                obTop := gTop
-                obBot := gBot
-                obT := cuT
+                ouSeq += 1
+                ouTop := gTop
+                ouBot := gBot
+                ouT := int(cand.get(4))
     if not refLDone and not na(refL) and srcDn < refL
-        brkKind := trend == 1 ? BK_CHOCH : BK_BOS
-        brkDir := -1
-        brkPx := refL
-        brkT := time
-        brkSwT := refLT
-        brkSeq += 1
+        bdKind := trend == 1 ? BK_CHOCH : BK_BOS
+        bdPx := refL
+        bdT := nz(time_close, time)
+        bdSwT := refLT
+        bdSeq += 1
         trend := -1
         refLDone := true
-        if not na(cdT)
-            [gTop, gBot, gOk] = f_obGeom(-1, cdO, cdH, cdL, cdC, atr)
+        array<float> cand = dnImp ? cd : ce
+        if not na(cand.get(4)) and (dnImp or not i_obReqDisp)
+            [gTop, gBot, gOk] = f_obGeom(-1, cand.get(0), cand.get(1), cand.get(2), cand.get(3), atr)
             if gOk
-                obSeq += 1
-                obDir := -1
-                obTop := gTop
-                obBot := gBot
-                obT := cdT
+                odSeq += 1
+                odTop := gTop
+                odBot := gBot
+                odT := int(cand.get(4))
     // 4 · fair value gaps (A.10) on the HTF candles
     if bar_index >= 2 and not na(atr)
         if low > high[2] and (not i_fvgMidDir or close[1] > open[1]) and low - high[2] >= i_fvgMin * atr
@@ -245,28 +302,42 @@ f_htfState(int len) =>
             fvgTop := low[2]
             fvgBot := high
             fvgT := time[2]
-    // 5 · remember the last opposite candles (after they were used above)
-    if isBear
-        lbO := open
-        lbH := high
-        lbL := low
-        lbC := close
-        lbT := time
-    if isBull
-        luO := open
-        luH := high
-        luL := low
-        luC := close
-        luT := time
-    [trend[1], brkSeq[1], brkDir[1], brkKind[1], brkPx[1], brkT[1], brkSwT[1], phP[1], phT[1], plP[1], plT[1], obSeq[1], obDir[1], obTop[1], obBot[1], obT[1], fvgSeq[1], fvgDir[1], fvgTop[1], fvgBot[1], fvgT[1]]
+    [trend[1], buSeq[1], buKind[1], buPx[1], buT[1], buSwT[1], bdSeq[1], bdKind[1], bdPx[1], bdT[1], bdSwT[1], phP[1], phT[1], plP[1], plT[1], ouSeq[1], ouTop[1], ouBot[1], ouT[1], odSeq[1], odTop[1], odBot[1], odT[1], fvgSeq[1], fvgDir[1], fvgTop[1], fvgBot[1], fvgT[1], time, bar_index]
 
-// Confirmed HTF state on every chart bar. no-repaint: [1] is applied inside f_htfState.
-[hTrend, hBrkSeq, hBrkDir, hBrkKind, hBrkPx, hBrkT, hBrkSwT, hPhP, hPhT, hPlP, hPlT, hObSeq, hObDir, hObTop, hObBot, hObT, hFvgSeq, hFvgDir, hFvgTop, hFvgBot, hFvgT] = request.security(syminfo.tickerid, htfReq, f_htfState(i_htfLen), lookahead = barmerge.lookahead_on) // no-repaint: [1] inside
+// Confirmed HTF state on every chart bar. The open time and index of the current HTF bar are
+// known when it opens, so they need no offset.
+[hTrend, hBuSeq, hBuKind, hBuPx, hBuT, hBuSwT, hBdSeq, hBdKind, hBdPx, hBdT, hBdSwT, hPhP, hPhT, hPlP, hPlT, hOuSeq, hOuTop, hOuBot, hOuT, hOdSeq, hOdTop, hOdBot, hOdT, hFvgSeq, hFvgDir, hFvgTop, hFvgBot, hFvgT, hBarT, hBars] = request.security(syminfo.tickerid, htfReq, f_htfState(i_htfLen), lookahead = barmerge.lookahead_on) // no-repaint: [1] inside
 
+// A chart bar that opened before the current HTF bar straddles an HTF boundary (W→M, 45m→4H).
+// It keeps the previous state, so realtime and history ingest on the same bar (AC-25).
+bool htfHold = not na(hBarT) and time < hBarT
+bool htfStep = htfOk and not htfHold
+var int hLastTrend = 0
+var int hLastBu = 0
+var int hLastBd = 0
+var int hLastPhT = 0
+var int hLastPlT = 0
+var int hLastOu = 0
+var int hLastOd = 0
+var int hLastFvg = 0
 // Change detection: each HTF object is ingested once, on the first chart bar after its HTF bar closed
-bool htfNewBias = htfOk and hTrend != nz(hTrend[1])
-bool htfNewBrk = htfOk and hBrkSeq > 0 and hBrkSeq != nz(hBrkSeq[1])
-bool htfNewPh = htfOk and not na(hPhT) and hPhT != nz(hPhT[1])
-bool htfNewPl = htfOk and not na(hPlT) and hPlT != nz(hPlT[1])
-bool htfNewOb = htfOk and hObSeq > 0 and hObSeq != nz(hObSeq[1])
-bool htfNewFvg = htfOk and hFvgSeq > 0 and hFvgSeq != nz(hFvgSeq[1])
+bool htfNewBu = htfStep and nz(hBuSeq) > 0 and nz(hBuSeq) != hLastBu
+bool htfNewBd = htfStep and nz(hBdSeq) > 0 and nz(hBdSeq) != hLastBd
+bool htfNewPh = htfStep and nz(hPhT) > 0 and nz(hPhT) != hLastPhT
+bool htfNewPl = htfStep and nz(hPlT) > 0 and nz(hPlT) != hLastPlT
+bool htfNewOu = htfStep and nz(hOuSeq) > 0 and nz(hOuSeq) != hLastOu
+bool htfNewOd = htfStep and nz(hOdSeq) > 0 and nz(hOdSeq) != hLastOd
+bool htfNewFvg = htfStep and nz(hFvgSeq) > 0 and nz(hFvgSeq) != hLastFvg
+if htfStep
+    hLastTrend := nz(hTrend)
+    hLastBu := nz(hBuSeq)
+    hLastBd := nz(hBdSeq)
+    hLastPhT := nz(hPhT)
+    hLastPlT := nz(hPlT)
+    hLastOu := nz(hOuSeq)
+    hLastOd := nz(hOdSeq)
+    hLastFvg := nz(hFvgSeq)
+// A.16 htfReliable: with too little HTF history the bias is unknown
+bool htfLowHist = htfOk and nz(hBars) < i_minHtfBars
+int hBias = htfOk and not htfLowHist ? hLastTrend : 0
+bool htfNewBias = htfOk and hBias != nz(hBias[1])

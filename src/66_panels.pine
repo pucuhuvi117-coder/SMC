@@ -38,12 +38,18 @@ f_statusText(Core c, bool liveView) =>
 
 // Context Ribbon: STR │ SESSION │ PD │ LIQ │ status
 f_htfText(Ctx x) =>
-    not x.htfOk ? "HTF OFF" : "HTF " + htfLabel + (x.htfTrend == 1 ? " ▲ BULL" : x.htfTrend == -1 ? " ▼ BEAR" : " —")
+    htfBadCfg ? "⚠ HTF ≤ TF" : not x.htfOk ? "HTF OFF" : x.htfLow ? "HTF " + htfLabel + " ⚠" : "HTF " + htfLabel + (x.htfTrend == 1 ? " ▲ BULL" : x.htfTrend == -1 ? " ▼ BEAR" : " —")
+
+f_htfColor(Ctx x) =>
+    htfBadCfg or x.htfLow ? C_WARN : x.htfOk ? f_dirColor(x.htfTrend) : C_NEUT
+
+f_htfTip(Ctx x) =>
+    htfBadCfg ? "The manual higher timeframe must be above the chart timeframe; the HTF Feed is off" : not x.htfOk ? "Higher timeframe is off" : x.htfLow ? "Fewer than " + str.tostring(i_minHtfBars) + " confirmed " + htfLabel + " bars: the HTF bias is treated as unknown (A.16)" : "Higher-timeframe swing structure from confirmed " + htfLabel + " bars"
 
 f_ribbon(table tb, Ctx x, Core c, bool liveView) =>
     if not na(tb)
         string sz = panelSz
-        table.cell(tb, 0, 0, f_htfText(x), text_color = x.htfOk ? f_dirColor(x.htfTrend) : C_NEUT, text_size = sz, tooltip = x.htfOk ? "Higher-timeframe swing structure from confirmed " + htfLabel + " bars" : "Higher timeframe is off or not above the chart timeframe")
+        table.cell(tb, 0, 0, f_htfText(x), text_color = f_htfColor(x), text_size = sz, tooltip = f_htfTip(x))
         string s0 = x.ranging ? "STR ◆ RANGE" : x.swTrend == 1 ? "STR ▲ BULL" : x.swTrend == -1 ? "STR ▼ BEAR" : "STR —"
         color c0 = x.ranging ? C_NEUT : f_dirColor(x.swTrend)
         table.cell(tb, 1, 0, s0, text_color = c0, text_size = sz, tooltip = "Swing structure on the chart timeframe" + (x.ranging ? " · regime: ranging" : ""))
@@ -79,9 +85,9 @@ f_dashboard(table tb, Ctx x, Core c, StructState si, Range r, bool liveView) =>
         string mk = x.market == MK_RANGE ? "RANGING" : x.market == MK_MIXED ? "MIXED" : x.market == MK_BULL ? "BULLISH" : x.market == MK_BEAR ? "BEARISH" : "UNDEFINED"
         color mkc = x.market == MK_RANGE or x.market == MK_MIXED ? C_WARN : f_dirColor(x.market)
         row := f_dashRow(tb, row, "MARKET", mk, x.market == MK_RANGE ? C_NEUT : mkc, "Ranging regime → RANGING. HTF and chart structure agree → that side; disagree → MIXED; HTF unknown → chart structure (A.16).", sz)
-        string ht = not x.htfOk ? "OFF" : htfLabel + (x.htfTrend == 1 ? " BULLISH" : x.htfTrend == -1 ? " BEARISH" : " —")
+        string ht = htfBadCfg ? "⚠ HTF ≤ chart TF" : not x.htfOk ? "OFF" : x.htfLow ? htfLabel + " ⚠ low history" : htfLabel + (x.htfTrend == 1 ? " BULLISH" : x.htfTrend == -1 ? " BEARISH" : " —")
         Event lh = c.lastHtfStruct
-        row := f_dashRow(tb, row, "HTF", ht + (na(lh) ? "" : " · " + f_structText(lh)), x.htfOk ? f_dirColor(x.htfTrend) : C_NEUT, na(lh) ? "Confirmed " + htfLabel + " bars only" : "Last HTF break at " + f_px(lh.price) + " · " + f_timeStr(lh.t), sz)
+        row := f_dashRow(tb, row, "HTF", ht + (na(lh) or not x.htfOk ? "" : " · " + f_structText(lh)), f_htfColor(x), na(lh) or not x.htfOk ? f_htfTip(x) : "Last HTF break at " + f_px(lh.price) + " · " + f_timeStr(lh.t), sz)
         Event ls = c.lastStruct
         string st = na(ls) ? "—" : f_structText(ls) + " · " + str.tostring(bar_index - ls.bar) + " bars"
         row := f_dashRow(tb, row, "STRUCTURE", st, na(ls) ? C_NEUT : f_dirColor(ls.dir), na(ls) ? "No swing break yet" : "Broken level " + f_px(ls.price) + " · leg " + str.tostring(ls.v2, "0.0") + " ATR · " + f_timeStr(ls.t), sz)
@@ -137,8 +143,10 @@ f_debugTable(table tb, View v, Core c, array<Zone> zs, array<Zone> za, array<Liq
         row := f_dashRow(tb, row, "BUILD", "v" + BUILD + " · " + str.tostring(i_mode), C_TEXT, "", sz)
         row := f_dashRow(tb, row, "BARS", str.tostring(bar_index + 1) + (c.warm ? " · warm" : " · warming up"), c.warm ? C_TEXT : C_WARN, "Warm-up: " + str.tostring(warmBars) + " bars", sz)
         row := f_dashRow(tb, row, "VIEW", (v.vp ? "visible " : "recent ") + str.tostring(v.iL) + "–" + str.tostring(v.iR) + " · " + str.tostring(v.segs) + " seg" + (v.live ? "" : " · history"), C_TEXT, "Bar window drawn and number of time segments", sz)
-        row := f_dashRow(tb, row, "ZONES", str.tostring(zLive) + " live / " + str.tostring(zs.size()) + " · arch " + str.tostring(za.size()), C_TEXT, "Live cap " + str.tostring(ZONE_CAP) + " · archive cap " + str.tostring(ZONE_ARCH_CAP), sz)
-        row := f_dashRow(tb, row, "LEVELS", str.tostring(lLive) + " live / " + str.tostring(lv.size()) + " · arch " + str.tostring(la.size()), C_TEXT, "Live cap " + str.tostring(LIQ_CAP) + " · archive cap " + str.tostring(LIQ_ARCH_CAP), sz)
+        string zFrom = za.size() > 0 ? " · from bar " + str.tostring(za.get(0).endBar) : ""
+        string lFrom = la.size() > 0 ? " · from bar " + str.tostring(la.get(0).endBar) : ""
+        row := f_dashRow(tb, row, "ZONES", str.tostring(zLive) + " live / " + str.tostring(zs.size()) + " · arch " + str.tostring(za.size()), C_TEXT, "Live cap " + str.tostring(ZONE_CAP) + " · archive cap " + str.tostring(ZONE_ARCH_CAP) + zFrom, sz)
+        row := f_dashRow(tb, row, "LEVELS", str.tostring(lLive) + " live / " + str.tostring(lv.size()) + " · arch " + str.tostring(la.size()), C_TEXT, "Live cap " + str.tostring(LIQ_CAP) + " · archive cap " + str.tostring(LIQ_ARCH_CAP) + lFrom, sz)
         row := f_dashRow(tb, row, "EVENTS", str.tostring(c.barEvents.size()) + " bar · " + str.tostring(c.history.size()) + " hist", C_TEXT, "Event bus: current bar / history ring", sz)
         row := f_dashRow(tb, row, "BOXES", str.tostring(boxUsed) + " / " + str.tostring(boxCap), C_TEXT, "Drawn / pool size (platform limit 500)", sz)
         row := f_dashRow(tb, row, "LINES", str.tostring(lineUsed) + " / " + str.tostring(lineCap), C_TEXT, "Drawn / pool size (platform limit 500)", sz)
@@ -147,5 +155,5 @@ f_debugTable(table tb, View v, Core c, array<Zone> zs, array<Zone> za, array<Liq
         row := f_dashRow(tb, row, "CHART", nonStdChart ? "non-standard" : "standard", nonStdChart ? C_WARN : C_TEXT, "", sz)
         row := f_dashRow(tb, row, "LENGTHS", "swing " + str.tostring(swLen) + " · int " + str.tostring(inLen), C_TEXT, "", sz)
         row := f_dashRow(tb, row, "SESSIONS", sesOk ? sesTz : "off (TF > 1H)", C_TEXT, specAsia + " · " + specLon + " · " + specNy, sz)
-        row := f_dashRow(tb, row, "HTF", htfOk ? htfLabel + " (" + htfTf + ") · x" + str.tostring(htfAgeMult) : "off", htfOk ? C_TEXT : C_WARN, "Higher timeframe used by the HTF Feed and lifetime multiplier of HTF objects", sz)
+        row := f_dashRow(tb, row, "HTF", htfOk ? htfLabel + " (" + htfTf + ") · " + str.tostring(nz(hBars)) + " bars · x" + str.tostring(htfAgeMult) : htfBadCfg ? "⚠ not above chart TF" : "off", htfOk and not htfLowHist ? C_TEXT : C_WARN, "Higher timeframe, confirmed HTF bars, lifetime multiplier (distance ×" + str.tostring(htfDistMult, "0.0") + ")", sz)
     true

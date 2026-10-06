@@ -98,12 +98,13 @@ EQ_BAND = 0.02
 ZONE_CAP = 250
 LIQ_CAP = 150
 // Archive of finished objects for history rendering (v0.2): not iterated per bar
-ZONE_ARCH_CAP = 800
-LIQ_ARCH_CAP = 800
-RANGE_ARCH_CAP = 300
-SESS_CAP = 400
-BRK_CAP = 1000
-SWING_CAP = 1000
+// v0.3: deep enough for a fully zoomed-out chart; only drawable objects are archived
+ZONE_ARCH_CAP = 4000
+LIQ_ARCH_CAP = 4000
+RANGE_ARCH_CAP = 600
+SESS_CAP = 1200
+BRK_CAP = 3000
+SWING_CAP = 3000
 // Visible-range rendering: a wide view is split into time segments with their own anchor
 SEG_BARS = 150
 SEG_MAX = 6
@@ -409,6 +410,7 @@ type Ctx
     Liq nextBsl
     Liq nextSsl
     bool htfOk = false
+    bool htfLow = false
     int htfTrend = 0
 
 // Display mode ceilings (§15.3, §19.2)
@@ -458,6 +460,8 @@ type View
     array<int> segEnd
     array<float> segPx
     array<float> segAtr
+    float winLo
+    float winHi
 
 // Visual pools: drawings are created once and reused (§4.9)
 type BoxPool
@@ -595,6 +599,7 @@ i_sesView = input.enum(SesView.rangeBox, "Session view", tooltip = "Sessions are
 i_htfMode = input.enum(HtfMode.auto, "Higher timeframe", inline = "htf", tooltip = "Auto: ≤1m→15m, ≤5m→1H, ≤1H→4H, ≤4H→D, D→W, W→M. Manual: the timeframe on the right. Only confirmed HTF bars are used (no repaint).", group = G_MTF, display = display.none)
 i_htfTf = input.timeframe("240", "", inline = "htf", group = G_MTF, display = display.none)
 i_htfLen = input.int(5, "HTF swing length", minval = 2, maxval = 20, tooltip = "Pivot length on the higher timeframe.", group = G_MTF, display = display.none)
+i_minHtfBars = input.int(100, "Min HTF bars for bias", minval = 20, maxval = 1000, tooltip = "With fewer confirmed higher-timeframe bars the HTF bias is treated as unknown (A.16) and the Ribbon shows ⚠.", group = G_MTF, display = display.none)
 i_htfStruct = input.bool(true, "HTF structure", inline = "hv", group = G_MTF, display = display.none)
 i_htfOB = input.bool(true, "HTF OB", inline = "hv", group = G_MTF, display = display.none)
 i_htfFVG = input.bool(false, "HTF FVG", inline = "hv", group = G_MTF, display = display.none)
@@ -642,9 +647,9 @@ f_modeCfg(DisplayMode m) =>
     switch m
         DisplayMode.clean => ModeCfg.new(structEvents = 1, internalEvents = 0, swingLabels = false, zonesPerSide = 1, majorPerSide = 1, minorPerSide = 0, sweptShow = 1, distMax = 3.0, theta = 0.55, ttl = 0, hist = 500, mitigated = false, pdCap = 1, gauge = false, sessions = 0, dashboard = false, labelLevel = 1, debug = false, structWin = 6, internalWin = 0, swingLabelWin = 0, sweepWin = 6, sessWin = 0, rangeWin = 1, poolZone = 24, poolWash = 4, poolLvl = 30, poolStr = 14, poolLab = 40, htfStructEvents = 1, htfStructWin = 3, keyCap = 2)
         DisplayMode.normal => ModeCfg.new(structEvents = 3, internalEvents = 0, swingLabels = false, zonesPerSide = 2, majorPerSide = 2, minorPerSide = 1, sweptShow = 3, distMax = 6.0, theta = 0.40, ttl = 10, hist = 1500, mitigated = true, pdCap = 2, gauge = true, sessions = 4, dashboard = true, labelLevel = 2, debug = false, structWin = 36, internalWin = 0, swingLabelWin = 0, sweepWin = 30, sessWin = 60, rangeWin = 6, poolZone = 64, poolWash = 64, poolLvl = 100, poolStr = 56, poolLab = 190, htfStructEvents = 2, htfStructWin = 8, keyCap = 3)
-        DisplayMode.analysis => ModeCfg.new(structEvents = 15, internalEvents = 15, swingLabels = true, zonesPerSide = 6, majorPerSide = 6, minorPerSide = 4, sweptShow = 15, distMax = 12.0, theta = 0.25, ttl = 50, hist = 5000, mitigated = true, pdCap = 2, gauge = true, sessions = 20, dashboard = true, labelLevel = 3, debug = false, structWin = 80, internalWin = 60, swingLabelWin = 60, sweepWin = 60, sessWin = 80, rangeWin = 12, poolZone = 140, poolWash = 84, poolLvl = 150, poolStr = 150, poolLab = 320, htfStructEvents = 6, htfStructWin = 16, keyCap = 4)
-        DisplayMode.debug => ModeCfg.new(structEvents = 30, internalEvents = 30, swingLabels = true, zonesPerSide = 20, majorPerSide = 20, minorPerSide = 20, sweptShow = 30, distMax = 1000.0, theta = 0.0, ttl = 100000, hist = 100000, mitigated = true, pdCap = 3, gauge = true, sessions = 30, dashboard = true, labelLevel = 3, debug = true, structWin = 120, internalWin = 60, swingLabelWin = 60, sweepWin = 80, sessWin = 80, rangeWin = 12, poolZone = 180, poolWash = 84, poolLvl = 150, poolStr = 160, poolLab = 340, htfStructEvents = 10, htfStructWin = 20, keyCap = 10)
-        => ModeCfg.new(structEvents = 15, internalEvents = 15, swingLabels = true, zonesPerSide = 6, majorPerSide = 6, minorPerSide = 4, sweptShow = 15, distMax = 12.0, theta = 0.25, ttl = 50, hist = 5000, mitigated = true, pdCap = 3, gauge = true, sessions = 20, dashboard = true, labelLevel = 3, debug = false, structWin = 80, internalWin = 60, swingLabelWin = 60, sweepWin = 60, sessWin = 80, rangeWin = 12, poolZone = 140, poolWash = 84, poolLvl = 150, poolStr = 150, poolLab = 320, htfStructEvents = 6, htfStructWin = 16, keyCap = 4)
+        DisplayMode.analysis => ModeCfg.new(structEvents = 15, internalEvents = 15, swingLabels = true, zonesPerSide = 6, majorPerSide = 6, minorPerSide = 4, sweptShow = 15, distMax = 12.0, theta = 0.25, ttl = 50, hist = 5000, mitigated = true, pdCap = 2, gauge = true, sessions = 20, dashboard = true, labelLevel = 3, debug = false, structWin = 80, internalWin = 60, swingLabelWin = 60, sweepWin = 60, sessWin = 80, rangeWin = 12, poolZone = 140, poolWash = 90, poolLvl = 150, poolStr = 160, poolLab = 400, htfStructEvents = 6, htfStructWin = 16, keyCap = 4)
+        DisplayMode.debug => ModeCfg.new(structEvents = 30, internalEvents = 30, swingLabels = true, zonesPerSide = 20, majorPerSide = 20, minorPerSide = 20, sweptShow = 30, distMax = 1000.0, theta = 0.0, ttl = 100000, hist = 100000, mitigated = true, pdCap = 3, gauge = true, sessions = 30, dashboard = true, labelLevel = 3, debug = true, structWin = 80, internalWin = 60, swingLabelWin = 60, sweepWin = 80, sessWin = 80, rangeWin = 12, poolZone = 180, poolWash = 90, poolLvl = 150, poolStr = 160, poolLab = 480, htfStructEvents = 10, htfStructWin = 20, keyCap = 10)
+        => ModeCfg.new(structEvents = 15, internalEvents = 15, swingLabels = true, zonesPerSide = 6, majorPerSide = 6, minorPerSide = 4, sweptShow = 15, distMax = 12.0, theta = 0.25, ttl = 50, hist = 5000, mitigated = true, pdCap = 3, gauge = true, sessions = 20, dashboard = true, labelLevel = 3, debug = false, structWin = 80, internalWin = 60, swingLabelWin = 60, sweepWin = 60, sessWin = 80, rangeWin = 12, poolZone = 140, poolWash = 90, poolLvl = 150, poolStr = 160, poolLab = 400, htfStructEvents = 6, htfStructWin = 16, keyCap = 4)
 
 var ModeCfg mc = f_modeCfg(i_mode)
 
@@ -854,8 +859,10 @@ max_bars_back(isDispDn, MAXBACK)
 // on history and in realtime (no repaint, AC-25).
 //
 // Deviation from ADR-03 (recorded in CHANGELOG): detection here is a compact re-statement of
-// A.2/A.4/A.7/A.10 written with fixed-length lookbacks only, because the chart engines rely on
-// dynamic history offsets that the HTF context cannot size. Lifecycle (touch, mitigation,
+// A.2/A.4/A.7/A.10 written with fixed-length lookbacks and a small candle ring only, because
+// the chart engines rely on dynamic history offsets that the HTF context cannot size. HTF order
+// blocks follow the A.7 candle window but skip the integrity and volume filters; "Require
+// displacement" maps to "the leg had a displacement bar". Lifecycle (touch, mitigation,
 // conversion, sweeps) is NOT duplicated: HTF objects are ingested into the shared registries
 // and run through the same chart-side engines.
 
@@ -868,13 +875,16 @@ f_tfLabel(int sec) =>
     sec < 3600 ? str.tostring(math.round(sec / 60)) + "m" : sec < 86400 ? str.tostring(math.round(sec / 3600)) + "H" : sec < 604800 ? "D" : sec < 2419200 ? "W" : "M"
 
 string htfTf = i_htfMode == HtfMode.off ? "" : i_htfMode == HtfMode.manual ? i_htfTf : f_autoHtf()
-string htfReq = htfTf == "" ? timeframe.period : htfTf
 int chartSec = timeframe.in_seconds()
-int htfSec = timeframe.in_seconds(htfReq)
+int htfSec = timeframe.in_seconds(htfTf == "" ? timeframe.period : htfTf)
 bool htfOk = htfTf != "" and htfSec > chartSec
+// A manual HTF that is not above the chart timeframe is not requested at all (warning in the panels)
+bool htfBadCfg = i_htfMode == HtfMode.manual and not htfOk
+string htfReq = htfOk ? htfTf : timeframe.period
 string htfLabel = f_tfLabel(htfSec)
-// HTF objects live longer and farther from price than chart objects
-int htfAgeMult = htfOk ? math.max(1, math.min(10, int(htfSec / chartSec))) : 1
+// HTF objects live in HTF bars: lifetimes scale with the TF ratio, distance limits with its root
+int htfAgeMult = htfOk ? math.max(1, int(htfSec / chartSec)) : 1
+float htfDistMult = htfOk ? math.max(3.0, math.sqrt(htfSec / chartSec)) : 1.0
 
 // Order block geometry from a candle, same rules as A.7 step 4–5 (zone mode, size filter)
 f_obGeom(int dir, float o, float h, float l, float c, float atr) =>
@@ -893,14 +903,43 @@ f_obGeom(int dir, float o, float h, float l, float c, float atr) =>
     bool ok = not na(atr) and sz > 0 and sz >= obMin * atr and sz <= obMax * atr
     [top, bot, ok]
 
+// Order block candidates are kept as [open, high, low, close, time] (time stored as float)
+f_candSet(array<float> cd, float o, float h, float l, float c, int t) =>
+    cd.set(0, o)
+    cd.set(1, h)
+    cd.set(2, l)
+    cd.set(3, c)
+    cd.set(4, t)
+    true
+
+f_candRing(array<float> cd, array<float> rO, array<float> rH, array<float> rL, array<float> rC, array<int> rT, int k) =>
+    f_candSet(cd, rO.get(k), rH.get(k), rL.get(k), rC.get(k), rT.get(k))
+
+f_candCopy(array<float> dst, array<float> src) =>
+    for i = 0 to 4
+        dst.set(i, src.get(i))
+    true
+
+// A.7 window: the last opposite candle scanning back from k0 to origin − OB_NPRE, else the
+// origin candle. rD codes the ring candles: ±2 displacement, ±1 plain bull/bear, 0 doji.
+f_ringPick(array<int> rD, int k0, int o, int dir) =>
+    int j = o
+    int lo = math.max(0, o - OB_NPRE)
+    if k0 >= lo
+        for k = k0 to lo
+            int dk = rD.get(k)
+            if dir == 1 ? dk < 0 : dk > 0
+                j := k
+                break
+    j
+
 // Evaluated on every HTF bar inside request.security. Returns the previous (confirmed) HTF
-// bar's state: trend, last break, last pivots, last order block, last fair value gap.
+// bar's state: trend, last break and last order block per direction, last pivots, last fair
+// value gap, plus the open time and index of the current HTF bar.
 f_htfState(int len) =>
     float atr = ta.atr(i_atrLen)
     float ph = ta.pivothigh(high, len, len)
     float pl = ta.pivotlow(low, len, len)
-    float winLow = ta.lowest(low, len + 1)
-    float winHigh = ta.highest(high, len + 1)
     int pivT = time[len]
     float bodyH = math.abs(close - open)
     bool ratioOk = bodyH / math.max(high - low, syminfo.mintick) >= i_minBodyRatio
@@ -908,6 +947,27 @@ f_htfState(int len) =>
     bool dDn = close < open and not na(atr) and bodyH >= i_kBody * atr and ratioOk
     bool isBear = close < open
     bool isBull = close > open
+    // ring of the last len + 4 candles, current bar included: leg rebuilds at pivot confirmation
+    var array<float> rO = array.new<float>()
+    var array<float> rH = array.new<float>()
+    var array<float> rL = array.new<float>()
+    var array<float> rC = array.new<float>()
+    var array<int> rT = array.new<int>()
+    var array<int> rD = array.new<int>()
+    rO.push(open)
+    rH.push(high)
+    rL.push(low)
+    rC.push(close)
+    rT.push(time)
+    rD.push(dUp ? 2 : dDn ? -2 : isBull ? 1 : isBear ? -1 : 0)
+    if rO.size() > len + 4
+        rO.shift()
+        rH.shift()
+        rL.shift()
+        rC.shift()
+        rT.shift()
+        rD.shift()
+    int n = rO.size()
     // structure
     var int trend = 0
     var float refH = na
@@ -916,48 +976,43 @@ f_htfState(int len) =>
     var float refL = na
     var int refLT = na
     var bool refLDone = true
-    var int brkSeq = 0
-    var int brkDir = 0
-    var int brkKind = 0
-    var float brkPx = na
-    var int brkT = na
-    var int brkSwT = na
+    // breaks, one channel per direction (an outside bar can break both sides in wick mode)
+    var int buSeq = 0
+    var int buKind = 0
+    var float buPx = na
+    var int buT = na
+    var int buSwT = na
+    var int bdSeq = 0
+    var int bdKind = 0
+    var float bdPx = na
+    var int bdT = na
+    var int bdSwT = na
     var float phP = na
     var int phT = na
     var float plP = na
     var int plT = na
-    // last opposite candles seen so far
-    var float lbO = na
-    var float lbH = na
-    var float lbL = na
-    var float lbC = na
-    var int lbT = na
-    var float luO = na
-    var float luH = na
-    var float luL = na
-    var float luC = na
-    var int luT = na
-    // OB candidates: last opposite candle of the leg before its first displacement bar
+    // legs (A.7): origin, displacement seen (d), plain impulse candle seen (fallback d).
+    // cu / cd: last opposite candle before the first displacement bar of the leg;
+    // cb / ce: last opposite candle before the first candle in the leg direction.
     var float upOrig = na
     var bool upImp = false
-    var float cuO = na
-    var float cuH = na
-    var float cuL = na
-    var float cuC = na
-    var int cuT = na
+    var bool upBull = false
+    var array<float> cu = array.new<float>(5, na)
+    var array<float> cb = array.new<float>(5, na)
     var float dnOrig = na
     var bool dnImp = false
-    var float cdO = na
-    var float cdH = na
-    var float cdL = na
-    var float cdC = na
-    var int cdT = na
-    // outputs: last order block and last fair value gap
-    var int obSeq = 0
-    var int obDir = 0
-    var float obTop = na
-    var float obBot = na
-    var int obT = na
+    var bool dnBear = false
+    var array<float> cd = array.new<float>(5, na)
+    var array<float> ce = array.new<float>(5, na)
+    // outputs: last order block per direction and last fair value gap
+    var int ouSeq = 0
+    var float ouTop = na
+    var float ouBot = na
+    var int ouT = na
+    var int odSeq = 0
+    var float odTop = na
+    var float odBot = na
+    var int odT = na
     var int fvgSeq = 0
     var int fvgDir = 0
     var float fvgTop = na
@@ -968,116 +1023,123 @@ f_htfState(int len) =>
         if low < upOrig
             upOrig := low
             upImp := false
-            if isBear
-                cuO := open
-                cuH := high
-                cuL := low
-                cuC := close
-                cuT := time
-            else
-                cuO := lbO
-                cuH := lbH
-                cuL := lbL
-                cuC := lbC
-                cuT := lbT
-        else if not upImp
-            if dUp
-                upImp := true
-            else if isBear
-                cuO := open
-                cuH := high
-                cuL := low
-                cuC := close
-                cuT := time
+            upBull := false
+            f_candRing(cu, rO, rH, rL, rC, rT, f_ringPick(rD, n - 1, n - 1, 1))
+            f_candCopy(cb, cu)
+        else
+            if not upImp
+                if dUp
+                    upImp := true
+                else if isBear
+                    f_candSet(cu, open, high, low, close, time)
+            if not upBull
+                if isBull
+                    upBull := true
+                else if isBear
+                    f_candSet(cb, open, high, low, close, time)
     if not na(dnOrig)
         if high > dnOrig
             dnOrig := high
             dnImp := false
-            if isBull
-                cdO := open
-                cdH := high
-                cdL := low
-                cdC := close
-                cdT := time
-            else
-                cdO := luO
-                cdH := luH
-                cdL := luL
-                cdC := luC
-                cdT := luT
-        else if not dnImp
-            if dDn
-                dnImp := true
-            else if isBull
-                cdO := open
-                cdH := high
-                cdL := low
-                cdC := close
-                cdT := time
-    // 2 · confirmed pivots become the new references; the leg restarts from the pivot window
+            dnBear := false
+            f_candRing(cd, rO, rH, rL, rC, rT, f_ringPick(rD, n - 1, n - 1, -1))
+            f_candCopy(ce, cd)
+        else
+            if not dnImp
+                if dDn
+                    dnImp := true
+                else if isBull
+                    f_candSet(cd, open, high, low, close, time)
+            if not dnBear
+                if isBear
+                    dnBear := true
+                else if isBull
+                    f_candSet(ce, open, high, low, close, time)
+    // 2 · confirmed pivots become the new references; the leg is rebuilt from the pivot window
     if not na(ph)
         phP := ph
         phT := pivT
         refH := ph
         refHT := pivT
         refHDone := false
-        upOrig := winLow
-        upImp := false
-        cuO := lbO
-        cuH := lbH
-        cuL := lbL
-        cuC := lbC
-        cuT := lbT
+        int o = n - 1
+        for k = n - 1 to math.max(0, n - 1 - len)
+            if rL.get(k) < rL.get(o)
+                o := k
+        int d = -1
+        int fb = -1
+        if o < n - 1
+            for k = o + 1 to n - 1
+                int dk = rD.get(k)
+                if fb < 0 and dk > 0
+                    fb := k
+                if d < 0 and dk == 2
+                    d := k
+        upOrig := rL.get(o)
+        upImp := d >= 0
+        upBull := fb >= 0
+        f_candRing(cu, rO, rH, rL, rC, rT, f_ringPick(rD, d >= 0 ? d - 1 : n - 1, o, 1))
+        f_candRing(cb, rO, rH, rL, rC, rT, f_ringPick(rD, fb >= 0 ? fb - 1 : n - 1, o, 1))
     if not na(pl)
         plP := pl
         plT := pivT
         refL := pl
         refLT := pivT
         refLDone := false
-        dnOrig := winHigh
-        dnImp := false
-        cdO := luO
-        cdH := luH
-        cdL := luL
-        cdC := luC
-        cdT := luT
-    // 3 · breaks (A.4) and the order block of the breaking leg (A.7)
+        int o = n - 1
+        for k = n - 1 to math.max(0, n - 1 - len)
+            if rH.get(k) > rH.get(o)
+                o := k
+        int d = -1
+        int fb = -1
+        if o < n - 1
+            for k = o + 1 to n - 1
+                int dk = rD.get(k)
+                if fb < 0 and dk < 0
+                    fb := k
+                if d < 0 and dk == -2
+                    d := k
+        dnOrig := rH.get(o)
+        dnImp := d >= 0
+        dnBear := fb >= 0
+        f_candRing(cd, rO, rH, rL, rC, rT, f_ringPick(rD, d >= 0 ? d - 1 : n - 1, o, -1))
+        f_candRing(ce, rO, rH, rL, rC, rT, f_ringPick(rD, fb >= 0 ? fb - 1 : n - 1, o, -1))
+    // 3 · breaks (A.4) and the order block of the breaking leg (A.7). The break time is the
+    // close of the breaking HTF bar, so lines end where the break was confirmed.
     float srcUp = i_brk == BreakSrc.wick ? high : close
     float srcDn = i_brk == BreakSrc.wick ? low : close
     if not refHDone and not na(refH) and srcUp > refH
-        brkKind := trend == -1 ? BK_CHOCH : BK_BOS
-        brkDir := 1
-        brkPx := refH
-        brkT := time
-        brkSwT := refHT
-        brkSeq += 1
+        buKind := trend == -1 ? BK_CHOCH : BK_BOS
+        buPx := refH
+        buT := nz(time_close, time)
+        buSwT := refHT
+        buSeq += 1
         trend := 1
         refHDone := true
-        if not na(cuT)
-            [gTop, gBot, gOk] = f_obGeom(1, cuO, cuH, cuL, cuC, atr)
+        array<float> cand = upImp ? cu : cb
+        if not na(cand.get(4)) and (upImp or not i_obReqDisp)
+            [gTop, gBot, gOk] = f_obGeom(1, cand.get(0), cand.get(1), cand.get(2), cand.get(3), atr)
             if gOk
-                obSeq += 1
-                obDir := 1
-                obTop := gTop
-                obBot := gBot
-                obT := cuT
+                ouSeq += 1
+                ouTop := gTop
+                ouBot := gBot
+                ouT := int(cand.get(4))
     if not refLDone and not na(refL) and srcDn < refL
-        brkKind := trend == 1 ? BK_CHOCH : BK_BOS
-        brkDir := -1
-        brkPx := refL
-        brkT := time
-        brkSwT := refLT
-        brkSeq += 1
+        bdKind := trend == 1 ? BK_CHOCH : BK_BOS
+        bdPx := refL
+        bdT := nz(time_close, time)
+        bdSwT := refLT
+        bdSeq += 1
         trend := -1
         refLDone := true
-        if not na(cdT)
-            [gTop, gBot, gOk] = f_obGeom(-1, cdO, cdH, cdL, cdC, atr)
+        array<float> cand = dnImp ? cd : ce
+        if not na(cand.get(4)) and (dnImp or not i_obReqDisp)
+            [gTop, gBot, gOk] = f_obGeom(-1, cand.get(0), cand.get(1), cand.get(2), cand.get(3), atr)
             if gOk
-                obSeq += 1
-                obDir := -1
-                obTop := gTop
-                obBot := gBot
-                obT := cdT
+                odSeq += 1
+                odTop := gTop
+                odBot := gBot
+                odT := int(cand.get(4))
     // 4 · fair value gaps (A.10) on the HTF candles
     if bar_index >= 2 and not na(atr)
         if low > high[2] and (not i_fvgMidDir or close[1] > open[1]) and low - high[2] >= i_fvgMin * atr
@@ -1092,31 +1154,45 @@ f_htfState(int len) =>
             fvgTop := low[2]
             fvgBot := high
             fvgT := time[2]
-    // 5 · remember the last opposite candles (after they were used above)
-    if isBear
-        lbO := open
-        lbH := high
-        lbL := low
-        lbC := close
-        lbT := time
-    if isBull
-        luO := open
-        luH := high
-        luL := low
-        luC := close
-        luT := time
-    [trend[1], brkSeq[1], brkDir[1], brkKind[1], brkPx[1], brkT[1], brkSwT[1], phP[1], phT[1], plP[1], plT[1], obSeq[1], obDir[1], obTop[1], obBot[1], obT[1], fvgSeq[1], fvgDir[1], fvgTop[1], fvgBot[1], fvgT[1]]
+    [trend[1], buSeq[1], buKind[1], buPx[1], buT[1], buSwT[1], bdSeq[1], bdKind[1], bdPx[1], bdT[1], bdSwT[1], phP[1], phT[1], plP[1], plT[1], ouSeq[1], ouTop[1], ouBot[1], ouT[1], odSeq[1], odTop[1], odBot[1], odT[1], fvgSeq[1], fvgDir[1], fvgTop[1], fvgBot[1], fvgT[1], time, bar_index]
 
-// Confirmed HTF state on every chart bar. no-repaint: [1] is applied inside f_htfState.
-[hTrend, hBrkSeq, hBrkDir, hBrkKind, hBrkPx, hBrkT, hBrkSwT, hPhP, hPhT, hPlP, hPlT, hObSeq, hObDir, hObTop, hObBot, hObT, hFvgSeq, hFvgDir, hFvgTop, hFvgBot, hFvgT] = request.security(syminfo.tickerid, htfReq, f_htfState(i_htfLen), lookahead = barmerge.lookahead_on) // no-repaint: [1] inside
+// Confirmed HTF state on every chart bar. The open time and index of the current HTF bar are
+// known when it opens, so they need no offset.
+[hTrend, hBuSeq, hBuKind, hBuPx, hBuT, hBuSwT, hBdSeq, hBdKind, hBdPx, hBdT, hBdSwT, hPhP, hPhT, hPlP, hPlT, hOuSeq, hOuTop, hOuBot, hOuT, hOdSeq, hOdTop, hOdBot, hOdT, hFvgSeq, hFvgDir, hFvgTop, hFvgBot, hFvgT, hBarT, hBars] = request.security(syminfo.tickerid, htfReq, f_htfState(i_htfLen), lookahead = barmerge.lookahead_on) // no-repaint: [1] inside
 
+// A chart bar that opened before the current HTF bar straddles an HTF boundary (W→M, 45m→4H).
+// It keeps the previous state, so realtime and history ingest on the same bar (AC-25).
+bool htfHold = not na(hBarT) and time < hBarT
+bool htfStep = htfOk and not htfHold
+var int hLastTrend = 0
+var int hLastBu = 0
+var int hLastBd = 0
+var int hLastPhT = 0
+var int hLastPlT = 0
+var int hLastOu = 0
+var int hLastOd = 0
+var int hLastFvg = 0
 // Change detection: each HTF object is ingested once, on the first chart bar after its HTF bar closed
-bool htfNewBias = htfOk and hTrend != nz(hTrend[1])
-bool htfNewBrk = htfOk and hBrkSeq > 0 and hBrkSeq != nz(hBrkSeq[1])
-bool htfNewPh = htfOk and not na(hPhT) and hPhT != nz(hPhT[1])
-bool htfNewPl = htfOk and not na(hPlT) and hPlT != nz(hPlT[1])
-bool htfNewOb = htfOk and hObSeq > 0 and hObSeq != nz(hObSeq[1])
-bool htfNewFvg = htfOk and hFvgSeq > 0 and hFvgSeq != nz(hFvgSeq[1])
+bool htfNewBu = htfStep and nz(hBuSeq) > 0 and nz(hBuSeq) != hLastBu
+bool htfNewBd = htfStep and nz(hBdSeq) > 0 and nz(hBdSeq) != hLastBd
+bool htfNewPh = htfStep and nz(hPhT) > 0 and nz(hPhT) != hLastPhT
+bool htfNewPl = htfStep and nz(hPlT) > 0 and nz(hPlT) != hLastPlT
+bool htfNewOu = htfStep and nz(hOuSeq) > 0 and nz(hOuSeq) != hLastOu
+bool htfNewOd = htfStep and nz(hOdSeq) > 0 and nz(hOdSeq) != hLastOd
+bool htfNewFvg = htfStep and nz(hFvgSeq) > 0 and nz(hFvgSeq) != hLastFvg
+if htfStep
+    hLastTrend := nz(hTrend)
+    hLastBu := nz(hBuSeq)
+    hLastBd := nz(hBdSeq)
+    hLastPhT := nz(hPhT)
+    hLastPlT := nz(hPlT)
+    hLastOu := nz(hOuSeq)
+    hLastOd := nz(hOdSeq)
+    hLastFvg := nz(hFvgSeq)
+// A.16 htfReliable: with too little HTF history the bias is unknown
+bool htfLowHist = htfOk and nz(hBars) < i_minHtfBars
+int hBias = htfOk and not htfLowHist ? hLastTrend : 0
+bool htfNewBias = htfOk and hBias != nz(hBias[1])
 
 // ═══ 20 · STRUCTURE ENGINE ══════════════════════════════════════════════════════
 // Swings, HH/HL/LH/LL, BOS / CHoCH / MSS, protected levels (Appendix A.2–A.5, §7.1).
@@ -1359,14 +1435,23 @@ f_liqSwept(Core c, Liq x, float extreme, int stype) =>
     x.endT := time
     float pen = math.abs(extreme - x.price) / vu
     string sideTxt = x.side == 1 ? "BSL" : "SSL"
-    f_emit(c, EV_LIQ_SWEPT, -x.side, x.price, x.id, na, x.major ? 1 : 2, pen, stype, x.major ? 1.0 : 0.0, sideTxt + " " + x.tag)
+    f_emit(c, EV_LIQ_SWEPT, -x.side, x.price, x.id, na, x.major ? 1 : 2, pen, stype, x.major ? 1.0 : 0.0, sideTxt + " " + x.tag, x.tf)
 
 f_liqTaken(Core c, Liq x, float pen) =>
     x.state := LS_TAKEN
     x.endBar := bar_index
     x.endT := time
     string sideTxt = x.side == 1 ? "BSL" : "SSL"
-    f_emit(c, EV_LIQ_TAKEN, x.side, x.price, x.id, na, 2, pen / vu, na, x.major ? 1.0 : 0.0, sideTxt + " " + x.tag)
+    f_emit(c, EV_LIQ_TAKEN, x.side, x.price, x.id, na, 2, pen / vu, na, x.major ? 1.0 : 0.0, sideTxt + " " + x.tag, x.tf)
+
+// Finished levels go to the archive for history rendering; HTF levels only while they are displayed
+f_liqArchive(array<Liq> arch, Liq x) =>
+    bool keep = x.tf == TF_CHART or i_htfLiq
+    if keep
+        arch.push(x)
+        if arch.size() > LIQ_ARCH_CAP
+            arch.shift()
+    keep
 
 // Confirmed-bar step: sweep / taken checks, major flag, expiry, turtle soup (A.13).
 // Finished levels move to the archive (history rendering) once the turtle-soup window has passed.
@@ -1405,27 +1490,23 @@ f_liqStep(Core c, array<Liq> lv, array<Liq> arch, int chochIntDir) =>
                 if x.state == LS_ACTIVE or x.state == LS_PENDING
                     bool htf = x.tf != TF_CHART
                     x.major := htf or x.kind != LK_SWING or x.touches >= 2 or bar_index - x.bar >= i_oldAge
-                    if math.abs(close - x.price) > LIQ_MAX_DIST * vu * (htf ? 3 : 1) or bar_index - x.bar > LIQ_MAX_AGE * (htf ? htfAgeMult : 1)
+                    if math.abs(close - x.price) > LIQ_MAX_DIST * vu * (htf ? htfDistMult : 1.0) or bar_index - x.bar > LIQ_MAX_AGE * (htf ? htfAgeMult : 1)
                         x.state := LS_EXPIRED
                         x.endBar := bar_index
                         x.endT := time
-                        f_emit(c, EV_LIQ_EXPIRED, x.side, x.price, x.id, na, 4)
+                        f_emit(c, EV_LIQ_EXPIRED, x.side, x.price, x.id, na, 4, na, na, na, "", x.tf)
             else
                 if x.state == LS_SWEPT and chochIntDir == -x.side and x.sweepType < SWEEP_TURTLE and bar_index - x.endBar <= i_tsWindow and x.endBar - x.bar >= i_tsMinAge
                     x.sweepType := SWEEP_TURTLE
                 if bar_index - x.endBar > i_tsWindow
-                    arch.push(lv.remove(i))
-                    if arch.size() > LIQ_ARCH_CAP
-                        arch.shift()
+                    f_liqArchive(arch, lv.remove(i))
     if lv.size() > LIQ_CAP
         Liq old = lv.shift()
         if old.state == LS_ACTIVE or old.state == LS_PENDING
             old.state := LS_EXPIRED
             old.endBar := bar_index
             old.endT := time
-        arch.push(old)
-        if arch.size() > LIQ_ARCH_CAP
-            arch.shift()
+        f_liqArchive(arch, old)
     true
 
 // Session tracking: start / running high-low / end → history box + key levels (A.15)
@@ -1558,7 +1639,7 @@ f_obFromBreak(Core c, array<Zone> zs, Brk b, StructState swSt) =>
             if n > 0
                 for i = n - 1 to 0
                     Zone z = zs.get(i)
-                    if z.kind == ZK_OB and z.dir == dir and z.t == tJ
+                    if z.tf == TF_CHART and z.kind == ZK_OB and z.dir == dir and z.t == tJ
                         pass := false
                         if b.lvl > z.lvl
                             z.lvl := b.lvl
@@ -1586,7 +1667,7 @@ f_fvgNew(Core c, array<Zone> zs, int dir) =>
     z
 
 f_zoneEvent(Core c, Zone z, int typ, int tier, float v2 = na) =>
-    f_emit(c, typ, z.dir, close, z.id, na, tier, z.kind, v2, z.touches, f_kindTag(z.kind))
+    f_emit(c, typ, z.dir, close, z.id, na, tier, z.kind, v2, z.touches, f_kindTag(z.kind), z.tf)
 
 // Lifecycle for OB / BB / MB / IFVG (§7.3)
 f_obLife(Core c, array<Zone> zs, Zone z) =>
@@ -1606,7 +1687,7 @@ f_obLife(Core c, array<Zone> zs, Zone z) =>
             Zone nz = Zone.new(id = f_nextId(c), kind = nk, dir = -z.dir, state = ZS_FRESH, top = z.top, bottom = z.bottom, bar = z.bar, t = z.t, born = bar_index, bornT = time, strength = z.strength * 0.9, disp = z.disp, parent = z.id, brkId = z.brkId, lvl = z.lvl, tf = z.tf)
             zs.push(nz)
             z.state := ZS_CONVERTED
-            f_emit(c, EV_ZONE_CONVERTED, nz.dir, (nz.top + nz.bottom) / 2, nz.id, be.id, 2, nk, z.id, na, f_kindTag(nk))
+            f_emit(c, EV_ZONE_CONVERTED, nz.dir, (nz.top + nz.bottom) / 2, nz.id, be.id, 2, nk, z.id, na, f_kindTag(nk), z.tf)
         else
             z.state := ZS_INVALID
     else
@@ -1652,16 +1733,30 @@ f_fvgLife(Core c, array<Zone> zs, Zone z) =>
                 Zone nz = Zone.new(id = f_nextId(c), kind = ZK_IFVG, dir = -z.dir, state = ZS_FRESH, top = z.top, bottom = z.bottom, bar = z.bar, t = z.t, born = bar_index, bornT = time, strength = z.strength, disp = z.disp, parent = z.id, lvl = z.lvl, tf = z.tf)
                 zs.push(nz)
                 z.state := ZS_CONVERTED
-                f_emit(c, EV_ZONE_CONVERTED, nz.dir, (nz.top + nz.bottom) / 2, nz.id, fe.id, 2, ZK_IFVG, z.id, na, "IFVG")
+                f_emit(c, EV_ZONE_CONVERTED, nz.dir, (nz.top + nz.bottom) / 2, nz.id, fe.id, 2, ZK_IFVG, z.id, na, "IFVG", z.tf)
             else
                 z.state := ZS_FILLED
     true
 
+// Display filter shared with the renderer: kind toggles and minor-zone reduction (ADR-09)
+f_zoneShown(Zone z) =>
+    bool isOb = z.kind == ZK_OB or z.kind == ZK_BB or z.kind == ZK_MB
+    bool htf = z.tf != TF_CHART
+    bool kindOk = htf ? (z.kind == ZK_FVG or z.kind == ZK_IFVG ? i_htfFVG and vFVG : i_htfOB and vOB and (z.kind == ZK_OB or i_breakers)) : isOb ? vOB and (z.kind == ZK_OB or i_breakers) : vFVG
+    bool minorOk = mc.debug or htf or not ((i_reduceMinorOb and z.kind == ZK_OB and z.fallback) or (i_reduceMinorFvg and z.kind == ZK_FVG and z.strength < 0.35))
+    kindOk and minorOk
+
+// Only zones the history view can ever draw are archived, so the archive reaches further back:
+// shown by the display settings, and close enough to price when they ended (§15 M6).
 f_archiveZone(array<Zone> arch, Zone z) =>
-    arch.push(z)
-    if arch.size() > ZONE_ARCH_CAP
-        arch.shift()
-    true
+    bool htf = z.tf != TF_CHART
+    float dist = close > z.top ? (close - z.top) / vu : close < z.bottom ? (z.bottom - close) / vu : 0.0
+    bool keep = f_zoneShown(z) and (mc.debug or dist <= mc.distMax * (htf ? 2 : 1))
+    if keep
+        arch.push(z)
+        if arch.size() > ZONE_ARCH_CAP
+            arch.shift()
+    keep
 
 // Confirmed-bar step for live zones: lifecycle, expiry, then finished zones move to the archive
 f_zoneStep(Core c, array<Zone> zs, array<Zone> arch) =>
@@ -1679,7 +1774,7 @@ f_zoneStep(Core c, array<Zone> zs, array<Zone> arch) =>
                     float dist = close > z.top ? close - z.top : close < z.bottom ? z.bottom - close : 0.0
                     bool htf = z.tf != TF_CHART
                     int maxAge = (z.kind == ZK_FVG or z.kind == ZK_IFVG ? FVG_MAX_AGE : OB_MAX_AGE) * (htf ? htfAgeMult : 1)
-                    if bar_index - z.born > maxAge or dist > ZONE_MAX_DIST * vu * (htf ? 3 : 1)
+                    if bar_index - z.born > maxAge or dist > ZONE_MAX_DIST * vu * (htf ? htfDistMult : 1.0)
                         z.state := ZS_EXPIRED
                         z.endBar := bar_index
                         z.endT := time
@@ -1764,16 +1859,19 @@ f_pdStep(Core c, Range r) =>
     pd
 
 // MarketContext snapshot (A.16, A.17)
-f_ctxBuild(Ctx x, StructState sw, StructState si, Range r, float pd, array<Liq> lv, Sess sa, Sess sl, Sess sn, bool hOk, int hTr) =>
+// hLow: too little HTF history (A.16 htfReliable = false) → the HTF bias counts as unknown
+f_ctxBuild(Ctx x, StructState sw, StructState si, Range r, float pd, array<Liq> lv, Sess sa, Sess sl, Sess sn, bool hOk, bool hLow, int hTr) =>
     x.swTrend := sw.trend
     x.inTrend := si.trend
     x.htfOk := hOk
-    x.htfTrend := hOk ? hTr : 0
+    x.htfLow := hOk and hLow
+    x.htfTrend := hOk and not hLow ? hTr : 0
     bool chop = sw.lastBrkKind == BK_CHOCH and sw.prevBrkKind == BK_CHOCH and sw.lastBrkDir != sw.prevBrkDir and not na(sw.prevBrkBar) and sw.lastBrkBar - sw.prevBrkBar <= 6 * sw.len
     bool stale = not na(sw.lastBrkBar) and bar_index - sw.lastBrkBar >= 8 * sw.len and not na(pd) and pd >= 0 and pd <= 1
     x.ranging := chop or stale
-    // A.16: ranging → RANGING; HTF unknown → chart trend; HTF agrees → that side; otherwise MIXED
-    x.market := x.ranging ? MK_RANGE : x.htfTrend == 0 ? sw.trend : sw.trend == 0 ? x.htfTrend : x.htfTrend == sw.trend ? sw.trend : MK_MIXED
+    // A.16: ranging → RANGING; HTF unknown → chart trend; HTF agrees → that side; otherwise
+    // (including an undefined chart trend under a known HTF bias) → MIXED
+    x.market := x.ranging ? MK_RANGE : x.htfTrend == 0 ? sw.trend : x.htfTrend == sw.trend ? sw.trend : MK_MIXED
     x.pd := pd
     x.pdZone := r.pdZone
     x.inOte := r.inOte
@@ -1963,6 +2061,8 @@ f_liqRAt(Liq x, float px, float atr, int anchor) =>
 // the live edge, which keeps the picture stable between realtime ticks (AC-M13).
 // v0.2: everything is drawn for a View — the visible range split into time segments,
 // or the recent window — so history keeps the same density as the live edge.
+// v0.3: each segment gets its share of every pool, and picks inside a segment are spread
+// over time slots, so the left part of the screen is never starved.
 
 // ── Pools
 f_fillBoxPool(BoxPool p, int n) =>
@@ -2033,8 +2133,7 @@ f_finishLabels(LabelPool p) =>
     p.used
 
 // ── Primitive setters
-// Box text is placed at the right edge by default: active boxes end right of the last
-// candle, so their tags never cover price action (user feedback v0.1).
+// Box text is only used for Debug IDs; zone tags go to the right-edge column (v0.3).
 f_box(BoxPool p, int l, int r, float top, float bot, color fill, color border, int bw, string bst, string txt, color tc, string halign) =>
     box b = p.takeBox()
     if not na(b)
@@ -2075,15 +2174,15 @@ f_label(LabelPool p, int x, float y, string txt, color tc, string st, string sz,
         label.set_textalign(lb, text.align_left)
     not na(lb)
 
-// ── Right-edge tags with Smart Labels merging (§14.7)
-f_drawTags(LabelPool p, array<Tag> tags, int x) =>
+// ── Right-edge tags with Smart Labels merging (§14.7). The merge distance grows with the
+// visible price span, so tags never print on top of each other when zoomed out.
+f_drawTags(LabelPool p, array<Tag> tags, int x, float sep) =>
     int n = tags.size()
     if n > 0
         array<float> ps = array.new<float>()
         for tg in tags
             ps.push(tg.price)
         array<int> idx = ps.sort_indices(order.ascending)
-        float sep = 0.35 * vu
         float curP = na
         string curT = ""
         string curTip = ""
@@ -2117,13 +2216,24 @@ f_buildView(int vpBarL, int vpBarR, array<float> hc, array<float> ha, int hb, fl
     if live
         iR := bar_index
     int w = iR - iL + 1
-    int segs = vp ? math.max(1, math.min(SEG_MAX, int(math.round(w / SEG_BARS)))) : 1
+    // v0.3: a segment is at most SEG_BARS wide, so even the default zoom has two anchors
+    int segs = vp ? math.max(1, math.min(SEG_MAX, int(math.ceil(w / SEG_BARS)))) : 1
     View v = View.new(vp, live, iL, iR, segs, array.new<int>(), array.new<float>(), array.new<float>())
     for s = 0 to segs - 1
         int e = s == segs - 1 ? iR : iL + int(math.round((s + 1) * w / segs)) - 1
         v.segEnd.push(e)
         v.segPx.push(e >= bar_index ? pxLive : f_histAt(hc, hb, e, pxLive))
         v.segAtr.push(e >= bar_index ? vu : f_histAt(ha, hb, e, vu))
+    // price span of the window (closes), for label spacing that follows the zoom
+    float lo = na
+    float hi = na
+    for k = iL to iR
+        float c = k >= bar_index ? pxLive : f_histAt(hc, hb, k, na)
+        if not na(c)
+            lo := na(lo) ? c : math.min(lo, c)
+            hi := na(hi) ? c : math.max(hi, c)
+    v.winLo := lo
+    v.winHi := hi
     v
 
 // Segment that contains a bar index (the last segment for anything at or beyond the right edge)
@@ -2136,9 +2246,35 @@ f_segOf(View v, int idx) =>
     s
 
 // Per-segment share of a window cap, so objects cover the whole screen instead of piling
-// up near the right edge (user feedback v0.2: "the chart is empty on the left")
+// up near the right edge (user feedback v0.2: "the chart is empty on the left"). Rounded
+// down, so the shares never add up to more than the cap and the pools behind it.
 f_quota(View v, int cap) =>
-    cap <= 0 ? 0 : math.max(1, int(math.ceil(cap / v.segs)))
+    cap <= 0 ? 0 : math.max(1, int(cap / v.segs))
+
+// Even spread inside segments (v0.3): candidates arrive in priority order. Pass 1 takes at most
+// one object per time slot, pass 2 fills each segment's quota in priority order. Returns the
+// indices of the picked candidates; index 0 is always picked first when anything is.
+f_spreadPick(View v, array<int> xs, array<int> sg, int q, int slots) =>
+    array<int> out = array.new<int>()
+    int m = xs.size()
+    if m > 0 and q > 0
+        int ns = math.max(1, slots)
+        int w = math.max(1, v.iR - v.iL + 1)
+        array<int> cnt = array.new<int>(v.segs, 0)
+        array<bool> slotUsed = array.new<bool>(ns, false)
+        array<bool> took = array.new<bool>(m, false)
+        for pass = 0 to 1
+            for k = 0 to m - 1
+                if not took.get(k)
+                    int s = sg.get(k)
+                    if cnt.get(s) < q
+                        int sl = math.max(0, math.min(ns - 1, int((xs.get(k) - v.iL) * ns / w)))
+                        if pass == 1 or not slotUsed.get(sl)
+                            took.set(k, true)
+                            slotUsed.set(sl, true)
+                            cnt.set(s, cnt.get(s) + 1)
+                            out.push(k)
+    out
 
 f_htfPrefix(int tf) =>
     tf != TF_CHART ? "◆" + htfLabel + " " : ""
@@ -2148,14 +2284,18 @@ f_htfPrefix(int tf) =>
 f_zoneLeftT(Zone z) =>
     z.kind == ZK_BB or z.kind == ZK_MB or z.kind == ZK_IFVG ? z.bornT : z.t
 
-f_drawZone(BoxPool pz, LinePool pm, Zone z, float r, int mergeN, int rightT, bool ghostEnded) =>
+f_zoneTip(Zone z) =>
+    (z.tf != TF_CHART ? htfLabel + " " : "") + f_kindTag(z.kind) + (z.dir == 1 ? " bullish" : " bearish") + " · " + f_zoneStateName(z.state) + "\n" + f_px(z.bottom) + " – " + f_px(z.top) + "\nsince " + f_timeStr(z.t)
+
+f_drawZone(BoxPool pz, LinePool pm, array<Tag> tags, Zone z, float r, int mergeN, int rightT, bool ghostEnded, bool liveView) =>
     bool liveNow = z.state < ZS_FILLED
     bool htf = z.tf != TF_CHART
     bool ghost = (mc.debug and r < mc.theta) or (not liveNow and ghostEnded)
     color hue = ghost ? C_INV : z.state == ZS_MITIGATED ? C_MITI : f_dirColor(z.dir)
-    int fillBase = not liveNow ? F_FAINT : z.kind == ZK_OB ? (z.state == ZS_FRESH ? (htf ? F_STRONG : F_BASE) : z.state == ZS_TOUCHED ? F_LIGHT : F_FAINT) : z.kind == ZK_MB ? F_FAINT : F_LIGHT
-    bool hasBorder = z.kind != ZK_FVG or htf
-    int borderBase = z.state == ZS_FRESH ? (htf ? OP_STRONG : OP_MEDIUM) : OP_SOFT
+    // finished zones stay readable as history: light fill plus a dotted border (v0.3)
+    int fillBase = not liveNow ? F_LIGHT : z.kind == ZK_OB ? (z.state == ZS_FRESH ? (htf ? F_STRONG : F_BASE) : z.state == ZS_TOUCHED ? F_LIGHT : F_FAINT) : z.kind == ZK_MB ? F_FAINT : F_LIGHT
+    bool hasBorder = z.kind != ZK_FVG or htf or not liveNow
+    int borderBase = not liveNow ? OP_SOFT : z.state == ZS_FRESH ? (htf ? OP_STRONG : OP_MEDIUM) : OP_SOFT
     string bst = z.kind == ZK_BB or z.kind == ZK_IFVG ? line.style_dashed : z.kind == ZK_MB or z.kind == ZK_FVG or z.state == ZS_MITIGATED or not liveNow ? line.style_dotted : line.style_solid
     int fT = ghost ? F_GHOST : f_tr(fillBase, r)
     color fillC = color.new(hue, fT)
@@ -2173,35 +2313,38 @@ f_drawZone(BoxPool pz, LinePool pm, Zone z, float r, int mergeN, int rightT, boo
     string tag = f_htfPrefix(z.tf) + f_kindTag(z.kind) + (mergeN > 1 ? " ×" + str.tostring(mergeN) : "")
     if dbg
         tag := "#" + str.tostring(z.id) + " " + tag + " " + f_zoneStateName(z.state) + " R" + str.tostring(r, "0.00")
-    // Text only on boxes that reach the empty area right of the last candle
-    string txt = dbg ? tag : not liveNow or labelLvl == 0 or top - bot < 0.25 * vu ? "" : tag
-    f_box(pz, lx, rx, top, bot, fillC, bdC, htf ? 2 : 1, bst, txt, color.new(hue, 0), text.align_right)
+    bool drawn = f_box(pz, lx, rx, top, bot, fillC, bdC, htf ? 2 : 1, bst, dbg ? tag : "", color.new(hue, 0), text.align_right)
+    // Tags of active zones join the right-edge column (Smart Labels) instead of sitting inside
+    // the box, so they never cover the last candles, whatever the zoom
+    if drawn and liveNow and liveView and labelLvl > 0 and not dbg
+        tags.push(Tag.new((z.top + z.bottom) / 2, tag, color.new(hue, 0), f_zoneTip(z)))
     bool isOb = z.kind == ZK_OB or z.kind == ZK_BB or z.kind == ZK_MB
-    if liveNow and ((isOb and i_obMid) or (not isOb and i_fvgCE))
+    if drawn and liveNow and ((isOb and i_obMid) or (not isOb and i_fvgCE))
         float mid = (z.top + z.bottom) / 2
         if mid <= top and mid >= bot
             int lt = z.state == ZS_CE ? OP_FAINT : f_tr(OP_SOFT, r)
             f_line(pm, lx, mid, rx, mid, color.new(hue, lt), line.style_dotted, 1)
-    true
+    drawn
 
-f_renderZones(View v, BoxPool pz, LinePool pm, array<Zone> liveZ, array<Zone> archZ, int rightT, array<float> hc, array<float> ha, int hb) =>
+// Candidates are grouped by virtual segment: vs = 2 × time segment + 1 for zones alive at the
+// segment's anchor, 2 × segment for zones that finished inside it (history). Side caps apply
+// per virtual segment, so history never competes with active zones near the live edge.
+f_renderZones(View v, BoxPool pz, LinePool pm, array<Tag> tags, array<Zone> liveZ, array<Zone> archZ, int rightT, array<float> hc, array<float> ha, int hb) =>
     array<Zone> cz = array.new<Zone>()
     array<float> keys = array.new<float>()
     array<float> rs = array.new<float>()
     array<int> segIx = array.new<int>()
     array<float> anchorPx = array.new<float>()
     array<bool> ghostIx = array.new<bool>()
+    // boxes narrower than this are invisible slivers at the current zoom
+    int sliver = math.max(2, int((v.iR - v.iL) / 200))
     for src = 0 to 1
         array<Zone> arr = src == 0 ? liveZ : archZ
         for z in arr
-            bool isOb = z.kind == ZK_OB or z.kind == ZK_BB or z.kind == ZK_MB
             bool htf = z.tf != TF_CHART
-            bool kindOk = htf ? (z.kind == ZK_FVG or z.kind == ZK_IFVG ? i_htfFVG and vFVG : i_htfOB and vOB and (z.kind == ZK_OB or i_breakers)) : isOb ? vOB and (z.kind == ZK_OB or i_breakers) : vFVG
             bool liveNow = z.state < ZS_FILLED
             int endEff = liveNow ? bar_index : z.endBar
-            bool inWin = z.born <= v.iR and endEff >= v.iL
-            bool minorOk = mc.debug or htf or not ((i_reduceMinorOb and z.kind == ZK_OB and z.fallback) or (i_reduceMinorFvg and z.kind == ZK_FVG and z.strength < 0.35))
-            if kindOk and inWin and minorOk and (z.state != ZS_MITIGATED or vMitigated)
+            if z.born <= v.iR and endEff >= v.iL and f_zoneShown(z) and (z.state != ZS_MITIGATED or vMitigated)
                 int seg = f_segOf(v, math.min(endEff, v.iR))
                 bool liveSeg = v.live and seg == v.segs - 1
                 int anchor = v.segEnd.get(seg)
@@ -2209,71 +2352,88 @@ f_renderZones(View v, BoxPool pz, LinePool pm, array<Zone> liveZ, array<Zone> ar
                 float atr = v.segAtr.get(seg)
                 bool ok = true
                 bool ghost = false
+                bool histRank = false
                 if endEff < anchor
-                    if liveSeg
-                        // recently finished near the live edge: short TTL, shown as a ghost
-                        ok := mc.ttl > 0 and z.state != ZS_CONVERTED and z.state != ZS_EXPIRED and bar_index - z.endBar <= mc.ttl
+                    bool recentEnd = mc.ttl > 0 and bar_index - z.endBar <= mc.ttl and z.state != ZS_CONVERTED and z.state != ZS_EXPIRED
+                    if liveSeg and recentEnd
+                        // just finished at the live edge: a ghost for a few bars
                         ghost := true
                     else
-                        // finished inside a history segment: rank it at the bar where price reached it
-                        anchor := z.endBar
+                        // finished earlier: ranked where price reached it, freshness counted from
+                        // its birth (no bias to short-lived boxes). Clean (no TTL) shows finished
+                        // zones only when the chart is scrolled back into history.
+                        histRank := true
+                        int lb = z.kind == ZK_BB or z.kind == ZK_MB or z.kind == ZK_IFVG ? z.born : z.bar
+                        ok := (mc.ttl > 0 or not v.live) and z.endBar - lb >= sliver
+                        anchor := z.born
                         px := f_histAt(hc, hb, z.endBar, px)
                         atr := f_histAt(ha, hb, z.endBar, atr)
                 if ok
                     if f_zoneDistAt(z, px, atr) <= mc.distMax * (htf ? 2 : 1)
                         float r = f_zoneRAt(z, px, atr, anchor, not ghost)
                         if r >= mc.theta or mc.debug or htf
+                            int vs = seg * 2 + (histRank ? 0 : 1)
                             cz.push(z)
                             rs.push(r)
-                            keys.push(seg + r * 0.999)
-                            segIx.push(seg)
+                            keys.push(vs + r * 0.999)
+                            segIx.push(vs)
                             anchorPx.push(px)
                             ghostIx.push(ghost)
     int m = cz.size()
     int cap = pz.items.size()
+    int budget = math.max(1, int(cap / v.segs))
     array<int> picked = array.new<int>()
     array<int> mergeN = array.new<int>()
-    if m > 0
+    if m > 0 and cap > 0
         array<int> ord = keys.sort_indices(order.descending)
-        // counters per segment: [OB above, OB below, FVG above, FVG below, HTF above, HTF below]
-        array<int> cnt = array.new<int>(v.segs * 6, 0)
-        for k = 0 to m - 1
-            int oi = ord.get(k)
-            Zone z = cz.get(oi)
-            int seg = segIx.get(oi)
-            float px = anchorPx.get(oi)
-            bool htf = z.tf != TF_CHART
-            bool isOb = z.kind == ZK_OB or z.kind == ZK_BB or z.kind == ZK_MB
-            bool above = z.bottom > px
-            bool below = z.top < px
-            int into = -1
-            int pn = picked.size()
-            if pn > 0 and not mc.debug
-                for q = 0 to pn - 1
-                    int pq = picked.get(q)
-                    Zone y = cz.get(pq)
-                    if into < 0 and segIx.get(pq) == seg and y.dir == z.dir and y.tf == z.tf
-                        float ov = math.min(y.top, z.top) - math.max(y.bottom, z.bottom)
-                        float sm = math.min(y.top - y.bottom, z.top - z.bottom)
-                        if sm > 0 and ov >= 0.5 * sm
-                            into := q
-            if into >= 0
-                mergeN.set(into, mergeN.get(into) + 1)
-            else if picked.size() < cap
-                int fam = htf ? 4 : isOb ? 0 : 2
-                int ci = seg * 6 + fam + (above ? 0 : 1)
-                int sideCap = htf ? math.max(1, nZonesSide - 1) : nZonesSide
-                bool sideOk = mc.debug or (not above and not below) or cnt.get(ci) < sideCap
-                if sideOk
-                    picked.push(oi)
-                    mergeN.push(1)
-                    if above or below
-                        cnt.set(ci, cnt.get(ci) + 1)
+        // counters per virtual segment: OB above/below, FVG above/below, HTF above/below, inside
+        array<int> cnt = array.new<int>(v.segs * 14, 0)
+        array<int> used = array.new<int>(v.segs, 0)
+        array<bool> done = array.new<bool>(m, false)
+        // pass 1: every time segment gets its share of the pool; pass 2: leftovers, best first
+        for pass = 0 to 1
+            for k = 0 to m - 1
+                int oi = ord.get(k)
+                int vs = segIx.get(oi)
+                int seg = int(vs / 2)
+                if not done.get(oi) and picked.size() < cap and (pass == 1 or used.get(seg) < budget)
+                    Zone z = cz.get(oi)
+                    float px = anchorPx.get(oi)
+                    bool htf = z.tf != TF_CHART
+                    bool isOb = z.kind == ZK_OB or z.kind == ZK_BB or z.kind == ZK_MB
+                    bool above = z.bottom > px
+                    bool below = z.top < px
+                    int into = -1
+                    int pn = picked.size()
+                    if pn > 0 and not mc.debug
+                        for q = 0 to pn - 1
+                            int pq = picked.get(q)
+                            if segIx.get(pq) == vs
+                                Zone y = cz.get(pq)
+                                if y.dir == z.dir and y.tf == z.tf
+                                    float ov = math.min(y.top, z.top) - math.max(y.bottom, z.bottom)
+                                    float sm = math.min(y.top - y.bottom, z.top - z.bottom)
+                                    if sm > 0 and ov >= 0.5 * sm
+                                        into := q
+                                        break
+                    if into >= 0
+                        mergeN.set(into, mergeN.get(into) + 1)
+                        done.set(oi, true)
+                    else
+                        int fam = htf ? 4 : isOb ? 0 : 2
+                        int ci = vs * 7 + (above or below ? fam + (above ? 0 : 1) : 6)
+                        int sideCap = htf and (above or below) ? math.max(1, nZonesSide - 1) : nZonesSide
+                        if mc.debug or cnt.get(ci) < sideCap
+                            picked.push(oi)
+                            mergeN.push(1)
+                            cnt.set(ci, cnt.get(ci) + 1)
+                            used.set(seg, used.get(seg) + 1)
+                            done.set(oi, true)
     int pn2 = picked.size()
     if pn2 > 0
         for q = 0 to pn2 - 1
             int oi = picked.get(q)
-            f_drawZone(pz, pm, cz.get(oi), rs.get(oi), mergeN.get(q), rightT, ghostIx.get(oi))
+            f_drawZone(pz, pm, tags, cz.get(oi), rs.get(oi), mergeN.get(q), rightT, ghostIx.get(oi), v.live)
     pn2
 
 // ── Liquidity levels (§14.12): levels alive at the window's right edge
@@ -2364,7 +2524,7 @@ f_renderLevels(View v, LinePool pl, array<Tag> tags, array<Liq> liveL, array<Liq
     shown
 
 // Liquidity history (§14.10, §14.12): swept / taken levels and past key levels that ended
-// inside the window, spread evenly over the time segments. Priority inside a segment:
+// inside the window, spread evenly over time. Priority inside a segment:
 // major sweeps → minor sweeps and major runs → past key levels → minor runs.
 f_renderSwept(View v, LinePool pl, LabelPool pb, array<Liq> liveL, array<Liq> archL) =>
     int ttlS = mc.ttl == 0 ? 20 : mc.ttl * 3
@@ -2388,88 +2548,107 @@ f_renderSwept(View v, LinePool pl, LabelPool pb, array<Liq> liveL, array<Liq> ar
                         cl.push(x)
                         segIx.push(seg)
                         keys.push(seg * 100000000.0 + pri * 10000000.0 + x.endBar)
-    int shown = 0
     int m = cl.size()
+    array<Liq> cand = array.new<Liq>()
+    array<int> xs = array.new<int>()
+    array<int> sg = array.new<int>()
     if m > 0
         array<int> ord = keys.sort_indices(order.descending)
-        array<int> cnt = array.new<int>(v.segs, 0)
-        for k = 0 to m - 1
-            int oi = ord.get(k)
-            int seg = segIx.get(oi)
-            if cnt.get(seg) < q
-                Liq x = cl.get(oi)
-                bool htf = x.tf != TF_CHART
-                bool major = x.major or htf
-                if vSwept or x.state == LS_SWEPT
-                    int tr = x.state == LS_EXPIRED ? OP_SOFT : major ? OP_MEDIUM : OP_FAINT
-                    f_line(pl, x.t, x.price, x.endT, x.price, color.new(C_LIQ, tr), x.state == LS_EXPIRED ? line.style_solid : line.style_dotted, htf or x.state == LS_EXPIRED ? 2 : 1)
-                if x.state == LS_SWEPT and vSweeps
-                    string sideTxt = x.side == 1 ? "BSL" : "SSL"
-                    string txt = major and labelLvl > 0 ? f_htfPrefix(x.tf) + sideTxt + " ✕" : "✕"
-                    string stype = x.sweepType == SWEEP_TURTLE ? "turtle soup" : x.sweepType == SWEEP_RECLAIM ? "reclaim" : "wick"
-                    float pen = na(x.ext) ? na : math.abs(x.ext - x.price) / vu
-                    string tip = (htf ? htfLabel + " " : "") + sideTxt + " swept (" + stype + ") · " + x.tag + " " + f_px(x.price) + "\npenetration " + str.tostring(pen, "0.00") + " ATR · " + f_timeStr(x.endT)
-                    f_label(pb, x.endT, x.price, txt, color.new(C_LIQ, major ? OP_SOLID : OP_MEDIUM), x.side == 1 ? label.style_label_down : label.style_label_up, major ? size.small : size.tiny, tip, x.side == 1 ? yloc.abovebar : yloc.belowbar)
-                else if x.state == LS_EXPIRED and labelLvl > 0
-                    f_label(pb, x.endT, x.price, "◆" + x.tag, color.new(C_LIQ, OP_MEDIUM), label.style_label_left, size.tiny, x.tag + " " + f_px(x.price) + " · " + f_timeStr(x.t), yloc.price)
-                cnt.set(seg, cnt.get(seg) + 1)
-                shown += 1
-    shown
+        for oi in ord
+            Liq x = cl.get(oi)
+            cand.push(x)
+            xs.push(x.endBar)
+            sg.push(segIx.get(oi))
+    array<int> sel = f_spreadPick(v, xs, sg, q, v.vp ? q * v.segs : 1)
+    for k in sel
+        Liq x = cand.get(k)
+        bool htf = x.tf != TF_CHART
+        bool major = x.major or htf
+        if vSwept or x.state == LS_SWEPT
+            int tr = x.state == LS_EXPIRED ? OP_SOFT : major ? OP_MEDIUM : OP_FAINT
+            f_line(pl, x.t, x.price, x.endT, x.price, color.new(C_LIQ, tr), x.state == LS_EXPIRED ? line.style_solid : line.style_dotted, htf or x.state == LS_EXPIRED ? 2 : 1)
+        if x.state == LS_SWEPT and vSweeps
+            string sideTxt = x.side == 1 ? "BSL" : "SSL"
+            string txt = major and labelLvl > 0 ? f_htfPrefix(x.tf) + sideTxt + " ✕" : "✕"
+            string stype = x.sweepType == SWEEP_TURTLE ? "turtle soup" : x.sweepType == SWEEP_RECLAIM ? "reclaim" : "wick"
+            float pen = na(x.ext) ? na : math.abs(x.ext - x.price) / vu
+            string tip = (htf ? htfLabel + " " : "") + sideTxt + " swept (" + stype + ") · " + x.tag + " " + f_px(x.price) + "\npenetration " + str.tostring(pen, "0.00") + " ATR · " + f_timeStr(x.endT)
+            f_label(pb, x.endT, x.price, txt, color.new(C_LIQ, major ? OP_SOLID : OP_MEDIUM), x.side == 1 ? label.style_label_down : label.style_label_up, major ? size.small : size.tiny, tip, x.side == 1 ? yloc.abovebar : yloc.belowbar)
+        else if x.state == LS_EXPIRED and labelLvl > 0
+            f_label(pb, x.endT, x.price, "◆" + x.tag, color.new(C_LIQ, OP_MEDIUM), label.style_label_left, size.tiny, x.tag + " " + f_px(x.price) + " · " + f_timeStr(x.t), yloc.price)
+    sel.size()
 
-// ── Structure (§13.12, AC-M14): breaks inside the window, evenly over segments, newest first
+// ── Structure (§13.12, AC-M14): breaks inside the window, spread evenly over time
 f_brkTip(Brk b) =>
     string nm = b.kind == BK_BOS ? "Break of Structure" : b.mss ? "Market Structure Shift (CHoCH + displacement + FVG)" : "Change of Character"
     string disp = na(b.disp) ? "" : " · leg " + str.tostring(b.disp, "0.0") + " ATR"
     (b.tf != TF_CHART ? htfLabel + " " : "") + nm + (b.dir == 1 ? " ↑" : " ↓") + " · " + (b.lvl == LV_SWG ? "swing" : "internal") + (b.initial ? " · first break" : "") + "\nlevel " + f_px(b.price) + disp + "\n" + f_timeStr(b.t)
 
 f_renderBreaks(View v, LinePool pl, LabelPool pb, array<Brk> brks, int cap, bool internal) =>
-    int shown = 0
     int n = brks.size()
     int q = v.vp ? f_quota(v, cap) : cap
+    array<Brk> cand = array.new<Brk>()
+    array<int> xs = array.new<int>()
+    array<int> sg = array.new<int>()
     if cap > 0 and n > 0
-        array<int> cnt = array.new<int>(v.segs, 0)
+        // breaks are stored in time order: walk back from the newest until the window's left edge
         for i = n - 1 to 0
             Brk b = brks.get(i)
-            if b.bar >= v.iL and b.bar <= v.iR and (not b.shadowed or mc.debug)
-                int seg = v.vp ? f_segOf(v, b.bar) : 0
-                if cnt.get(seg) < q
-                    bool htf = b.tf != TF_CHART
-                    bool recent = shown == 0
-                    color hue = f_dirColor(b.dir)
-                    int tr = htf ? OP_STRONG : internal ? OP_SOFT : recent ? OP_STRONG : OP_MEDIUM
-                    f_line(pl, b.swingT, b.price, b.t, b.price, color.new(hue, tr), internal ? line.style_dotted : line.style_dashed, htf ? 2 : 1)
-                    string nm = b.kind == BK_BOS ? "BOS" : b.mss ? "MSS" : "CHoCH"
-                    string txt = f_htfPrefix(b.tf) + (internal ? "i" : "") + nm + f_arrow(b.dir)
-                    if labelLvl == 0 and internal
-                        txt := f_arrow(b.dir)
-                    if labelLvl >= 2 and not internal and recent
-                        txt := txt + " " + f_px(b.price)
-                    if labelLvl >= 3 and not na(b.disp)
-                        txt := txt + " · " + str.tostring(b.disp, "0.0") + " ATR"
-                    if mc.debug and i_showIds
-                        txt := "#" + str.tostring(b.id) + " " + txt
-                    int mx = int((b.swingT + b.t) / 2)
-                    f_label(pb, mx, b.price, txt, color.new(hue, internal ? OP_MEDIUM : recent or htf ? OP_SOLID : 15), b.dir == 1 ? label.style_label_down : label.style_label_up, internal ? size.tiny : size.small, f_brkTip(b), yloc.price)
-                    cnt.set(seg, cnt.get(seg) + 1)
-                    shown += 1
-    shown
+            if b.bar < v.iL
+                break
+            if b.bar <= v.iR and (not b.shadowed or mc.debug)
+                cand.push(b)
+                xs.push(b.bar)
+                sg.push(v.vp ? f_segOf(v, b.bar) : 0)
+    array<int> sel = f_spreadPick(v, xs, sg, q, v.vp ? q * v.segs : 1)
+    for k in sel
+        Brk b = cand.get(k)
+        bool htf = b.tf != TF_CHART
+        bool recent = k == 0
+        color hue = f_dirColor(b.dir)
+        int tr = htf ? OP_STRONG : internal ? OP_SOFT : recent ? OP_STRONG : OP_MEDIUM
+        f_line(pl, b.swingT, b.price, b.t, b.price, color.new(hue, tr), internal ? line.style_dotted : line.style_dashed, htf ? 2 : 1)
+        string nm = b.kind == BK_BOS ? "BOS" : b.mss ? "MSS" : "CHoCH"
+        string txt = f_htfPrefix(b.tf) + (internal ? "i" : "") + nm + f_arrow(b.dir)
+        if labelLvl == 0 and internal
+            txt := f_arrow(b.dir)
+        if labelLvl >= 2 and not internal and recent
+            txt := txt + " " + f_px(b.price)
+        if labelLvl >= 3 and not na(b.disp)
+            txt := txt + " · " + str.tostring(b.disp, "0.0") + " ATR"
+        if mc.debug and i_showIds
+            txt := "#" + str.tostring(b.id) + " " + txt
+        // Chart-TF labels start at the pivot and run toward the break, on the side of the level
+        // the leg has not reached yet, so they stay off the breakout candles. A span far
+        // narrower than its text keeps only the line at wide zoom.
+        bool roomy = htf or not v.vp or na(b.swingBar) or (b.bar - b.swingBar) * 120 >= v.iR - v.iL
+        if roomy
+            int lx = htf ? int((b.swingT + b.t) / 2) : b.swingT
+            string lst = htf ? (b.dir == 1 ? label.style_label_down : label.style_label_up) : b.dir == 1 ? label.style_label_lower_left : label.style_label_upper_left
+            f_label(pb, lx, b.price, txt, color.new(hue, internal ? OP_MEDIUM : recent or htf ? OP_SOLID : 15), lst, internal ? size.tiny : size.small, f_brkTip(b), yloc.price)
+    sel.size()
 
 f_renderSwings(View v, LabelPool pb, StructState st, int cap) =>
-    int shown = 0
     int n = st.swings.size()
     int q = v.vp ? f_quota(v, cap) : cap
+    array<Swing> cand = array.new<Swing>()
+    array<int> xs = array.new<int>()
+    array<int> sg = array.new<int>()
     if cap > 0 and n > 0
-        array<int> cnt = array.new<int>(v.segs, 0)
         for i = n - 1 to 0
             Swing s = st.swings.get(i)
-            if s.bar >= v.iL and s.bar <= v.iR
-                int seg = v.vp ? f_segOf(v, s.bar) : 0
-                if cnt.get(seg) < q
-                    string tip = s.tag + " " + f_px(s.price) + " · " + f_timeStr(s.t)
-                    f_label(pb, s.t, s.price, s.tag, color.new(C_NEUT, OP_MEDIUM), s.side == 1 ? label.style_label_down : label.style_label_up, size.tiny, tip, yloc.price)
-                    cnt.set(seg, cnt.get(seg) + 1)
-                    shown += 1
-    shown
+            if s.bar < v.iL
+                break
+            if s.bar <= v.iR
+                cand.push(s)
+                xs.push(s.bar)
+                sg.push(v.vp ? f_segOf(v, s.bar) : 0)
+    array<int> sel = f_spreadPick(v, xs, sg, q, v.vp ? q * v.segs : 1)
+    for k in sel
+        Swing s = cand.get(k)
+        string tip = s.tag + " " + f_px(s.price) + " · " + f_timeStr(s.t)
+        f_label(pb, s.t, s.price, s.tag, color.new(C_NEUT, OP_MEDIUM), s.side == 1 ? label.style_label_down : label.style_label_up, size.tiny, tip, yloc.price)
+    sel.size()
 
 // ── Dealing range: EQ, OTE band, optional wash, Range Gauge (§14.13)
 f_drawRangeBody(BoxPool prb, LinePool prl, array<Tag> tags, int dir, float hi, float lo, int t0, int t1, bool developing, bool withTag) =>
@@ -2493,30 +2672,38 @@ f_renderRange(View v, BoxPool prb, LinePool prl, LabelPool pb, array<Tag> tags, 
     bool curOk = r.state > 0 and r.hi > r.lo
     bool drawn = false
     if vPd > 0
-        // Range active at the window's right edge gets EQ + OTE; older ranges get EQ only, spread over segments
+        // Range active at the window's right edge gets EQ + OTE; older ranges get EQ only, spread over time
         if curOk and r.b0 <= v.iR
             f_drawRangeBody(prb, prl, tags, r.dir, r.hi, r.lo, r.t0, rightT, r.state == 1, v.live)
             drawn := true
         int n = arch.size()
         if v.vp and n > 0
             int q = f_quota(v, mc.rangeWin - 1)
-            array<int> cnt = array.new<int>(v.segs, 0)
+            array<RangeSnap> cand = array.new<RangeSnap>()
+            array<int> xs = array.new<int>()
+            array<int> sg = array.new<int>()
             for i = n - 1 to 0
                 RangeSnap s = arch.get(i)
-                if s.b1 >= v.iL and s.b0 <= v.iR and s.hi > s.lo
-                    if not drawn and s.b0 <= v.iR and s.b1 >= v.iR
+                if s.b1 < v.iL
+                    break
+                if s.b0 <= v.iR and s.hi > s.lo
+                    if not drawn and s.b1 >= v.iR
                         f_drawRangeBody(prb, prl, tags, s.dir, s.hi, s.lo, s.t0, s.t1, false, false)
                         drawn := true
                     else
-                        int seg = f_segOf(v, math.min(s.b1, v.iR))
-                        if cnt.get(seg) < q
-                            float eq = (s.hi + s.lo) / 2
-                            f_line(prl, s.t0, eq, s.t1, eq, color.new(C_NEUT, OP_SOFT), line.style_dotted, 1)
-                            cnt.set(seg, cnt.get(seg) + 1)
+                        int xe = math.min(s.b1, v.iR)
+                        cand.push(s)
+                        xs.push(xe)
+                        sg.push(f_segOf(v, xe))
+            array<int> sel = f_spreadPick(v, xs, sg, q, q * v.segs)
+            for k in sel
+                RangeSnap s = cand.get(k)
+                float eq = (s.hi + s.lo) / 2
+                f_line(prl, s.t0, eq, s.t1, eq, color.new(C_NEUT, OP_SOFT), line.style_dotted, 1)
     if curOk and vGauge and v.live
         float span = r.hi - r.lo
         float eq = (r.hi + r.lo) / 2
-        // two bars right of the last candle (§14.13), clear of the right-edge tags
+        // two bars right of the last candle (§14.13); its value joins the right-edge tags
         int gx = time + 2 * barMs
         int gx2 = gx + barMs
         float oTop = r.dir == 1 ? r.hi - oteLo * span : r.lo + oteHi * span
@@ -2526,39 +2713,49 @@ f_renderRange(View v, BoxPool prb, LinePool prl, LabelPool pb, array<Tag> tags, 
         f_line(prl, gx, eq, gx2, eq, color.new(C_NEUT, OP_MEDIUM), line.style_solid, 1)
         float pdv = (pxLive - r.lo) / span
         string loc = pdv > 0.5 + EQ_BAND ? "PREMIUM" : pdv < 0.5 - EQ_BAND ? "DISCOUNT" : "EQUILIBRIUM"
-        f_label(pb, gx, math.max(r.lo, math.min(r.hi, pxLive)), "◀ " + str.tostring(math.round(pdv * 100)) + "%", C_TEXT, label.style_label_left, size.tiny, "Price in dealing range: " + loc + "\n0% = " + f_px(r.lo) + " · 100% = " + f_px(r.hi), yloc.price)
+        tags.push(Tag.new(math.max(r.lo, math.min(r.hi, pxLive)), "◀ " + str.tostring(math.round(pdv * 100)) + "%", C_TEXT, "Price in dealing range: " + loc + "\n0% = " + f_px(r.lo) + " · 100% = " + f_px(r.hi)))
     drawn
 
 // ── Sessions: colored range boxes with a clear border; the name sits above the session high,
-// off the candles (§14.14). Fill transparency comes from the settings.
-f_drawSession(BoxPool pw, LabelPool pb, string code, float hi, float lo, int t0, int t1, bool current) =>
+// off the candles (§14.14). Fill transparency comes from the settings. A history session gets
+// its name only when it is wide enough at the current zoom; the colour identifies it otherwise.
+f_drawSession(BoxPool pw, LabelPool pb, string code, float hi, float lo, int t0, int t1, bool current, bool withLabel) =>
     color c = f_sesColor(code)
     int ft = math.min(100, i_sesFill + (current ? 0 : 4))
-    f_box(pw, t0, t1, hi, lo, color.new(c, ft), color.new(c, current ? 0 : 25), current ? 2 : 1, current ? line.style_solid : line.style_dashed, "", color(na), text.align_right)
-    if labelLvl > 0
+    bool drawn = f_box(pw, t0, t1, hi, lo, color.new(c, ft), color.new(c, current ? 0 : 25), current ? 2 : 1, current ? line.style_solid : line.style_dashed, "", color(na), text.align_right)
+    if drawn and withLabel and labelLvl > 0
         f_label(pb, t0, hi, code, color.new(c, 0), label.style_label_lower_left, current ? size.small : size.tiny, code + " " + f_px(lo) + " – " + f_px(hi) + "\n" + f_timeStr(t0), yloc.price)
-    true
+    drawn
 
 f_renderSessions(View v, BoxPool pw, LabelPool pb, array<SessBox> hist, Sess sa, Sess sl, Sess sn) =>
-    int shown = 0
     int cap = v.vp ? mc.sessWin : vSessN - 1
     int q = v.vp ? f_quota(v, cap) : cap
+    int shown = 0
     if vSessN > 0
         if v.live
             for s in array.from(sa, sl, sn)
                 if s.on
-                    f_drawSession(pw, pb, s.code, s.hi, s.lo, s.t0, time, true)
+                    f_drawSession(pw, pb, s.code, s.hi, s.lo, s.t0, time, true, true)
         int n = hist.size()
         if n > 0 and q > 0
-            array<int> cnt = array.new<int>(v.segs, 0)
+            array<SessBox> cand = array.new<SessBox>()
+            array<int> xs = array.new<int>()
+            array<int> sg = array.new<int>()
             for i = n - 1 to 0
                 SessBox b = hist.get(i)
-                if b.b1 >= v.iL and b.b0 <= v.iR
-                    int seg = v.vp ? f_segOf(v, math.min(b.b1, v.iR)) : 0
-                    if cnt.get(seg) < q
-                        f_drawSession(pw, pb, b.code, b.hi, b.lo, b.t0, b.t1, false)
-                        cnt.set(seg, cnt.get(seg) + 1)
-                        shown += 1
+                if b.b1 < v.iL
+                    break
+                if b.b0 <= v.iR
+                    int xe = math.min(b.b1, v.iR)
+                    cand.push(b)
+                    xs.push(xe)
+                    sg.push(v.vp ? f_segOf(v, xe) : 0)
+            array<int> sel = f_spreadPick(v, xs, sg, q, v.vp ? q * v.segs : 1)
+            int w = v.iR - v.iL + 1
+            for k in sel
+                SessBox b = cand.get(k)
+                f_drawSession(pw, pb, b.code, b.hi, b.lo, b.t0, b.t1, false, (b.b1 - b.b0 + 1) * 30 >= w)
+            shown := sel.size()
     shown
 
 // ═══ 66 · PANELS: CONTEXT RIBBON, DASHBOARD, DEBUG TABLE ════════════════════════
@@ -2601,12 +2798,18 @@ f_statusText(Core c, bool liveView) =>
 
 // Context Ribbon: STR │ SESSION │ PD │ LIQ │ status
 f_htfText(Ctx x) =>
-    not x.htfOk ? "HTF OFF" : "HTF " + htfLabel + (x.htfTrend == 1 ? " ▲ BULL" : x.htfTrend == -1 ? " ▼ BEAR" : " —")
+    htfBadCfg ? "⚠ HTF ≤ TF" : not x.htfOk ? "HTF OFF" : x.htfLow ? "HTF " + htfLabel + " ⚠" : "HTF " + htfLabel + (x.htfTrend == 1 ? " ▲ BULL" : x.htfTrend == -1 ? " ▼ BEAR" : " —")
+
+f_htfColor(Ctx x) =>
+    htfBadCfg or x.htfLow ? C_WARN : x.htfOk ? f_dirColor(x.htfTrend) : C_NEUT
+
+f_htfTip(Ctx x) =>
+    htfBadCfg ? "The manual higher timeframe must be above the chart timeframe; the HTF Feed is off" : not x.htfOk ? "Higher timeframe is off" : x.htfLow ? "Fewer than " + str.tostring(i_minHtfBars) + " confirmed " + htfLabel + " bars: the HTF bias is treated as unknown (A.16)" : "Higher-timeframe swing structure from confirmed " + htfLabel + " bars"
 
 f_ribbon(table tb, Ctx x, Core c, bool liveView) =>
     if not na(tb)
         string sz = panelSz
-        table.cell(tb, 0, 0, f_htfText(x), text_color = x.htfOk ? f_dirColor(x.htfTrend) : C_NEUT, text_size = sz, tooltip = x.htfOk ? "Higher-timeframe swing structure from confirmed " + htfLabel + " bars" : "Higher timeframe is off or not above the chart timeframe")
+        table.cell(tb, 0, 0, f_htfText(x), text_color = f_htfColor(x), text_size = sz, tooltip = f_htfTip(x))
         string s0 = x.ranging ? "STR ◆ RANGE" : x.swTrend == 1 ? "STR ▲ BULL" : x.swTrend == -1 ? "STR ▼ BEAR" : "STR —"
         color c0 = x.ranging ? C_NEUT : f_dirColor(x.swTrend)
         table.cell(tb, 1, 0, s0, text_color = c0, text_size = sz, tooltip = "Swing structure on the chart timeframe" + (x.ranging ? " · regime: ranging" : ""))
@@ -2642,9 +2845,9 @@ f_dashboard(table tb, Ctx x, Core c, StructState si, Range r, bool liveView) =>
         string mk = x.market == MK_RANGE ? "RANGING" : x.market == MK_MIXED ? "MIXED" : x.market == MK_BULL ? "BULLISH" : x.market == MK_BEAR ? "BEARISH" : "UNDEFINED"
         color mkc = x.market == MK_RANGE or x.market == MK_MIXED ? C_WARN : f_dirColor(x.market)
         row := f_dashRow(tb, row, "MARKET", mk, x.market == MK_RANGE ? C_NEUT : mkc, "Ranging regime → RANGING. HTF and chart structure agree → that side; disagree → MIXED; HTF unknown → chart structure (A.16).", sz)
-        string ht = not x.htfOk ? "OFF" : htfLabel + (x.htfTrend == 1 ? " BULLISH" : x.htfTrend == -1 ? " BEARISH" : " —")
+        string ht = htfBadCfg ? "⚠ HTF ≤ chart TF" : not x.htfOk ? "OFF" : x.htfLow ? htfLabel + " ⚠ low history" : htfLabel + (x.htfTrend == 1 ? " BULLISH" : x.htfTrend == -1 ? " BEARISH" : " —")
         Event lh = c.lastHtfStruct
-        row := f_dashRow(tb, row, "HTF", ht + (na(lh) ? "" : " · " + f_structText(lh)), x.htfOk ? f_dirColor(x.htfTrend) : C_NEUT, na(lh) ? "Confirmed " + htfLabel + " bars only" : "Last HTF break at " + f_px(lh.price) + " · " + f_timeStr(lh.t), sz)
+        row := f_dashRow(tb, row, "HTF", ht + (na(lh) or not x.htfOk ? "" : " · " + f_structText(lh)), f_htfColor(x), na(lh) or not x.htfOk ? f_htfTip(x) : "Last HTF break at " + f_px(lh.price) + " · " + f_timeStr(lh.t), sz)
         Event ls = c.lastStruct
         string st = na(ls) ? "—" : f_structText(ls) + " · " + str.tostring(bar_index - ls.bar) + " bars"
         row := f_dashRow(tb, row, "STRUCTURE", st, na(ls) ? C_NEUT : f_dirColor(ls.dir), na(ls) ? "No swing break yet" : "Broken level " + f_px(ls.price) + " · leg " + str.tostring(ls.v2, "0.0") + " ATR · " + f_timeStr(ls.t), sz)
@@ -2700,8 +2903,10 @@ f_debugTable(table tb, View v, Core c, array<Zone> zs, array<Zone> za, array<Liq
         row := f_dashRow(tb, row, "BUILD", "v" + BUILD + " · " + str.tostring(i_mode), C_TEXT, "", sz)
         row := f_dashRow(tb, row, "BARS", str.tostring(bar_index + 1) + (c.warm ? " · warm" : " · warming up"), c.warm ? C_TEXT : C_WARN, "Warm-up: " + str.tostring(warmBars) + " bars", sz)
         row := f_dashRow(tb, row, "VIEW", (v.vp ? "visible " : "recent ") + str.tostring(v.iL) + "–" + str.tostring(v.iR) + " · " + str.tostring(v.segs) + " seg" + (v.live ? "" : " · history"), C_TEXT, "Bar window drawn and number of time segments", sz)
-        row := f_dashRow(tb, row, "ZONES", str.tostring(zLive) + " live / " + str.tostring(zs.size()) + " · arch " + str.tostring(za.size()), C_TEXT, "Live cap " + str.tostring(ZONE_CAP) + " · archive cap " + str.tostring(ZONE_ARCH_CAP), sz)
-        row := f_dashRow(tb, row, "LEVELS", str.tostring(lLive) + " live / " + str.tostring(lv.size()) + " · arch " + str.tostring(la.size()), C_TEXT, "Live cap " + str.tostring(LIQ_CAP) + " · archive cap " + str.tostring(LIQ_ARCH_CAP), sz)
+        string zFrom = za.size() > 0 ? " · from bar " + str.tostring(za.get(0).endBar) : ""
+        string lFrom = la.size() > 0 ? " · from bar " + str.tostring(la.get(0).endBar) : ""
+        row := f_dashRow(tb, row, "ZONES", str.tostring(zLive) + " live / " + str.tostring(zs.size()) + " · arch " + str.tostring(za.size()), C_TEXT, "Live cap " + str.tostring(ZONE_CAP) + " · archive cap " + str.tostring(ZONE_ARCH_CAP) + zFrom, sz)
+        row := f_dashRow(tb, row, "LEVELS", str.tostring(lLive) + " live / " + str.tostring(lv.size()) + " · arch " + str.tostring(la.size()), C_TEXT, "Live cap " + str.tostring(LIQ_CAP) + " · archive cap " + str.tostring(LIQ_ARCH_CAP) + lFrom, sz)
         row := f_dashRow(tb, row, "EVENTS", str.tostring(c.barEvents.size()) + " bar · " + str.tostring(c.history.size()) + " hist", C_TEXT, "Event bus: current bar / history ring", sz)
         row := f_dashRow(tb, row, "BOXES", str.tostring(boxUsed) + " / " + str.tostring(boxCap), C_TEXT, "Drawn / pool size (platform limit 500)", sz)
         row := f_dashRow(tb, row, "LINES", str.tostring(lineUsed) + " / " + str.tostring(lineCap), C_TEXT, "Drawn / pool size (platform limit 500)", sz)
@@ -2710,7 +2915,7 @@ f_debugTable(table tb, View v, Core c, array<Zone> zs, array<Zone> za, array<Liq
         row := f_dashRow(tb, row, "CHART", nonStdChart ? "non-standard" : "standard", nonStdChart ? C_WARN : C_TEXT, "", sz)
         row := f_dashRow(tb, row, "LENGTHS", "swing " + str.tostring(swLen) + " · int " + str.tostring(inLen), C_TEXT, "", sz)
         row := f_dashRow(tb, row, "SESSIONS", sesOk ? sesTz : "off (TF > 1H)", C_TEXT, specAsia + " · " + specLon + " · " + specNy, sz)
-        row := f_dashRow(tb, row, "HTF", htfOk ? htfLabel + " (" + htfTf + ") · x" + str.tostring(htfAgeMult) : "off", htfOk ? C_TEXT : C_WARN, "Higher timeframe used by the HTF Feed and lifetime multiplier of HTF objects", sz)
+        row := f_dashRow(tb, row, "HTF", htfOk ? htfLabel + " (" + htfTf + ") · " + str.tostring(nz(hBars)) + " bars · x" + str.tostring(htfAgeMult) : htfBadCfg ? "⚠ not above chart TF" : "off", htfOk and not htfLowHist ? C_TEXT : C_WARN, "Higher timeframe, confirmed HTF bars, lifetime multiplier (distance ×" + str.tostring(htfDistMult, "0.0") + ")", sz)
     true
 
 // ═══ 90 · MAIN PIPELINE ═════════════════════════════════════════════════════════
@@ -2798,15 +3003,20 @@ if barstate.isconfirmed
     // HTF Feed (§4.7): ingest confirmed HTF objects once; they then share the chart lifecycle
     if htfOk
         if htfNewBias
-            f_emit(core, EV_HTF_BIAS, hTrend, close, na, na, 1, na, na, na, htfLabel, TF_HTF1)
-        if htfNewBrk
-            f_htfBreak(core, htfBreaks, hBrkDir, hBrkKind, hBrkPx, hBrkSwT, hBrkT)
-        if htfNewPh
+            f_emit(core, EV_HTF_BIAS, hBias, close, na, na, 1, na, na, na, htfLabel, TF_HTF1)
+        // the bullish channel first: when one HTF bar broke both sides, the bearish break came last
+        if htfNewBu
+            f_htfBreak(core, htfBreaks, 1, hBuKind, hBuPx, hBuSwT, hBuT)
+        if htfNewBd
+            f_htfBreak(core, htfBreaks, -1, hBdKind, hBdPx, hBdSwT, hBdT)
+        if htfNewPh and i_htfLiq
             f_liqAddHtf(core, liqs, 1, hPhP, hPhT)
-        if htfNewPl
+        if htfNewPl and i_htfLiq
             f_liqAddHtf(core, liqs, -1, hPlP, hPlT)
-        if htfNewOb
-            f_zoneAddHtf(core, zones, ZK_OB, hObDir, hObTop, hObBot, hObT)
+        if htfNewOu
+            f_zoneAddHtf(core, zones, ZK_OB, 1, hOuTop, hOuBot, hOuT)
+        if htfNewOd
+            f_zoneAddHtf(core, zones, ZK_OB, -1, hOdTop, hOdBot, hOdT)
         if htfNewFvg
             f_zoneAddHtf(core, zones, ZK_FVG, hFvgDir, hFvgTop, hFvgBot, hFvgT)
     // Zones: lifecycle of live zones (finished ones go to the archive), then births on this bar
@@ -2829,7 +3039,7 @@ if barstate.isconfirmed
     // Context
     f_rangeStep(core, rng, stS, rangeArch)
     float pdNow = f_pdStep(core, rng)
-    f_ctxBuild(ctx, stS, stI, rng, pdNow, liqs, sAsia, sLon, sNy, htfOk, hTrend)
+    f_ctxBuild(ctx, stS, stI, rng, pdNow, liqs, sAsia, sLon, sNy, htfOk, htfLowHist, hBias)
 
 // ── Visible range (§15 AC-M16): bar indices of the leftmost and rightmost visible bars.
 // Using these built-ins makes the script recalculate when the chart is scrolled or zoomed.
@@ -2880,7 +3090,7 @@ if barstate.islast
     pStr.used := 0
     pLab.used := 0
     array<Tag> tags = array.new<Tag>()
-    f_renderZones(view, pZone, pMid, zones, zoneArch, rightT, histClose, histAtr, histBase)
+    f_renderZones(view, pZone, pMid, tags, zones, zoneArch, rightT, histClose, histAtr, histBase)
     f_renderLevels(view, pLvl, tags, liqs, liqArch, rightT)
     if htfOk and i_htfStruct
         f_renderBreaks(view, pStr, pLab, htfBreaks, view.vp ? mc.htfStructWin : mc.htfStructEvents, false)
@@ -2889,7 +3099,8 @@ if barstate.islast
     f_renderSwept(view, pLvl, pLab, liqs, liqArch)
     f_renderRange(view, pRngBox, pRngLine, pLab, tags, rng, rangeArch, close, rightT)
     if view.live
-        f_drawTags(pLab, tags, rightT + barMs)
+        float sep = na(view.winHi) ? 0.35 * vu : math.max(0.35 * vu, 0.025 * (view.winHi - view.winLo))
+        f_drawTags(pLab, tags, rightT + barMs, sep)
     f_renderSessions(view, pWash, pLab, sessHist, sAsia, sLon, sNy)
     if vInternal
         f_renderBreaks(view, pStr, pLab, stI.breaks, view.vp ? mc.internalWin : mc.internalEvents, true)
@@ -2911,6 +3122,8 @@ if barstate.islast
 // Static alertcondition() set (docs §12.7). Conditions are read from the event bus of the
 // confirmed bar — the alert engine never recomputes detector logic (A-03). No alerts
 // during warm-up (AC-08). Chart-TF structure alerts ignore HTF events (separate conditions).
+// Sweep, OB-touch and FVG-fill alerts also fire for HTF objects: those happen on chart bars,
+// and their events carry tf = HTF1 for logs and the P9 webhook.
 // The batched JSON webhook alert() arrives with P9.
 bool alertOk = barstate.isconfirmed and core.warm
 bool aBosUp = alertOk and f_evFlag(core, EV_BOS, 1, LV_SWG, TF_CHART)

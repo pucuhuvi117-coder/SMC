@@ -2,6 +2,8 @@
 // Static alertcondition() set (docs §12.7). Conditions are read from the event bus of the
 // confirmed bar — the alert engine never recomputes detector logic (A-03). No alerts
 // during warm-up (AC-08). Chart-TF structure alerts ignore HTF events (separate conditions).
+// Sweep, OB-touch and FVG-fill alerts also fire for HTF objects: those happen on chart bars,
+// and their events carry tf = HTF1 for logs and the P9 webhook.
 // The batched JSON webhook alert() arrives with P9.
 bool alertOk = barstate.isconfirmed and core.warm
 bool aBosUp = alertOk and f_evFlag(core, EV_BOS, 1, LV_SWG, TF_CHART)

@@ -295,6 +295,7 @@ type Ctx
     Liq nextBsl
     Liq nextSsl
     bool htfOk = false
+    bool htfLow = false
     int htfTrend = 0
 
 // Display mode ceilings (§15.3, §19.2)
@@ -344,6 +345,8 @@ type View
     array<int> segEnd
     array<float> segPx
     array<float> segAtr
+    float winLo
+    float winHi
 
 // Visual pools: drawings are created once and reused (§4.9)
 type BoxPool

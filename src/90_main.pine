@@ -83,15 +83,20 @@ if barstate.isconfirmed
     // HTF Feed (§4.7): ingest confirmed HTF objects once; they then share the chart lifecycle
     if htfOk
         if htfNewBias
-            f_emit(core, EV_HTF_BIAS, hTrend, close, na, na, 1, na, na, na, htfLabel, TF_HTF1)
-        if htfNewBrk
-            f_htfBreak(core, htfBreaks, hBrkDir, hBrkKind, hBrkPx, hBrkSwT, hBrkT)
-        if htfNewPh
+            f_emit(core, EV_HTF_BIAS, hBias, close, na, na, 1, na, na, na, htfLabel, TF_HTF1)
+        // the bullish channel first: when one HTF bar broke both sides, the bearish break came last
+        if htfNewBu
+            f_htfBreak(core, htfBreaks, 1, hBuKind, hBuPx, hBuSwT, hBuT)
+        if htfNewBd
+            f_htfBreak(core, htfBreaks, -1, hBdKind, hBdPx, hBdSwT, hBdT)
+        if htfNewPh and i_htfLiq
             f_liqAddHtf(core, liqs, 1, hPhP, hPhT)
-        if htfNewPl
+        if htfNewPl and i_htfLiq
             f_liqAddHtf(core, liqs, -1, hPlP, hPlT)
-        if htfNewOb
-            f_zoneAddHtf(core, zones, ZK_OB, hObDir, hObTop, hObBot, hObT)
+        if htfNewOu
+            f_zoneAddHtf(core, zones, ZK_OB, 1, hOuTop, hOuBot, hOuT)
+        if htfNewOd
+            f_zoneAddHtf(core, zones, ZK_OB, -1, hOdTop, hOdBot, hOdT)
         if htfNewFvg
             f_zoneAddHtf(core, zones, ZK_FVG, hFvgDir, hFvgTop, hFvgBot, hFvgT)
     // Zones: lifecycle of live zones (finished ones go to the archive), then births on this bar
@@ -114,7 +119,7 @@ if barstate.isconfirmed
     // Context
     f_rangeStep(core, rng, stS, rangeArch)
     float pdNow = f_pdStep(core, rng)
-    f_ctxBuild(ctx, stS, stI, rng, pdNow, liqs, sAsia, sLon, sNy, htfOk, hTrend)
+    f_ctxBuild(ctx, stS, stI, rng, pdNow, liqs, sAsia, sLon, sNy, htfOk, htfLowHist, hBias)
 
 // ── Visible range (§15 AC-M16): bar indices of the leftmost and rightmost visible bars.
 // Using these built-ins makes the script recalculate when the chart is scrolled or zoomed.
@@ -165,7 +170,7 @@ if barstate.islast
     pStr.used := 0
     pLab.used := 0
     array<Tag> tags = array.new<Tag>()
-    f_renderZones(view, pZone, pMid, zones, zoneArch, rightT, histClose, histAtr, histBase)
+    f_renderZones(view, pZone, pMid, tags, zones, zoneArch, rightT, histClose, histAtr, histBase)
     f_renderLevels(view, pLvl, tags, liqs, liqArch, rightT)
     if htfOk and i_htfStruct
         f_renderBreaks(view, pStr, pLab, htfBreaks, view.vp ? mc.htfStructWin : mc.htfStructEvents, false)
@@ -174,7 +179,8 @@ if barstate.islast
     f_renderSwept(view, pLvl, pLab, liqs, liqArch)
     f_renderRange(view, pRngBox, pRngLine, pLab, tags, rng, rangeArch, close, rightT)
     if view.live
-        f_drawTags(pLab, tags, rightT + barMs)
+        float sep = na(view.winHi) ? 0.35 * vu : math.max(0.35 * vu, 0.025 * (view.winHi - view.winLo))
+        f_drawTags(pLab, tags, rightT + barMs, sep)
     f_renderSessions(view, pWash, pLab, sessHist, sAsia, sLon, sNy)
     if vInternal
         f_renderBreaks(view, pStr, pLab, stI.breaks, view.vp ? mc.internalWin : mc.internalEvents, true)

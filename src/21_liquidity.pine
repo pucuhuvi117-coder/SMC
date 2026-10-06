@@ -48,14 +48,23 @@ f_liqSwept(Core c, Liq x, float extreme, int stype) =>
     x.endT := time
     float pen = math.abs(extreme - x.price) / vu
     string sideTxt = x.side == 1 ? "BSL" : "SSL"
-    f_emit(c, EV_LIQ_SWEPT, -x.side, x.price, x.id, na, x.major ? 1 : 2, pen, stype, x.major ? 1.0 : 0.0, sideTxt + " " + x.tag)
+    f_emit(c, EV_LIQ_SWEPT, -x.side, x.price, x.id, na, x.major ? 1 : 2, pen, stype, x.major ? 1.0 : 0.0, sideTxt + " " + x.tag, x.tf)
 
 f_liqTaken(Core c, Liq x, float pen) =>
     x.state := LS_TAKEN
     x.endBar := bar_index
     x.endT := time
     string sideTxt = x.side == 1 ? "BSL" : "SSL"
-    f_emit(c, EV_LIQ_TAKEN, x.side, x.price, x.id, na, 2, pen / vu, na, x.major ? 1.0 : 0.0, sideTxt + " " + x.tag)
+    f_emit(c, EV_LIQ_TAKEN, x.side, x.price, x.id, na, 2, pen / vu, na, x.major ? 1.0 : 0.0, sideTxt + " " + x.tag, x.tf)
+
+// Finished levels go to the archive for history rendering; HTF levels only while they are displayed
+f_liqArchive(array<Liq> arch, Liq x) =>
+    bool keep = x.tf == TF_CHART or i_htfLiq
+    if keep
+        arch.push(x)
+        if arch.size() > LIQ_ARCH_CAP
+            arch.shift()
+    keep
 
 // Confirmed-bar step: sweep / taken checks, major flag, expiry, turtle soup (A.13).
 // Finished levels move to the archive (history rendering) once the turtle-soup window has passed.
@@ -94,27 +103,23 @@ f_liqStep(Core c, array<Liq> lv, array<Liq> arch, int chochIntDir) =>
                 if x.state == LS_ACTIVE or x.state == LS_PENDING
                     bool htf = x.tf != TF_CHART
                     x.major := htf or x.kind != LK_SWING or x.touches >= 2 or bar_index - x.bar >= i_oldAge
-                    if math.abs(close - x.price) > LIQ_MAX_DIST * vu * (htf ? 3 : 1) or bar_index - x.bar > LIQ_MAX_AGE * (htf ? htfAgeMult : 1)
+                    if math.abs(close - x.price) > LIQ_MAX_DIST * vu * (htf ? htfDistMult : 1.0) or bar_index - x.bar > LIQ_MAX_AGE * (htf ? htfAgeMult : 1)
                         x.state := LS_EXPIRED
                         x.endBar := bar_index
                         x.endT := time
-                        f_emit(c, EV_LIQ_EXPIRED, x.side, x.price, x.id, na, 4)
+                        f_emit(c, EV_LIQ_EXPIRED, x.side, x.price, x.id, na, 4, na, na, na, "", x.tf)
             else
                 if x.state == LS_SWEPT and chochIntDir == -x.side and x.sweepType < SWEEP_TURTLE and bar_index - x.endBar <= i_tsWindow and x.endBar - x.bar >= i_tsMinAge
                     x.sweepType := SWEEP_TURTLE
                 if bar_index - x.endBar > i_tsWindow
-                    arch.push(lv.remove(i))
-                    if arch.size() > LIQ_ARCH_CAP
-                        arch.shift()
+                    f_liqArchive(arch, lv.remove(i))
     if lv.size() > LIQ_CAP
         Liq old = lv.shift()
         if old.state == LS_ACTIVE or old.state == LS_PENDING
             old.state := LS_EXPIRED
             old.endBar := bar_index
             old.endT := time
-        arch.push(old)
-        if arch.size() > LIQ_ARCH_CAP
-            arch.shift()
+        f_liqArchive(arch, old)
     true
 
 // Session tracking: start / running high-low / end → history box + key levels (A.15)
