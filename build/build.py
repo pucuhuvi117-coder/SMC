@@ -88,6 +88,10 @@ def lint(name: str, text: str) -> list[str]:
             indent = len(code) - len(code.lstrip(" "))
             if indent % 4 != 0:
                 issues.append(f"{where}: indentation {indent} is not a multiple of 4 (line wrapping is not used in this project)")
+        # Pine keywords cannot be identifiers (caught in v0.4: a parameter named `to`)
+        kw = re.search(r"\b(?:int|float|bool|string|color|line|box|label|table|array<[^>]+>|map<[^>]+>|[A-Z]\w*)\s+(to|by|in|or|and|not|if|else|for|while|var|switch|import|export|method|type|enum|true|false|na)\b\s*(?:[,)=]|$)", code)
+        if kw:
+            issues.append(f"{where}: `{kw.group(1)}` is a Pine keyword and cannot be used as a name")
         m = re.search(r"for\s+\w+\s*=\s*0\s+to\s+(.+?)\s*-\s*1\s*$", code)
         if m and "size()" in m.group(1):
             issues.append(f"{where}: ascending loop to size()-1 iterates twice on empty arrays; guard it with `if n > 0`")

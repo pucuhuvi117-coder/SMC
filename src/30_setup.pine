@@ -223,11 +223,11 @@ f_setPlan(Setup s, array<Liq> lv) =>
         fail := s.rrFinal < i_minRR ? "RR_LOW" : ""
     fail
 
-// Opposing FRESH HTF zone between entry and the price `to` (§9.5 penalty, §11.3 check 3)
-f_htfAgainst(Setup s, array<Zone> zs, float to) =>
+// Opposing FRESH HTF zone between entry and the price pxTo (§9.5 penalty, §11.3 check 3)
+f_htfAgainst(Setup s, array<Zone> zs, float pxTo) =>
     bool hit = false
-    float lo = math.min(s.entry, to)
-    float hi = math.max(s.entry, to)
+    float lo = math.min(s.entry, pxTo)
+    float hi = math.max(s.entry, pxTo)
     for z in zs
         if z.tf != TF_CHART and z.dir == -s.dir and z.state == ZS_FRESH and z.top >= lo and z.bottom <= hi
             hit := true
