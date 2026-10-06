@@ -319,14 +319,18 @@ f_setScore(Setup s, Ctx x, array<Zone> zs) =>
     s.factors := f
     s.score
 
+// Entry zone inside the OTE band of the shift range
+f_poiInOte(Setup s) =>
+    float span = s.rHi - s.rLo
+    float bLo = s.dir == 1 ? s.rHi - oteHi * span : s.rLo + oteLo * span
+    float bHi = s.dir == 1 ? s.rHi - oteLo * span : s.rLo + oteHi * span
+    not na(s.entryTop) and s.entryTop >= bLo and s.entryBot <= bHi
+
 // Setup Path text (§9.7): short for the card, medium for Analysis and the tooltip
 f_setChain(Setup s) =>
     int d = s.dir
     string sn = s.shiftKind == BK_BOS ? "BOS" : s.isMSS ? "MSS" : "CHoCH"
-    float span = s.rHi - s.rLo
-    float bLo = d == 1 ? s.rHi - oteHi * span : s.rLo + oteLo * span
-    float bHi = d == 1 ? s.rHi - oteLo * span : s.rLo + oteHi * span
-    bool inOte = not na(s.entryTop) and s.entryTop >= bLo and s.entryBot <= bHi
+    bool inOte = f_poiInOte(s)
     string poi = na(s.poi) ? "" : " → " + (s.combo ? "FVG+OB" : f_zoneName(s.poi))
     string loc = na(s.poi) ? "" : inOte ? " → OTE" : d == 1 ? " → DISC" : " → PREM"
     string head = s.model == SM_REV ? "Sweep → " + sn : sn
@@ -386,6 +390,8 @@ f_setShift(Setup s, Brk b) =>
     s.shiftKind := b.kind
     s.isMSS := b.mss
     s.disp := b.disp
+    s.shiftPx := b.price
+    s.shiftSwT := b.swingT
     s.legBar := b.origBar
     if s.dir == 1
         s.rLo := s.model == SM_REV ? math.min(s.sweepExt, b.legExt0) : b.legExt0
@@ -570,6 +576,8 @@ f_setupStep(Core c, array<Setup> ss, array<Setup> arch, StructState sw, StructSt
                         s.sweepMajor := lq.major or lq.tf != TF_CHART
                         s.sweepTag := f_htfPrefix(lq.tf) + (d == 1 ? "SSL" : "BSL") + (lq.kind == LK_SWING ? (lq.touches >= 2 ? " ≡" + str.tostring(lq.touches) : "") : " " + lq.tag)
                         s.sweepBar := bar_index
+                        s.sweepT := time
+                        s.sweepPx := lq.price
         else if i_smCont
             // CONTINUATION: BOS with the swing trend and a real leg (swing, or internal inside a swing trend)
             int k = j - n - nb

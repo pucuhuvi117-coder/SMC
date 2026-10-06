@@ -345,6 +345,8 @@ type Setup
     bool sweepMajor = false
     string sweepTag = ""
     int sweepBar
+    int sweepT
+    float sweepPx
     bool contSweep = false
     // shift component
     int shiftEvId
@@ -355,6 +357,8 @@ type Setup
     int shiftKind
     bool isMSS = false
     float disp
+    float shiftPx
+    int shiftSwT
     // location: range built by the shift leg
     float rLo
     float rHi

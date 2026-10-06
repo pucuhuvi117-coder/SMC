@@ -1,14 +1,14 @@
 //@version=6
 // ═══════════════════════════════════════════════════════════════════════════════
-//  SMC Pro · Setups · build 0.4.2 · 2026-10-06
+//  SMC Pro · Setups · build 0.4.3 · 2026-10-06
 //  Companion of SMC Visualizer Pro: same engines and settings, plus the setup engine (ADR-13).
 //  Generated from /src by build/build.py. Do not edit dist/ by hand.
 //  Architecture: docs/02-architecture.md · Detectors: docs/appendix-a-detection-spec.md
 // ═══════════════════════════════════════════════════════════════════════════════
-indicator("SMC Pro · Setups", shorttitle = "SMC Setups", overlay = true, max_boxes_count = 100, max_lines_count = 200, max_labels_count = 100)
+indicator("SMC Pro · Setups", shorttitle = "SMC Setups", overlay = true, max_boxes_count = 100, max_lines_count = 250, max_labels_count = 150)
 
 // ═══ 01 · CONSTANTS ═════════════════════════════════════════════════════════════
-BUILD = "0.4.2"
+BUILD = "0.4.3"
 
 // Timeframe slots (docs §8.2). v0.1 computes the chart TF only; HTF arrives with the HTF Feed (P5).
 TF_CHART = 0
@@ -493,6 +493,8 @@ type Setup
     bool sweepMajor = false
     string sweepTag = ""
     int sweepBar
+    int sweepT
+    float sweepPx
     bool contSweep = false
     // shift component
     int shiftEvId
@@ -503,6 +505,8 @@ type Setup
     int shiftKind
     bool isMSS = false
     float disp
+    float shiftPx
+    int shiftSwT
     // location: range built by the shift leg
     float rLo
     float rHi
@@ -743,6 +747,7 @@ i_beAfterTp1 = input.bool(true, "Move SL to entry after TP1", group = G_SET, dis
 i_showPlan = input.bool(true, "Show Entry/SL/TP", inline = "sp", group = G_SET, display = display.none)
 i_priceMarkers = input.bool(false, "Price-scale markers", inline = "sp", tooltip = "Entry, SL and TP1 of the focus setup as values on the price scale.", group = G_SET, display = display.none)
 i_alertGrade = input.enum(GradeOpt.a, "Alert min grade", tooltip = "Setup READY alerts fire only from this grade.", group = G_SET, display = display.none)
+i_showPath = input.bool(true, "Setup Path", tooltip = "① sweep → ② CHoCH / BOS → ③ POI → ④ entry, marked on the very sweep, break and zone that SMC Visualizer Pro draws (same cfg). Normal: the current setups; Analysis / Debug: also recent and past ones. Off in Clean.", group = G_SET, display = display.none)
 i_setPanel = input.bool(true, "Setup panel", inline = "spn", group = G_SET, display = display.none)
 i_setPanelPos = input.string("Bottom Right", "", options = ["Bottom Right", "Top Right", "Bottom Left", "Top Left", "Bottom Center"], inline = "spn", tooltip = "Setup, quality, plan and invalidation of the focus setup, and the settings signature cfg (must match SMC Visualizer Pro).", group = G_SET, display = display.none)
 
@@ -833,10 +838,10 @@ var int cfgSig = f_cfgSig()
 f_modeCfg(DisplayMode m) =>
     switch m
         DisplayMode.clean => ModeCfg.new(structEvents = 1, internalEvents = 0, swingLabels = false, zonesPerSide = 1, majorPerSide = 1, minorPerSide = 0, sweptShow = 1, distMax = 3.0, theta = 0.55, ttl = 0, hist = 500, mitigated = false, pdCap = 1, gauge = false, sessions = 0, dashboard = false, labelLevel = 1, debug = false, structWin = 6, internalWin = 0, swingLabelWin = 0, sweepWin = 6, sessWin = 0, rangeWin = 1, poolZone = 24, poolWash = 4, poolLvl = 30, poolStr = 14, poolLab = 40, htfStructEvents = 1, htfStructWin = 3, keyCap = 2, gradeFloor = 2, setupPast = 0, poolSetBox = 4, poolSetLine = 8, poolSetLab = 8)
-        DisplayMode.normal => ModeCfg.new(structEvents = 3, internalEvents = 0, swingLabels = false, zonesPerSide = 2, majorPerSide = 2, minorPerSide = 1, sweptShow = 3, distMax = 6.0, theta = 0.40, ttl = 10, hist = 1500, mitigated = true, pdCap = 2, gauge = true, sessions = 4, dashboard = true, labelLevel = 2, debug = false, structWin = 36, internalWin = 0, swingLabelWin = 0, sweepWin = 30, sessWin = 60, rangeWin = 6, poolZone = 64, poolWash = 64, poolLvl = 100, poolStr = 56, poolLab = 190, htfStructEvents = 2, htfStructWin = 8, keyCap = 3, gradeFloor = 1, setupPast = 6, poolSetBox = 40, poolSetLine = 80, poolSetLab = 40)
-        DisplayMode.analysis => ModeCfg.new(structEvents = 15, internalEvents = 15, swingLabels = true, zonesPerSide = 6, majorPerSide = 6, minorPerSide = 4, sweptShow = 15, distMax = 12.0, theta = 0.25, ttl = 50, hist = 5000, mitigated = true, pdCap = 2, gauge = true, sessions = 20, dashboard = true, labelLevel = 3, debug = false, structWin = 80, internalWin = 60, swingLabelWin = 60, sweepWin = 60, sessWin = 80, rangeWin = 12, poolZone = 140, poolWash = 90, poolLvl = 150, poolStr = 160, poolLab = 400, htfStructEvents = 6, htfStructWin = 16, keyCap = 4, gradeFloor = 0, setupPast = 10, poolSetBox = 60, poolSetLine = 120, poolSetLab = 60)
-        DisplayMode.debug => ModeCfg.new(structEvents = 30, internalEvents = 30, swingLabels = true, zonesPerSide = 20, majorPerSide = 20, minorPerSide = 20, sweptShow = 30, distMax = 1000.0, theta = 0.0, ttl = 100000, hist = 100000, mitigated = true, pdCap = 3, gauge = true, sessions = 30, dashboard = true, labelLevel = 3, debug = true, structWin = 80, internalWin = 60, swingLabelWin = 60, sweepWin = 80, sessWin = 80, rangeWin = 12, poolZone = 180, poolWash = 90, poolLvl = 150, poolStr = 160, poolLab = 460, htfStructEvents = 10, htfStructWin = 20, keyCap = 10, gradeFloor = 0, setupPast = 10, poolSetBox = 60, poolSetLine = 120, poolSetLab = 60)
-        => ModeCfg.new(structEvents = 15, internalEvents = 15, swingLabels = true, zonesPerSide = 6, majorPerSide = 6, minorPerSide = 4, sweptShow = 15, distMax = 12.0, theta = 0.25, ttl = 50, hist = 5000, mitigated = true, pdCap = 3, gauge = true, sessions = 20, dashboard = true, labelLevel = 3, debug = false, structWin = 80, internalWin = 60, swingLabelWin = 60, sweepWin = 60, sessWin = 80, rangeWin = 12, poolZone = 140, poolWash = 90, poolLvl = 150, poolStr = 160, poolLab = 400, htfStructEvents = 6, htfStructWin = 16, keyCap = 4, gradeFloor = 0, setupPast = 10, poolSetBox = 60, poolSetLine = 120, poolSetLab = 60)
+        DisplayMode.normal => ModeCfg.new(structEvents = 3, internalEvents = 0, swingLabels = false, zonesPerSide = 2, majorPerSide = 2, minorPerSide = 1, sweptShow = 3, distMax = 6.0, theta = 0.40, ttl = 10, hist = 1500, mitigated = true, pdCap = 2, gauge = true, sessions = 4, dashboard = true, labelLevel = 2, debug = false, structWin = 36, internalWin = 0, swingLabelWin = 0, sweepWin = 30, sessWin = 60, rangeWin = 6, poolZone = 64, poolWash = 64, poolLvl = 100, poolStr = 56, poolLab = 190, htfStructEvents = 2, htfStructWin = 8, keyCap = 3, gradeFloor = 1, setupPast = 6, poolSetBox = 40, poolSetLine = 100, poolSetLab = 60)
+        DisplayMode.analysis => ModeCfg.new(structEvents = 15, internalEvents = 15, swingLabels = true, zonesPerSide = 6, majorPerSide = 6, minorPerSide = 4, sweptShow = 15, distMax = 12.0, theta = 0.25, ttl = 50, hist = 5000, mitigated = true, pdCap = 2, gauge = true, sessions = 20, dashboard = true, labelLevel = 3, debug = false, structWin = 80, internalWin = 60, swingLabelWin = 60, sweepWin = 60, sessWin = 80, rangeWin = 12, poolZone = 140, poolWash = 90, poolLvl = 150, poolStr = 160, poolLab = 400, htfStructEvents = 6, htfStructWin = 16, keyCap = 4, gradeFloor = 0, setupPast = 10, poolSetBox = 60, poolSetLine = 160, poolSetLab = 100)
+        DisplayMode.debug => ModeCfg.new(structEvents = 30, internalEvents = 30, swingLabels = true, zonesPerSide = 20, majorPerSide = 20, minorPerSide = 20, sweptShow = 30, distMax = 1000.0, theta = 0.0, ttl = 100000, hist = 100000, mitigated = true, pdCap = 3, gauge = true, sessions = 30, dashboard = true, labelLevel = 3, debug = true, structWin = 80, internalWin = 60, swingLabelWin = 60, sweepWin = 80, sessWin = 80, rangeWin = 12, poolZone = 180, poolWash = 90, poolLvl = 150, poolStr = 160, poolLab = 460, htfStructEvents = 10, htfStructWin = 20, keyCap = 10, gradeFloor = 0, setupPast = 10, poolSetBox = 60, poolSetLine = 160, poolSetLab = 100)
+        => ModeCfg.new(structEvents = 15, internalEvents = 15, swingLabels = true, zonesPerSide = 6, majorPerSide = 6, minorPerSide = 4, sweptShow = 15, distMax = 12.0, theta = 0.25, ttl = 50, hist = 5000, mitigated = true, pdCap = 3, gauge = true, sessions = 20, dashboard = true, labelLevel = 3, debug = false, structWin = 80, internalWin = 60, swingLabelWin = 60, sweepWin = 60, sessWin = 80, rangeWin = 12, poolZone = 140, poolWash = 90, poolLvl = 150, poolStr = 160, poolLab = 400, htfStructEvents = 6, htfStructWin = 16, keyCap = 4, gradeFloor = 0, setupPast = 10, poolSetBox = 60, poolSetLine = 160, poolSetLab = 100)
 
 var ModeCfg mc = f_modeCfg(i_mode)
 
@@ -2495,14 +2500,18 @@ f_setScore(Setup s, Ctx x, array<Zone> zs) =>
     s.factors := f
     s.score
 
+// Entry zone inside the OTE band of the shift range
+f_poiInOte(Setup s) =>
+    float span = s.rHi - s.rLo
+    float bLo = s.dir == 1 ? s.rHi - oteHi * span : s.rLo + oteLo * span
+    float bHi = s.dir == 1 ? s.rHi - oteLo * span : s.rLo + oteHi * span
+    not na(s.entryTop) and s.entryTop >= bLo and s.entryBot <= bHi
+
 // Setup Path text (§9.7): short for the card, medium for Analysis and the tooltip
 f_setChain(Setup s) =>
     int d = s.dir
     string sn = s.shiftKind == BK_BOS ? "BOS" : s.isMSS ? "MSS" : "CHoCH"
-    float span = s.rHi - s.rLo
-    float bLo = d == 1 ? s.rHi - oteHi * span : s.rLo + oteLo * span
-    float bHi = d == 1 ? s.rHi - oteLo * span : s.rLo + oteHi * span
-    bool inOte = not na(s.entryTop) and s.entryTop >= bLo and s.entryBot <= bHi
+    bool inOte = f_poiInOte(s)
     string poi = na(s.poi) ? "" : " → " + (s.combo ? "FVG+OB" : f_zoneName(s.poi))
     string loc = na(s.poi) ? "" : inOte ? " → OTE" : d == 1 ? " → DISC" : " → PREM"
     string head = s.model == SM_REV ? "Sweep → " + sn : sn
@@ -2562,6 +2571,8 @@ f_setShift(Setup s, Brk b) =>
     s.shiftKind := b.kind
     s.isMSS := b.mss
     s.disp := b.disp
+    s.shiftPx := b.price
+    s.shiftSwT := b.swingT
     s.legBar := b.origBar
     if s.dir == 1
         s.rLo := s.model == SM_REV ? math.min(s.sweepExt, b.legExt0) : b.legExt0
@@ -2746,6 +2757,8 @@ f_setupStep(Core c, array<Setup> ss, array<Setup> arch, StructState sw, StructSt
                         s.sweepMajor := lq.major or lq.tf != TF_CHART
                         s.sweepTag := f_htfPrefix(lq.tf) + (d == 1 ? "SSL" : "BSL") + (lq.kind == LK_SWING ? (lq.touches >= 2 ? " ≡" + str.tostring(lq.touches) : "") : " " + lq.tag)
                         s.sweepBar := bar_index
+                        s.sweepT := time
+                        s.sweepPx := lq.price
         else if i_smCont
             // CONTINUATION: BOS with the swing trend and a real leg (swing, or internal inside a swing trend)
             int k = j - n - nb
@@ -3146,7 +3159,9 @@ f_drawSetup(BoxPool pb, LinePool pl, LabelPool plb, Setup s, bool past) =>
     int lnT = done ? OP_SOFT : OP_SOLID
     // entry zone (POI): dashed outline while forming or for a setup without a trade, focus fill when READY / ACTIVE
     bool outline = forming or noTrade
-    f_box(pb, x0, x1, s.entryTop, s.entryBot, color.new(sig, outline or done ? F_WASH : F_FOCUS), color.new(done ? outc : sig, OP_MEDIUM), 1, outline ? line.style_dashed : line.style_solid, "", color(na), text.align_right)
+    // v0.4.3: READY / ACTIVE POI is a 2 px frame with a light fill, so it marks the zone SMC Visualizer
+    // Pro already fills instead of stacking a second heavy fill on it (and stays visible on its own)
+    f_box(pb, x0, x1, s.entryTop, s.entryBot, color.new(sig, outline or done ? F_WASH : F_FAINT), color.new(done ? outc : sig, OP_MEDIUM), outline or done ? 1 : 2, outline ? line.style_dashed : line.style_solid, "", color(na), text.align_right)
     if planned and vPlan and not noTrade
         float e = s.entry
         float lastTp = f_tpAt(s, s.nTp)
@@ -3184,6 +3199,56 @@ f_drawSetup(BoxPool pb, LinePool pl, LabelPool plb, Setup s, bool past) =>
     f_card(plb, x1 + barMs, cy, txt, tc, bg, past ? size.tiny : size.small, f_setTip(s))
     true
 
+// Setup Path (§17.2): numbered markers on the events the setup is built from — the sweep, the
+// shift and the POI, i.e. the very level, break and zone SMC Visualizer Pro draws with the same
+// settings (equal cfg) — joined by dotted links, so setup and chart markup read as one story.
+f_step(int k) =>
+    k == 1 ? "①" : k == 2 ? "②" : k == 3 ? "③" : k == 4 ? "④" : "⑤"
+
+f_drawPath(LinePool pl, LabelPool plb, Setup s, bool faded) =>
+    int d = s.dir
+    color pc = color.new(C_SIG, faded ? OP_SOFT : OP_STRONG)
+    color lc = color.new(C_SIG, faded ? OP_FAINT : OP_SOFT)
+    string sn = s.shiftKind == BK_BOS ? "BOS" : s.isMSS ? "MSS" : "CHoCH"
+    int k = 0
+    int qx = na
+    float qy = na
+    // ① sweep (Sweep Reversal): below / above the sweep candle, on the level the chart shows with ✕
+    if s.model == SM_REV and not na(s.sweepT)
+        k += 1
+        f_label(plb, s.sweepT, s.sweepPx, f_step(k) + " " + s.sweepTag + " ✕", pc, d == 1 ? label.style_label_up : label.style_label_down, size.tiny, "Step " + str.tostring(k) + " · liquidity sweep: " + s.sweepTag + " " + f_px(s.sweepPx) + " · " + f_timeStr(s.sweepT), d == 1 ? yloc.belowbar : yloc.abovebar)
+        qx := s.sweepT
+        qy := s.sweepPx
+    // ② shift: the broken swing level from its pivot to the break, drawn over the structure line
+    if not na(s.shiftT) and not na(s.shiftPx)
+        k += 1
+        if not na(s.shiftSwT)
+            f_line(pl, s.shiftSwT, s.shiftPx, s.shiftT, s.shiftPx, pc, line.style_solid, 2)
+        if not na(qx)
+            f_line(pl, qx, qy, s.shiftT, s.shiftPx, lc, line.style_dotted, 1)
+        f_label(plb, s.shiftT, s.shiftPx, f_step(k) + " " + sn + f_arrow(d) + " " + str.tostring(nz(s.disp), "0.0") + " ATR", pc, d == 1 ? label.style_label_down : label.style_label_up, size.tiny, "Step " + str.tostring(k) + " · " + (s.shiftLvl == LV_SWG ? "swing " : "internal ") + sn + " of " + f_px(s.shiftPx) + " · leg " + str.tostring(nz(s.disp), "0.0") + " ATR · " + f_timeStr(s.shiftT), d == 1 ? yloc.abovebar : yloc.belowbar)
+        qx := s.shiftT
+        qy := s.shiftPx
+    // ③ POI: at the left edge of the zone it was picked from, with its location in the range
+    if not na(s.poi) and not na(s.entryTop)
+        k += 1
+        int pt = s.poi.t
+        float pm = (s.entryTop + s.entryBot) / 2
+        if not na(qx)
+            f_line(pl, qx, qy, pt, pm, lc, line.style_dotted, 1)
+        string loc = f_poiInOte(s) ? " · OTE" : d == 1 ? " · DISC" : " · PREM"
+        string pn = s.combo ? "FVG+OB" : f_zoneName(s.poi)
+        f_label(plb, pt, d == 1 ? s.entryBot : s.entryTop, f_step(k) + " " + pn + loc, pc, d == 1 ? label.style_label_upper_left : label.style_label_lower_left, size.tiny, "Step " + str.tostring(k) + " · POI " + pn + " " + f_px(s.entryBot) + " – " + f_px(s.entryTop) + loc, yloc.price)
+        qx := pt
+        qy := pm
+    // ④ entry: the composition draws the ● dot; the path links to it and numbers it
+    if not na(s.trigT)
+        k += 1
+        if not na(qx)
+            f_line(pl, qx, qy, s.trigT, s.entry, lc, line.style_dotted, 1)
+        f_label(plb, s.trigT, s.entry, f_step(k), pc, d == 1 ? label.style_label_upper_left : label.style_label_lower_left, size.tiny, "Step " + str.tostring(k) + " · entry " + f_px(s.entry) + " · " + f_timeStr(s.trigT), yloc.price)
+    k
+
 // Live: the focus composition per direction plus recently finished ones (TTL by outcome and
 // mode, §14.8). Older setups inside the visible window: up to setupPast (Normal 6, Analysis / Debug 10).
 f_setDoneTtl(Setup s) =>
@@ -3195,12 +3260,17 @@ f_setShownDone(Setup s) =>
 
 f_renderSetups(View v, BoxPool pb, LinePool pl, LabelPool plb, array<Setup> ss, array<Setup> arch) =>
     int shown = 0
+    // Setup Path: the current setups from Normal on; recent and past ones too in Analysis / Debug / Custom
+    bool pathOn = i_showPath and i_mode != DisplayMode.clean
+    bool pathAll = pathOn and (i_mode != DisplayMode.normal)
     if i_setups
         array<int> drawn = array.new<int>()
         if v.live
             for d in array.from(1, -1)
                 Setup fs = f_focusSetup(ss, d)
                 if not na(fs)
+                    if pathOn
+                        f_drawPath(pl, plb, fs, false)
                     f_drawSetup(pb, pl, plb, fs, false)
                     drawn.push(fs.id)
                     shown += 1
@@ -3212,6 +3282,8 @@ f_renderSetups(View v, BoxPool pb, LinePool pl, LabelPool plb, array<Setup> ss, 
                 Setup s = arch.get(i)
                 if not drawn.includes(s.id) and f_setShownDone(s)
                     if v.live and recent < 2 and bar_index - s.endBar <= f_setDoneTtl(s)
+                        if pathAll
+                            f_drawPath(pl, plb, s, true)
                         f_drawSetup(pb, pl, plb, s, false)
                         drawn.push(s.id)
                         recent += 1
@@ -3219,6 +3291,8 @@ f_renderSetups(View v, BoxPool pb, LinePool pl, LabelPool plb, array<Setup> ss, 
                     else if mc.setupPast > 0 and past < mc.setupPast
                         int b0 = na(s.readyBar) ? s.shiftBar : s.readyBar
                         if s.endBar >= v.iL and b0 <= v.iR
+                            if pathAll
+                                f_drawPath(pl, plb, s, true)
                             f_drawSetup(pb, pl, plb, s, true)
                             past += 1
                             shown += 1
