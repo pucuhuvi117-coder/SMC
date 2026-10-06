@@ -3638,9 +3638,9 @@ f_setPlanText(Setup s) =>
 // Full explanation (§9.7) for the card tooltip
 f_setTip(Setup s) =>
     string head = f_sideName(s.dir) + " · " + str.upper(f_modelName(s.model)) + (na(s.readyBar) ? " · FORMING" : " · " + f_gradeName(s.grade) + " " + str.tostring(s.score, "0.0") + "/10")
-    string body = s.chainMid + (s.factors != "" ? "\n" + s.factors : "\n")
+    string detail = s.chainMid + (s.factors != "" ? "\n" + s.factors : "\n")
     string plan = na(s.readyBar) ? (s.why != "" ? "waiting: " + f_reasonText(s.why) : "waiting for a valid plan") : f_setPlanText(s)
-    head + "\n" + body + plan + "\nANALYTICAL · not executed. The score measures how complete the setup is, not a win probability."
+    head + "\n" + detail + plan + "\nANALYTICAL · not executed. The score measures how complete the setup is, not a win probability."
 
 f_card(LabelPool p, int x, float y, string txt, color tc, color bg, string sz, string tip) =>
     label lb = p.takeLabel()
@@ -4230,8 +4230,8 @@ f_setupMsg(Event e, string what) =>
             Setup y = setupArch.get(i)
             if na(s) and y.id == e.ref
                 s := y
-    string body = na(s) ? "" : " · " + f_modelName(s.model) + " · " + f_gradeName(s.grade) + " " + str.tostring(s.score, "0.0") + " · E " + f_px(s.entry) + " · SL " + f_px(s.slInit) + " · TP1 " + f_px(s.tp1) + " · RR " + str.tostring(s.rrFinal, "0.0") + " · " + s.chain
-    "SMC Pro · " + syminfo.ticker + " " + timeframe.period + " · " + (e.dir == 1 ? "LONG " : "SHORT ") + what + body + (what == "INVALID" ? " · " + e.s1 : "")
+    string detail = na(s) ? "" : " · " + f_modelName(s.model) + " · " + f_gradeName(s.grade) + " " + str.tostring(s.score, "0.0") + " · E " + f_px(s.entry) + " · SL " + f_px(s.slInit) + " · TP1 " + f_px(s.tp1) + " · RR " + str.tostring(s.rrFinal, "0.0") + " · " + s.chain
+    "SMC Pro · " + syminfo.ticker + " " + timeframe.period + " · " + (e.dir == 1 ? "LONG " : "SHORT ") + what + detail + (what == "INVALID" ? " · " + e.s1 : "")
 
 if aSetReady
     alert(f_setupMsg(evReady, "READY"), alert.freq_once_per_bar_close)

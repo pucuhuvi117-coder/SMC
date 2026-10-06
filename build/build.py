@@ -86,6 +86,50 @@ def has_open_quote(line: str) -> bool:
     return quote is not None
 
 
+DECL_TYPES = r"(?:int|float|bool|string|color|line|box|label|table|array<[^>]+>|map<[^>]+>|[A-Z]\w*)"
+
+
+def lint_shadowing(body: str) -> list[str]:
+    """A local variable named like a global one triggers CW10013 in TradingView (caught in v0.4: `body`)."""
+    lines = body.splitlines()
+    glob: set[str] = set()
+    for raw in lines:
+        code = strip_comment(raw)
+        if not code or code[0] in " \t" or code.startswith(("enum ", "type ", "//")):
+            continue
+        m = re.match(r"^(?:var\s+)?(?:" + DECL_TYPES + r"\s+)?([A-Za-z_]\w*)\s*=(?!=|>)", code)
+        if m:
+            glob.add(m.group(1))
+        m = re.match(r"^\[([^\]]+)\]\s*=", code)
+        if m:
+            glob.update(x.strip() for x in m.group(1).split(","))
+    issues = []
+    skip_block = False  # indented members of `type` / `enum` are fields, not variables
+    fn = "<global block>"
+    for n, raw in enumerate(lines, 1):
+        code = strip_comment(raw)
+        if not code.strip():
+            continue
+        if code[0] not in " \t":
+            skip_block = code.startswith(("enum ", "type "))
+            mm = re.match(r"^([A-Za-z_]\w*)\s*\(.*\)\s*=>", code)
+            fn = mm.group(1) if mm else "<global block>"
+            continue
+        if skip_block:
+            continue
+        names = []
+        m = re.match(r"^\s+(?:var\s+)?(?:" + DECL_TYPES + r"\s+)?([A-Za-z_]\w*)\s*=(?!=|>)", code)
+        if m:
+            names.append(m.group(1))
+        m = re.match(r"^\s+\[([^\]]+)\]\s*=", code)
+        if m:
+            names += [x.strip() for x in m.group(1).split(",")]
+        for nm in names:
+            if nm in glob:
+                issues.append(f"dist:{n}: local `{nm}` in {fn} shadows a global of the same name (CW10013); rename it")
+    return issues
+
+
 def lint(name: str, text: str) -> list[str]:
     """Project rules from docs/02-architecture.md §20.8 and docs/09-master-checklist.md."""
     issues = []
@@ -132,6 +176,7 @@ def assemble(target: str) -> tuple[Path, str, list[str]]:
         parts.append(text)
     body = "\n".join(parts)
     body = body.replace("{{VERSION}}", version).replace("{{DATE}}", date)
+    issues += lint_shadowing(body)
     if not body.startswith("//@version=6"):
         issues.append("00_header.pine must start with //@version=6")
     out = ROOT / cfg["output"]

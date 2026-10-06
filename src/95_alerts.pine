@@ -49,8 +49,8 @@ f_setupMsg(Event e, string what) =>
             Setup y = setupArch.get(i)
             if na(s) and y.id == e.ref
                 s := y
-    string body = na(s) ? "" : " · " + f_modelName(s.model) + " · " + f_gradeName(s.grade) + " " + str.tostring(s.score, "0.0") + " · E " + f_px(s.entry) + " · SL " + f_px(s.slInit) + " · TP1 " + f_px(s.tp1) + " · RR " + str.tostring(s.rrFinal, "0.0") + " · " + s.chain
-    "SMC Pro · " + syminfo.ticker + " " + timeframe.period + " · " + (e.dir == 1 ? "LONG " : "SHORT ") + what + body + (what == "INVALID" ? " · " + e.s1 : "")
+    string detail = na(s) ? "" : " · " + f_modelName(s.model) + " · " + f_gradeName(s.grade) + " " + str.tostring(s.score, "0.0") + " · E " + f_px(s.entry) + " · SL " + f_px(s.slInit) + " · TP1 " + f_px(s.tp1) + " · RR " + str.tostring(s.rrFinal, "0.0") + " · " + s.chain
+    "SMC Pro · " + syminfo.ticker + " " + timeframe.period + " · " + (e.dir == 1 ? "LONG " : "SHORT ") + what + detail + (what == "INVALID" ? " · " + e.s1 : "")
 
 if aSetReady
     alert(f_setupMsg(evReady, "READY"), alert.freq_once_per_bar_close)
