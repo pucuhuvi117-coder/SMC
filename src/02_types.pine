@@ -1,0 +1,301 @@
+// ═══ 02 · TYPES ═════════════════════════════════════════════════════════════════
+// Logical objects never hold drawing handles (docs §8.1): they stay serializable and
+// reusable by the strategy build. Drawings live only in the visual pools (§8.4).
+
+enum DisplayMode
+    clean = "Clean"
+    normal = "Normal"
+    analysis = "Analysis"
+    debug = "Debug"
+    custom = "Custom"
+
+enum ThemeOpt
+    auto = "Auto"
+    dark = "Dark"
+    light = "Light"
+
+enum PaletteOpt
+    standard = "Standard"
+    cvd = "Color-blind safe"
+
+enum Verbosity
+    icons = "Icons"
+    brief = "Short"
+    full = "Full"
+
+enum StructPreset
+    scalp = "Scalp 5/2"
+    intraday = "Intraday 10/3"
+    swing = "Swing 20/5"
+    manual = "Manual"
+
+enum BreakSrc
+    onClose = "Close"
+    wick = "Wick"
+
+enum ObZone
+    full = "Full"
+    bodyWick = "Body+Wick"
+    body = "Body"
+
+enum MitRule
+    touch = "Touch"
+    half = "50%"
+    full = "Full"
+
+enum FillRule
+    wick = "Wick far edge"
+    closeEdge = "Close far edge"
+    ce = "CE (50%)"
+
+enum PdView
+    off = "Off"
+    eqOnly = "EQ only"
+    eqOte = "EQ + OTE"
+    full = "Full (wash)"
+
+enum SesPreset
+    ictNy = "ICT (NY)"
+    originalUtc = "Original (UTC)"
+    custom = "Custom"
+
+enum SesView
+    rangeBox = "Range box"
+    off = "Off"
+
+// Immutable fact about a state transition, emitted on a confirmed bar (§6.2)
+type Event
+    int id
+    int typ
+    int dir = 0
+    int tf = 0
+    int bar
+    int t
+    float price
+    int ref
+    int cause
+    int tier = 3
+    float v1
+    float v2
+    float v3
+    string s1 = ""
+
+// Event bus + id registry (§6.3)
+type Core
+    int nextId = 0
+    array<Event> barEvents
+    array<Event> history
+    int histCap = 300
+    int lastDispUpId
+    int lastDispUpBar
+    int lastDispDnId
+    int lastDispDnBar
+    int lastFvgUpBar
+    int lastFvgDnBar
+    Event lastStruct
+    Event lastLiq
+    bool warm = false
+
+type Swing
+    int id
+    int side
+    int lvl
+    float price
+    int bar
+    int t
+    int confirmBar
+    string tag = ""
+    bool eq = false
+    bool broken = false
+
+// Structure break (BOS / CHoCH). legExt0 is the leg origin extreme, legExt1 the far extreme.
+type Brk
+    int id
+    int kind
+    int dir
+    int lvl
+    float price
+    int swingBar
+    int swingT
+    int bar
+    int t
+    float legExt0
+    float legExt1
+    int origBar
+    int origT
+    int firstDisp
+    float disp
+    bool mss = false
+    bool initial = false
+    bool shadowed = false
+    int evId
+
+// Structure automaton for one level (internal or swing) on one TF (§7.1)
+type StructState
+    int lvl
+    int len
+    int trend = 0
+    Swing refHigh
+    Swing refLow
+    Swing lastHigh
+    Swing lastLow
+    float upOrigLow
+    int upOrigBar
+    int upOrigT
+    float upLegHigh
+    int upFirstDisp
+    float dnOrigHigh
+    int dnOrigBar
+    int dnOrigT
+    float dnLegLow
+    int dnFirstDisp
+    float protLow
+    float protHigh
+    int lastBrkBar
+    int lastBrkDir = 0
+    int lastBrkKind = 0
+    int prevBrkBar
+    int prevBrkDir = 0
+    int prevBrkKind = 0
+    Brk newUp
+    Brk newDn
+    Swing newHigh
+    Swing newLow
+    array<Swing> swings
+    array<Brk> breaks
+
+// Liquidity level (§7.2). side +1 = BSL, -1 = SSL.
+type Liq
+    int id
+    int side
+    int kind
+    int tf = 0
+    float price
+    int bar
+    int t
+    int born
+    int lastBar
+    int touches = 1
+    bool major = false
+    int state = 1
+    int pendSince
+    float ext
+    int endBar
+    int endT
+    int sweepType = 0
+    int lvl = 1
+    string tag = ""
+
+// Unified zone model for OB / BB / MB / FVG / IFVG (§8.3, ADR-07)
+type Zone
+    int id
+    int kind
+    int dir
+    int state = 1
+    float top
+    float bottom
+    int bar
+    int t
+    int born
+    int endBar
+    int endT
+    int touches = 0
+    float maxPen = 0.0
+    float unfilled
+    float strength = 0.0
+    float disp = 0.0
+    float extRef
+    float legExt
+    int parent
+    int brkId
+    int lvl = 1
+    int tf = 0
+    bool fallback = false
+
+// Dealing range (§7.5). state: 0 none, 1 developing, 2 established.
+type Range
+    int id
+    int dir = 0
+    int state = 0
+    float hi
+    float lo
+    int hiBar
+    int loBar
+    int t0
+    int pdZone = 0
+    bool inOte = false
+
+type Sess
+    string name
+    string code
+    string tagHi
+    string tagLo
+    string spec
+    bool on = false
+    float hi
+    float lo
+    int t0
+    int endT
+
+type SessBox
+    string code
+    float hi
+    float lo
+    int t0
+    int t1
+
+// Market context snapshot for Ribbon / Dashboard (§8.3)
+type Ctx
+    int market = 0
+    int swTrend = 0
+    int inTrend = 0
+    bool ranging = false
+    float pd
+    int pdZone = 0
+    bool inOte = false
+    int rangeState = 0
+    string sessCode = ""
+    int minsLeft
+    Liq nextBsl
+    Liq nextSsl
+
+// Display mode ceilings (§15.3, §19.2)
+type ModeCfg
+    int structEvents
+    int internalEvents
+    bool swingLabels
+    int zonesPerSide
+    int majorPerSide
+    int minorPerSide
+    int sweptShow
+    float distMax
+    float theta
+    int ttl
+    int hist
+    bool mitigated
+    int pdCap
+    bool gauge
+    int sessions
+    bool dashboard
+    int labelLevel
+    bool debug
+
+// Visual pools: drawings are created once and reused (§4.9)
+type BoxPool
+    array<box> items
+    int used = 0
+
+type LinePool
+    array<line> items
+    int used = 0
+
+type LabelPool
+    array<label> items
+    int used = 0
+
+// Right-edge tag for levels, merged by Smart Labels (§14.7)
+type Tag
+    float price
+    string txt
+    color col
+    string tip

@@ -1,0 +1,449 @@
+// ═══ 62 · VISUAL RENDERERS ══════════════════════════════════════════════════════
+// Immediate-mode rendering into pre-created object pools (§4.9): every pass takes objects
+// from the pools in priority order and hides what is left. Runs only on the last bar,
+// so historical bars draw nothing (ADR-02). Selection uses the last confirmed close,
+// which keeps the picture stable between realtime ticks (no flicker, AC-M13).
+
+// ── Pools
+f_fillBoxPool(BoxPool p, int n) =>
+    if n > 0
+        for i = 1 to n
+            p.items.push(box.new(int(na), float(na), int(na), float(na), xloc = xloc.bar_time, border_color = color(na), bgcolor = color(na)))
+    p.items.size()
+
+f_fillLinePool(LinePool p, int n) =>
+    if n > 0
+        for i = 1 to n
+            p.items.push(line.new(int(na), float(na), int(na), float(na), xloc = xloc.bar_time, color = color(na)))
+    p.items.size()
+
+f_fillLabelPool(LabelPool p, int n) =>
+    if n > 0
+        for i = 1 to n
+            p.items.push(label.new(int(na), float(na), "", xloc = xloc.bar_time, color = color(na), textcolor = color(na), style = label.style_none))
+    p.items.size()
+
+method takeBox(BoxPool this) =>
+    box b = na
+    if this.used < this.items.size()
+        b := this.items.get(this.used)
+        this.used := this.used + 1
+    b
+
+method takeLine(LinePool this) =>
+    line ln = na
+    if this.used < this.items.size()
+        ln := this.items.get(this.used)
+        this.used := this.used + 1
+    ln
+
+method takeLabel(LabelPool this) =>
+    label lb = na
+    if this.used < this.items.size()
+        lb := this.items.get(this.used)
+        this.used := this.used + 1
+    lb
+
+f_finishBoxes(BoxPool p) =>
+    int n = p.items.size()
+    if p.used < n
+        for i = p.used to n - 1
+            box b = p.items.get(i)
+            box.set_bgcolor(b, color(na))
+            box.set_border_color(b, color(na))
+            box.set_text(b, "")
+    p.used
+
+f_finishLines(LinePool p) =>
+    int n = p.items.size()
+    if p.used < n
+        for i = p.used to n - 1
+            line.set_color(p.items.get(i), color(na))
+    p.used
+
+f_finishLabels(LabelPool p) =>
+    int n = p.items.size()
+    if p.used < n
+        for i = p.used to n - 1
+            label lb = p.items.get(i)
+            label.set_text(lb, "")
+            label.set_tooltip(lb, "")
+            label.set_textcolor(lb, color(na))
+            label.set_color(lb, color(na))
+    p.used
+
+// ── Primitive setters
+f_box(BoxPool p, int l, int r, float top, float bot, color fill, color border, int bw, string bst, string txt, color tc) =>
+    box b = p.takeBox()
+    if not na(b)
+        box.set_lefttop(b, l, top)
+        box.set_rightbottom(b, r, bot)
+        box.set_bgcolor(b, fill)
+        box.set_border_color(b, border)
+        box.set_border_width(b, bw)
+        box.set_border_style(b, bst)
+        box.set_text(b, txt)
+        box.set_text_color(b, tc)
+        box.set_text_size(b, size.tiny)
+        box.set_text_halign(b, text.align_left)
+        box.set_text_valign(b, text.align_top)
+    not na(b)
+
+f_line(LinePool p, int x1, float y1, int x2, float y2, color c, string st, int w) =>
+    line ln = p.takeLine()
+    if not na(ln)
+        line.set_xy1(ln, x1, y1)
+        line.set_xy2(ln, x2, y2)
+        line.set_color(ln, c)
+        line.set_style(ln, st)
+        line.set_width(ln, w)
+    not na(ln)
+
+f_label(LabelPool p, int x, float y, string txt, color tc, string st, string sz, string tip, string yl) =>
+    label lb = p.takeLabel()
+    if not na(lb)
+        label.set_xy(lb, x, y)
+        label.set_yloc(lb, yl)
+        label.set_text(lb, txt)
+        label.set_textcolor(lb, tc)
+        label.set_color(lb, color(na))
+        label.set_style(lb, st)
+        label.set_size(lb, sz)
+        label.set_tooltip(lb, tip)
+        label.set_textalign(lb, text.align_left)
+    not na(lb)
+
+// ── Right-edge tags with Smart Labels merging (§14.7)
+f_drawTags(LabelPool p, array<Tag> tags, int x) =>
+    int n = tags.size()
+    if n > 0
+        array<float> ps = array.new<float>()
+        for tg in tags
+            ps.push(tg.price)
+        array<int> idx = ps.sort_indices(order.ascending)
+        float sep = 0.35 * vu
+        float curP = na
+        string curT = ""
+        string curTip = ""
+        color curC = na
+        for k = 0 to n - 1
+            Tag tg = tags.get(idx.get(k))
+            if i_smartLabels and not na(curP) and tg.price - curP < sep
+                curT := curT + " · " + tg.txt
+                curTip := curTip + "\n" + tg.tip
+            else
+                if not na(curP)
+                    f_label(p, x, curP, curT, curC, label.style_label_left, size.tiny, curTip, yloc.price)
+                curP := tg.price
+                curT := tg.txt
+                curTip := tg.tip
+                curC := tg.col
+        if not na(curP)
+            f_label(p, x, curP, curT, curC, label.style_label_left, size.tiny, curTip, yloc.price)
+    n
+
+// ── Zones (§13.8, §14.10, §15 M2/M3/M6)
+f_drawZone(BoxPool pz, LinePool pm, Zone z, float r, int mergeN, string badge, int rightT) =>
+    bool live = z.state < ZS_FILLED
+    bool ghost = mc.debug and r < mc.theta
+    color hue = not live ? C_INV : z.state == ZS_MITIGATED ? C_MITI : f_dirColor(z.dir)
+    int fillBase = z.kind == ZK_OB ? (z.state == ZS_FRESH ? F_BASE : z.state == ZS_TOUCHED ? F_LIGHT : F_FAINT) : z.kind == ZK_MB ? F_FAINT : F_LIGHT
+    bool hasBorder = z.kind != ZK_FVG
+    int borderBase = z.state == ZS_FRESH ? OP_MEDIUM : OP_SOFT
+    string bst = z.kind == ZK_BB or z.kind == ZK_IFVG ? line.style_dashed : z.kind == ZK_MB or z.state == ZS_MITIGATED ? line.style_dotted : line.style_solid
+    int fT = ghost or not live ? F_GHOST : f_tr(fillBase, r)
+    color fillC = color.new(hue, fT)
+    color bdC = hasBorder ? color.new(hue, ghost or not live ? 90 : f_tr(borderBase, r)) : color(na)
+    float top = z.top
+    float bot = z.bottom
+    if i_shrink and z.kind == ZK_FVG and live and not na(z.unfilled)
+        if z.dir == 1
+            top := math.max(z.bottom, math.min(z.top, z.unfilled))
+        else
+            bot := math.min(z.top, math.max(z.bottom, z.unfilled))
+    int rx = live ? rightT : z.endT
+    string tag = f_kindTag(z.kind) + (mergeN > 1 ? "×" + str.tostring(mergeN) : "") + badge
+    bool dbg = mc.debug and i_showIds
+    if dbg
+        tag := "#" + str.tostring(z.id) + " " + tag + " " + f_zoneStateName(z.state) + " R" + str.tostring(r, "0.00")
+    string txt = dbg ? tag : labelLvl == 0 or top - bot < 0.35 * vu ? "" : tag
+    f_box(pz, z.t, rx, top, bot, fillC, bdC, 1, bst, txt, color.new(hue, 20))
+    bool isOb = z.kind == ZK_OB or z.kind == ZK_BB or z.kind == ZK_MB
+    if live and ((isOb and i_obMid) or (not isOb and i_fvgCE))
+        float mid = (z.top + z.bottom) / 2
+        if mid <= top and mid >= bot
+            int lt = z.state == ZS_CE ? OP_FAINT : f_tr(OP_SOFT, r)
+            f_line(pm, z.t, mid, rx, mid, color.new(hue, lt), line.style_dotted, 1)
+    true
+
+f_renderZones(BoxPool pz, LinePool pm, array<Zone> zs, float px, int rightT) =>
+    array<int> cand = array.new<int>()
+    array<float> rs = array.new<float>()
+    int n = zs.size()
+    if n > 0
+        for i = 0 to n - 1
+            Zone z = zs.get(i)
+            bool isOb = z.kind == ZK_OB or z.kind == ZK_BB or z.kind == ZK_MB
+            bool kindOk = isOb ? vOB and (z.kind == ZK_OB or i_breakers) : vFVG
+            bool live = z.state < ZS_FILLED
+            bool stateOk = live ? (z.state != ZS_MITIGATED or vMitigated) : (mc.ttl > 0 and (z.state == ZS_FILLED or z.state == ZS_INVALID) and bar_index - z.endBar <= mc.ttl)
+            bool histOk = bar_index - z.born <= histDepth
+            bool minorOk = mc.debug or not ((i_reduceMinorOb and z.kind == ZK_OB and z.fallback) or (i_reduceMinorFvg and z.kind == ZK_FVG and z.strength < 0.35))
+            if kindOk and stateOk and histOk and minorOk
+                if f_zoneDist(z, px) <= mc.distMax
+                    float r = f_zoneR(z, px)
+                    if r >= mc.theta or mc.debug
+                        cand.push(i)
+                        rs.push(r)
+    int m = cand.size()
+    array<int> picked = array.new<int>()
+    array<float> pickedR = array.new<float>()
+    array<int> mergeN = array.new<int>()
+    array<string> badge = array.new<string>()
+    if m > 0
+        array<int> ord = rs.sort_indices(order.descending)
+        int obUp = 0
+        int obDn = 0
+        int fvUp = 0
+        int fvDn = 0
+        for k = 0 to m - 1
+            int oi = ord.get(k)
+            Zone z = zs.get(cand.get(oi))
+            float r = rs.get(oi)
+            bool isOb = z.kind == ZK_OB or z.kind == ZK_BB or z.kind == ZK_MB
+            bool above = z.bottom > px
+            bool below = z.top < px
+            int into = -1
+            int pn = picked.size()
+            if pn > 0 and not mc.debug
+                for q = 0 to pn - 1
+                    Zone y = zs.get(picked.get(q))
+                    if into < 0 and y.dir == z.dir
+                        float ov = math.min(y.top, z.top) - math.max(y.bottom, z.bottom)
+                        float sm = math.min(y.top - y.bottom, z.top - z.bottom)
+                        if sm > 0 and ov >= 0.5 * sm
+                            into := q
+            if into >= 0
+                mergeN.set(into, mergeN.get(into) + 1)
+                Zone host = zs.get(picked.get(into))
+                string kt = f_kindTag(z.kind)
+                if host.kind != z.kind and not str.contains(badge.get(into), kt)
+                    badge.set(into, badge.get(into) + "+" + kt)
+            else
+                int cnt = isOb ? (above ? obUp : below ? obDn : 0) : (above ? fvUp : below ? fvDn : 0)
+                bool sideOk = mc.debug or (not above and not below) or cnt < nZonesSide
+                if sideOk
+                    picked.push(cand.get(oi))
+                    pickedR.push(r)
+                    mergeN.push(1)
+                    badge.push("")
+                    if isOb
+                        obUp += above ? 1 : 0
+                        obDn += below ? 1 : 0
+                    else
+                        fvUp += above ? 1 : 0
+                        fvDn += below ? 1 : 0
+    int pn2 = picked.size()
+    if pn2 > 0
+        for q = 0 to pn2 - 1
+            f_drawZone(pz, pm, zs.get(picked.get(q)), pickedR.get(q), mergeN.get(q), badge.get(q), rightT)
+    pn2
+
+// ── Liquidity levels (§14.12)
+f_liqTag(Liq x) =>
+    string base = x.kind == LK_SWING ? (x.side == 1 ? "BSL" : "SSL") + (x.touches >= 2 ? " ≡" + str.tostring(x.touches) : "") : x.kind == LK_SESS ? x.tag : "◆" + x.tag
+    x.state == LS_PENDING ? base + " ?" : base
+
+f_liqTip(Liq x) =>
+    string what = x.kind == LK_SWING ? (x.touches >= 2 ? "equal " + (x.side == 1 ? "highs" : "lows") + " ×" + str.tostring(x.touches) : "swing " + (x.side == 1 ? "high" : "low")) : x.tag
+    (x.side == 1 ? "Buy-side liquidity · " : "Sell-side liquidity · ") + what + "\n" + f_px(x.price) + " · " + (x.major ? "major" : "minor") + (x.state == LS_PENDING ? " · closed beyond, waiting for reclaim" : "") + "\nsince " + f_timeStr(x.t)
+
+f_drawLevel(LinePool pl, array<Tag> tags, Liq x, float r, int rightT) =>
+    bool key = x.kind != LK_SWING
+    int w = key and x.kind != LK_SESS ? 2 : 1
+    string st = x.state == LS_PENDING ? line.style_dashed : x.major ? line.style_solid : line.style_dotted
+    int tr = x.major ? f_tr(OP_STRONG, r) : OP_FAINT
+    f_line(pl, x.t, x.price, rightT, x.price, color.new(C_LIQ, tr), st, w)
+    if x.major or mc.debug
+        string tx = f_liqTag(x)
+        if mc.debug and i_showIds
+            tx := "#" + str.tostring(x.id) + " " + tx + " R" + str.tostring(r, "0.00")
+        tags.push(Tag.new(x.price, tx, color.new(C_LIQ, math.min(tr, OP_MEDIUM)), f_liqTip(x)))
+    true
+
+f_renderLevels(LinePool pl, array<Tag> tags, array<Liq> lv, float px, int rightT) =>
+    array<int> cand = array.new<int>()
+    array<float> rs = array.new<float>()
+    int n = lv.size()
+    if vLevels and n > 0
+        for i = 0 to n - 1
+            Liq x = lv.get(i)
+            if x.state == LS_ACTIVE or x.state == LS_PENDING
+                bool key = x.kind != LK_SWING
+                float d = math.abs(px - x.price) / vu
+                bool histOk = key or bar_index - x.born <= histDepth
+                bool distOk = d <= (key ? mc.distMax * 2 : mc.distMax)
+                if histOk and distOk
+                    cand.push(i)
+                    rs.push(f_liqR(x, px))
+    int shown = 0
+    int m = cand.size()
+    if m > 0
+        array<int> ord = rs.sort_indices(order.descending)
+        int keyCap = mc.majorPerSide >= 2 ? 2 : 1
+        int majUp = 0
+        int majDn = 0
+        int minUp = 0
+        int minDn = 0
+        int keyUp = 0
+        int keyDn = 0
+        for k = 0 to m - 1
+            int oi = ord.get(k)
+            Liq x = lv.get(cand.get(oi))
+            bool up = x.side == 1
+            bool take = false
+            if mc.debug
+                take := true
+            else if x.kind != LK_SWING
+                take := up ? keyUp < keyCap : keyDn < keyCap
+                if take
+                    keyUp += up ? 1 : 0
+                    keyDn += up ? 0 : 1
+            else if x.major
+                take := up ? majUp < nMajorSide : majDn < nMajorSide
+                if take
+                    majUp += up ? 1 : 0
+                    majDn += up ? 0 : 1
+            else
+                take := up ? minUp < nMinorSide : minDn < nMinorSide
+                if take
+                    minUp += up ? 1 : 0
+                    minDn += up ? 0 : 1
+            if take
+                f_drawLevel(pl, tags, x, rs.get(oi), rightT)
+                shown += 1
+    shown
+
+// Swept / taken history with sweep markers (§14.10, §14.12)
+f_renderSwept(LinePool pl, LabelPool pb, array<Liq> lv) =>
+    int ttlS = mc.ttl == 0 ? 20 : mc.ttl * 3
+    array<int> cand = array.new<int>()
+    array<float> ends = array.new<float>()
+    int n = lv.size()
+    if (vSwept or vSweeps) and n > 0
+        for i = 0 to n - 1
+            Liq x = lv.get(i)
+            if (x.state == LS_SWEPT or x.state == LS_TAKEN) and bar_index - x.endBar <= ttlS
+                if (x.major or mc.minorPerSide > 0) and (x.state == LS_SWEPT or vSwept)
+                    cand.push(i)
+                    ends.push(float(x.endBar))
+    int shown = 0
+    int m = cand.size()
+    if m > 0
+        array<int> ord = ends.sort_indices(order.descending)
+        for k = 0 to m - 1
+            if shown < mc.sweptShow
+                Liq x = lv.get(cand.get(ord.get(k)))
+                if vSwept
+                    f_line(pl, x.t, x.price, x.endT, x.price, color.new(C_LIQ, OP_FAINT), line.style_dotted, 1)
+                if x.state == LS_SWEPT and vSweeps
+                    string sideTxt = x.side == 1 ? "BSL" : "SSL"
+                    string txt = x.major and labelLvl > 0 ? sideTxt + " ✕" : "✕"
+                    string stype = x.sweepType == SWEEP_TURTLE ? "turtle soup" : x.sweepType == SWEEP_RECLAIM ? "reclaim" : "wick"
+                    float pen = na(x.ext) ? na : math.abs(x.ext - x.price) / vu
+                    string tip = sideTxt + " swept (" + stype + ") · " + x.tag + " " + f_px(x.price) + "\npenetration " + str.tostring(pen, "0.00") + " ATR · " + f_timeStr(x.endT)
+                    f_label(pb, x.endT, x.price, txt, color.new(C_LIQ, x.major ? OP_SOLID : OP_MEDIUM), x.side == 1 ? label.style_label_down : label.style_label_up, x.major ? size.small : size.tiny, tip, x.side == 1 ? yloc.abovebar : yloc.belowbar)
+                shown += 1
+    shown
+
+// ── Structure (§13.12, AC-M14)
+f_brkTip(Brk b) =>
+    string nm = b.kind == BK_BOS ? "Break of Structure" : b.mss ? "Market Structure Shift (CHoCH + displacement + FVG)" : "Change of Character"
+    nm + (b.dir == 1 ? " ↑" : " ↓") + " · " + (b.lvl == LV_SWG ? "swing" : "internal") + (b.initial ? " · first break" : "") + "\nlevel " + f_px(b.price) + " · leg " + str.tostring(b.disp, "0.0") + " ATR\n" + f_timeStr(b.t)
+
+f_renderStruct(LinePool pl, LabelPool pb, StructState st, int maxN, bool internal) =>
+    int shown = 0
+    int n = st.breaks.size()
+    if maxN > 0 and n > 0
+        for i = n - 1 to 0
+            Brk b = st.breaks.get(i)
+            if shown < maxN and bar_index - b.bar <= histDepth and (not b.shadowed or mc.debug)
+                bool recent = shown == 0
+                color hue = f_dirColor(b.dir)
+                int tr = internal ? OP_SOFT : recent ? OP_STRONG : OP_SOFT
+                f_line(pl, b.swingT, b.price, b.t, b.price, color.new(hue, tr), internal ? line.style_dotted : line.style_dashed, 1)
+                string nm = b.kind == BK_BOS ? "BOS" : b.mss ? "MSS" : "CHoCH"
+                string txt = (internal ? "i" : "") + nm + f_arrow(b.dir)
+                if labelLvl == 0 and internal
+                    txt := f_arrow(b.dir)
+                if labelLvl >= 2 and not internal and recent
+                    txt := txt + " " + f_px(b.price)
+                if labelLvl >= 3
+                    txt := txt + " · " + str.tostring(b.disp, "0.0") + " ATR"
+                if mc.debug and i_showIds
+                    txt := "#" + str.tostring(b.id) + " " + txt
+                int mx = int((b.swingT + b.t) / 2)
+                f_label(pb, mx, b.price, txt, color.new(hue, internal ? OP_MEDIUM : recent ? OP_SOLID : OP_MEDIUM), b.dir == 1 ? label.style_label_down : label.style_label_up, internal ? size.tiny : size.small, f_brkTip(b), yloc.price)
+                shown += 1
+    shown
+
+f_renderSwings(LabelPool pb, StructState st, int maxN) =>
+    int shown = 0
+    int n = st.swings.size()
+    if maxN > 0 and n > 0
+        for i = n - 1 to 0
+            Swing s = st.swings.get(i)
+            if shown < maxN and bar_index - s.bar <= histDepth
+                string tip = s.tag + " " + f_px(s.price) + " · " + f_timeStr(s.t)
+                f_label(pb, s.t, s.price, s.tag, color.new(C_NEUT, OP_MEDIUM), s.side == 1 ? label.style_label_down : label.style_label_up, size.tiny, tip, yloc.price)
+                shown += 1
+    shown
+
+// ── Dealing range: EQ, OTE band, optional wash, Range Gauge (§14.13)
+f_renderRange(BoxPool prb, LinePool prl, LabelPool pb, array<Tag> tags, Range r, float pxLive, int rightT) =>
+    bool has = r.state > 0 and r.hi > r.lo
+    if has and vPd > 0
+        float span = r.hi - r.lo
+        float eq = (r.hi + r.lo) / 2
+        if vPd >= 3
+            f_box(prb, r.t0, rightT, r.hi, eq, color.new(C_BEAR, F_WASH), color(na), 1, line.style_solid, "", color(na))
+            f_box(prb, r.t0, rightT, eq, r.lo, color.new(C_BULL, F_WASH), color(na), 1, line.style_solid, "", color(na))
+        f_line(prl, r.t0, eq, rightT, eq, color.new(C_NEUT, OP_MEDIUM), r.state == 1 ? line.style_dashed : line.style_dotted, 1)
+        tags.push(Tag.new(eq, r.state == 1 ? "EQ~" : "EQ", color.new(C_NEUT, OP_MEDIUM), "Equilibrium " + f_px(eq) + (r.state == 1 ? " · developing range" : " · established range") + "\nrange " + f_px(r.lo) + " – " + f_px(r.hi)))
+        if vPd >= 2
+            float oTop = r.dir == 1 ? r.hi - oteLo * span : r.lo + oteHi * span
+            float oBot = r.dir == 1 ? r.hi - oteHi * span : r.lo + oteLo * span
+            float sweet = r.dir == 1 ? r.hi - 0.705 * span : r.lo + 0.705 * span
+            f_box(prb, r.t0, rightT, oTop, oBot, color.new(C_SIG, F_FAINT), color(na), 1, line.style_solid, labelLvl > 0 ? "OTE" : "", color.new(C_SIG, OP_MEDIUM))
+            f_line(prl, r.t0, sweet, rightT, sweet, color.new(C_SIG, OP_SOFT), line.style_dotted, 1)
+    if has and vGauge
+        float span = r.hi - r.lo
+        float eq = (r.hi + r.lo) / 2
+        // two bars right of the last candle (§14.13), clear of the right-edge tags
+        int gx = rightT - 3 * barMs
+        int gx2 = gx + barMs
+        float oTop = r.dir == 1 ? r.hi - oteLo * span : r.lo + oteHi * span
+        float oBot = r.dir == 1 ? r.hi - oteHi * span : r.lo + oteLo * span
+        f_line(prl, gx, r.lo, gx, r.hi, color.new(C_NEUT, OP_MEDIUM), line.style_solid, 1)
+        f_line(prl, gx, oBot, gx, oTop, color.new(C_SIG, OP_STRONG), line.style_solid, 2)
+        f_line(prl, gx, eq, gx2, eq, color.new(C_NEUT, OP_MEDIUM), line.style_solid, 1)
+        float pdv = (pxLive - r.lo) / span
+        string loc = pdv > 0.5 + EQ_BAND ? "PREMIUM" : pdv < 0.5 - EQ_BAND ? "DISCOUNT" : "EQUILIBRIUM"
+        f_label(pb, gx, math.max(r.lo, math.min(r.hi, pxLive)), "◀ " + str.tostring(math.round(pdv * 100)) + "%", C_TEXT, label.style_label_left, size.tiny, "Price in dealing range: " + loc + "\n0% = " + f_px(r.lo) + " · 100% = " + f_px(r.hi), yloc.price)
+    has
+
+// ── Sessions: range boxes for the current and recent sessions (§14.14)
+f_renderSessions(BoxPool pw, array<SessBox> hist, Sess sa, Sess sl, Sess sn) =>
+    int shown = 0
+    if vSessN > 0
+        for s in array.from(sa, sl, sn)
+            if s.on
+                f_box(pw, s.t0, time, s.hi, s.lo, color.new(C_NEUT, F_WASH), color.new(C_NEUT, OP_SOFT), 1, line.style_dotted, labelLvl > 0 ? s.code : "", color.new(C_NEUT, OP_MEDIUM))
+        int n = hist.size()
+        if n > 0
+            for i = n - 1 to 0
+                if shown < vSessN - 1
+                    SessBox b = hist.get(i)
+                    f_box(pw, b.t0, b.t1, b.hi, b.lo, color.new(C_NEUT, F_GHOST), color.new(C_NEUT, OP_FAINT), 1, line.style_dotted, labelLvl > 0 ? b.code : "", color.new(C_NEUT, OP_SOFT))
+                    shown += 1
+    shown

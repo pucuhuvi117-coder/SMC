@@ -1,0 +1,160 @@
+// ═══ 90 · MAIN PIPELINE ═════════════════════════════════════════════════════════
+// Fixed engine order per bar (docs §4.5): Data → Structure → Liquidity → Zones → Context.
+// Logic runs only on confirmed bars; visuals run only on the last bar.
+
+// ── Logical state (registry)
+var Core core = Core.new(barEvents = array.new<Event>(), history = array.new<Event>(), histCap = mc.debug ? 1000 : 300)
+var StructState stI = f_newStruct(LV_INT, inLen)
+var StructState stS = f_newStruct(LV_SWG, swLen)
+var array<Liq> liqs = array.new<Liq>()
+var array<Zone> zones = array.new<Zone>()
+var Range rng = Range.new()
+var Sess sAsia = Sess.new("Asia", "ASIA", "AH", "AL", specAsia)
+var Sess sLon = Sess.new("London killzone", "LON KZ", "LOH", "LOL", specLon)
+var Sess sNy = Sess.new("New York AM killzone", "NY KZ", "NYH", "NYL", specNy)
+var array<SessBox> sessHist = array.new<SessBox>()
+var Ctx ctx = Ctx.new()
+var float confClose = na
+// How long finished objects stay in the registry (display TTL + margin)
+int keepBars = math.max(mc.ttl * 3, 60)
+
+if barstate.isconfirmed
+    core.barEvents.clear()
+    confClose := close
+    if not core.warm and bar_index >= warmBars
+        core.warm := true
+        f_emit(core, EV_SYS_WARM, 0, close, na, na, 4)
+    // Data-level events
+    if fvgUp
+        core.lastFvgUpBar := bar_index
+    if fvgDn
+        core.lastFvgDnBar := bar_index
+    if dispFvgUp
+        Event du = f_emit(core, EV_DISP, 1, close, na, na, 3, body[1] / vu, na, 1)
+        core.lastDispUpId := du.id
+        core.lastDispUpBar := bar_index
+    if dispFvgDn
+        Event dd = f_emit(core, EV_DISP, -1, close, na, na, 3, body[1] / vu, na, 1)
+        core.lastDispDnId := dd.id
+        core.lastDispDnBar := bar_index
+    // Sessions (feed session high/low key levels)
+    if sesOk
+        f_sessStep(core, sAsia, inAsia, liqs, sessHist)
+        f_sessStep(core, sLon, inLon, liqs, sessHist)
+        f_sessStep(core, sNy, inNy, liqs, sessHist)
+    // Structure: internal, then swing
+    f_structStep(core, stI, phI, plI)
+    f_structStep(core, stS, phS, plS)
+    Brk iUp = stI.newUp
+    Brk iDn = stI.newDn
+    if not na(iUp) and not na(stS.newUp)
+        iUp.shadowed := true
+    if not na(iDn) and not na(stS.newDn)
+        iDn.shadowed := true
+    int chochInt = 0
+    if not na(iUp)
+        chochInt := iUp.kind == BK_CHOCH ? 1 : 0
+    if not na(iDn)
+        chochInt := iDn.kind == BK_CHOCH ? -1 : chochInt
+    // Liquidity: update existing levels, then add new ones (new levels are not checked on their birth bar)
+    f_liqStep(core, liqs, keepBars, chochInt)
+    if not na(stS.newHigh)
+        f_liqAddSwing(core, liqs, stS.newHigh)
+    if not na(stS.newLow)
+        f_liqAddSwing(core, liqs, stS.newLow)
+    if keyDayOk and newDay
+        f_liqAddKey(core, liqs, LK_PDH, 1, pdH, pdT, "PDH")
+        f_liqAddKey(core, liqs, LK_PDL, -1, pdL, pdT, "PDL")
+    if keyWeekOk and newWeek
+        f_liqAddKey(core, liqs, LK_PWH, 1, pwH, pwT, "PWH")
+        f_liqAddKey(core, liqs, LK_PWL, -1, pwL, pwT, "PWL")
+    // Zones: lifecycle of existing zones, then births on this bar
+    f_zoneStep(core, zones, keepBars)
+    if fvgUp
+        f_fvgNew(core, zones, 1)
+    if fvgDn
+        f_fvgNew(core, zones, -1)
+    if not na(stS.newUp)
+        f_obFromBreak(core, zones, stS.newUp, stS)
+    if not na(stS.newDn)
+        f_obFromBreak(core, zones, stS.newDn, stS)
+    if i_obInternal
+        if not na(iUp)
+            if not iUp.shadowed
+                f_obFromBreak(core, zones, iUp, stS)
+        if not na(iDn)
+            if not iDn.shadowed
+                f_obFromBreak(core, zones, iDn, stS)
+    // Context
+    f_rangeStep(core, rng, stS)
+    float pdNow = f_pdStep(core, rng)
+    f_ctxBuild(ctx, stS, stI, rng, pdNow, liqs, sAsia, sLon, sNy)
+
+// ── Visual pools (created once; creation order = z-order, §13.13)
+nWash = mc.sessions + 4
+nRngBox = 4
+nZone = mc.debug ? 160 : mc.zonesPerSide * 8 + 4
+nRngLine = 8
+nMid = nZone
+nLvl = mc.debug ? 130 : (mc.majorPerSide + mc.minorPerSide + 2) * 2 + mc.sweptShow + 6
+nStr = mc.structEvents + mc.internalEvents + 2
+nLab = mc.debug ? 280 : mc.structEvents + mc.internalEvents + mc.sweptShow + (mc.swingLabels ? 30 : 0) + 30
+var BoxPool pWash = BoxPool.new(array.new<box>())
+var BoxPool pRngBox = BoxPool.new(array.new<box>())
+var BoxPool pZone = BoxPool.new(array.new<box>())
+var LinePool pRngLine = LinePool.new(array.new<line>())
+var LinePool pMid = LinePool.new(array.new<line>())
+var LinePool pLvl = LinePool.new(array.new<line>())
+var LinePool pStr = LinePool.new(array.new<line>())
+var LabelPool pLab = LabelPool.new(array.new<label>())
+if barstate.isfirst
+    f_fillBoxPool(pWash, nWash)
+    f_fillBoxPool(pRngBox, nRngBox)
+    f_fillBoxPool(pZone, nZone)
+    f_fillLinePool(pRngLine, nRngLine)
+    f_fillLinePool(pMid, nMid)
+    f_fillLinePool(pLvl, nLvl)
+    f_fillLinePool(pStr, nStr)
+    f_fillLabelPool(pLab, nLab)
+
+// ── Panels
+var table tRibbon = vRibbon ? table.new(f_pos(i_ribbonPos), 5, 1, bgcolor = color.new(C_PANEL, F_PANEL), frame_color = C_PBORDER, frame_width = 1, border_color = C_PBORDER, border_width = 1) : na
+var table tDash = vDash ? table.new(f_pos(i_dashPos), 2, 16, bgcolor = color.new(C_PANEL, F_PANEL), frame_color = C_PBORDER, frame_width = 1, border_width = 0) : na
+var table tDebug = mc.debug and i_debugTable ? table.new(position.middle_left, 2, 12, bgcolor = color.new(C_PANEL, F_PANEL), frame_color = C_PBORDER, frame_width = 1, border_width = 0) : na
+
+// ── Render pass (last bar only; priority order decides who gets the label budget)
+if barstate.islast
+    float px = na(confClose) ? close : confClose
+    int rightT = time + 5 * barMs
+    pWash.used := 0
+    pRngBox.used := 0
+    pZone.used := 0
+    pRngLine.used := 0
+    pMid.used := 0
+    pLvl.used := 0
+    pStr.used := 0
+    pLab.used := 0
+    array<Tag> tags = array.new<Tag>()
+    f_renderSessions(pWash, sessHist, sAsia, sLon, sNy)
+    f_renderZones(pZone, pMid, zones, px, rightT)
+    f_renderLevels(pLvl, tags, liqs, px, rightT)
+    if vSwingStruct
+        f_renderStruct(pStr, pLab, stS, mc.structEvents, false)
+    f_renderSwept(pLvl, pLab, liqs)
+    f_renderRange(pRngBox, pRngLine, pLab, tags, rng, close, rightT)
+    f_drawTags(pLab, tags, rightT + barMs)
+    if vInternal
+        f_renderStruct(pStr, pLab, stI, mc.internalEvents, true)
+    if vSwingLabels
+        f_renderSwings(pLab, stS, 30)
+    f_finishBoxes(pWash)
+    f_finishBoxes(pRngBox)
+    f_finishBoxes(pZone)
+    f_finishLines(pRngLine)
+    f_finishLines(pMid)
+    f_finishLines(pLvl)
+    f_finishLines(pStr)
+    f_finishLabels(pLab)
+    f_ribbon(tRibbon, ctx, core)
+    f_dashboard(tDash, ctx, core, stI, rng)
+    f_debugTable(tDebug, core, zones, liqs, pZone, pWash, pRngBox, pMid, pLvl, pStr, pRngLine, pLab)

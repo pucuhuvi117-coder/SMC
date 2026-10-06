@@ -1,0 +1,28 @@
+// ═══ 95 · ALERTS ════════════════════════════════════════════════════════════════
+// Static alertcondition() set (docs §12.7). Conditions are read from the event bus of the
+// confirmed bar — the alert engine never recomputes detector logic (A-03). No alerts
+// during warm-up (AC-08). The batched JSON webhook alert() arrives with P9.
+bool alertOk = barstate.isconfirmed and core.warm
+bool aBosUp = alertOk and f_evFlag(core, EV_BOS, 1, LV_SWG)
+bool aBosDn = alertOk and f_evFlag(core, EV_BOS, -1, LV_SWG)
+bool aChochUp = alertOk and f_evFlag(core, EV_CHOCH, 1, LV_SWG)
+bool aChochDn = alertOk and f_evFlag(core, EV_CHOCH, -1, LV_SWG)
+bool aSweepUp = alertOk and f_evFlag(core, EV_LIQ_SWEPT, 1, na)
+bool aSweepDn = alertOk and f_evFlag(core, EV_LIQ_SWEPT, -1, na)
+bool aObTouch = alertOk and f_evFlag(core, EV_ZONE_TOUCHED, 0, ZK_OB)
+bool aFvgFill = alertOk and f_evFlag(core, EV_ZONE_FILLED, 0, ZK_FVG)
+bool aSession = alertOk and f_evFlag(core, EV_SESSION_START, 0, na)
+bool aPdEnter = alertOk and f_evFlag(core, EV_PD_ENTER, 0, na)
+bool aOteEnter = alertOk and f_evFlag(core, EV_OTE_ENTER, 0, na)
+
+alertcondition(aBosUp, "BOS ↑ (swing)", "SMC Pro · {{ticker}} {{interval}} · BOS ↑ · close {{close}}")
+alertcondition(aBosDn, "BOS ↓ (swing)", "SMC Pro · {{ticker}} {{interval}} · BOS ↓ · close {{close}}")
+alertcondition(aChochUp, "CHoCH ↑ (swing)", "SMC Pro · {{ticker}} {{interval}} · CHoCH ↑ · close {{close}}")
+alertcondition(aChochDn, "CHoCH ↓ (swing)", "SMC Pro · {{ticker}} {{interval}} · CHoCH ↓ · close {{close}}")
+alertcondition(aSweepUp, "Sweep ↑ (SSL swept)", "SMC Pro · {{ticker}} {{interval}} · SSL swept · close {{close}}")
+alertcondition(aSweepDn, "Sweep ↓ (BSL swept)", "SMC Pro · {{ticker}} {{interval}} · BSL swept · close {{close}}")
+alertcondition(aObTouch, "Order block touch", "SMC Pro · {{ticker}} {{interval}} · order block touched · close {{close}}")
+alertcondition(aFvgFill, "FVG filled", "SMC Pro · {{ticker}} {{interval}} · fair value gap filled · close {{close}}")
+alertcondition(aSession, "Session / killzone start", "SMC Pro · {{ticker}} {{interval}} · session or killzone started")
+alertcondition(aPdEnter, "Premium / discount change", "SMC Pro · {{ticker}} {{interval}} · price changed premium/discount zone · close {{close}}")
+alertcondition(aOteEnter, "OTE entered", "SMC Pro · {{ticker}} {{interval}} · price entered the OTE band · close {{close}}")

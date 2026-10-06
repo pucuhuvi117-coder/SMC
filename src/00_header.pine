@@ -1,0 +1,7 @@
+//@version=6
+// ═══════════════════════════════════════════════════════════════════════════════
+//  SMC Visualizer Pro · build {{VERSION}} · {{DATE}}
+//  Generated from /src by build/build.py. Do not edit dist/ by hand.
+//  Architecture: docs/02-architecture.md · Detectors: docs/appendix-a-detection-spec.md
+// ═══════════════════════════════════════════════════════════════════════════════
+indicator("SMC Visualizer Pro", shorttitle = "SMC Pro", overlay = true, max_boxes_count = 500, max_lines_count = 500, max_labels_count = 500)

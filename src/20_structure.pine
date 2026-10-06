@@ -1,0 +1,190 @@
+// ═══ 20 · STRUCTURE ENGINE ══════════════════════════════════════════════════════
+// Swings, HH/HL/LH/LL, BOS / CHoCH / MSS, protected levels (Appendix A.2–A.5, §7.1).
+// One StructState per level (internal, swing). Runs once per confirmed bar.
+
+f_newStruct(int lvl, int len) =>
+    StructState.new(lvl = lvl, len = len, swings = array.new<Swing>(), breaks = array.new<Brk>())
+
+// Register a confirmed pivot and classify it against the previous pivot of the same side (A.3)
+f_makeSwing(Core c, StructState st, int side, float price) =>
+    Swing prev = side == 1 ? st.lastHigh : st.lastLow
+    float tol = i_eqTol * vu
+    string tg = side == 1 ? "H" : "L"
+    bool eq = false
+    if not na(prev)
+        float d = price - prev.price
+        if math.abs(d) <= tol
+            eq := true
+            tg := side == 1 ? "EQH" : "EQL"
+        else
+            tg := side == 1 ? (d > 0 ? "HH" : "LH") : (d > 0 ? "HL" : "LL")
+    Swing sw = Swing.new(id = f_nextId(c), side = side, lvl = st.lvl, price = price, bar = bar_index - st.len, t = time[st.len], confirmBar = bar_index, tag = tg, eq = eq, broken = false)
+    st.swings.push(sw)
+    if st.swings.size() > 200
+        st.swings.shift()
+    if side == 1
+        st.lastHigh := sw
+    else
+        st.lastLow := sw
+    f_emit(c, EV_SWING, side, price, sw.id, na, 3, st.lvl, na, na, tg)
+    sw
+
+// Rebuild the up-leg tracker from the new reference high: origin = lowest low since the pivot
+f_resetUpLeg(StructState st) =>
+    int k0 = bar_index - st.refHigh.bar
+    float mn = na
+    int mb = na
+    int mt = na
+    for k = k0 to 0
+        if na(mn) or low[k] < mn
+            mn := low[k]
+            mb := bar_index - k
+            mt := time[k]
+    float lh = na
+    int fd = na
+    int k1 = bar_index - mb
+    for k = k1 to 0
+        lh := na(lh) ? high[k] : math.max(lh, high[k])
+        if k < k1 and na(fd) and isDispUp[k]
+            fd := bar_index - k
+    st.upOrigLow := mn
+    st.upOrigBar := mb
+    st.upOrigT := mt
+    st.upLegHigh := lh
+    st.upFirstDisp := fd
+    true
+
+// Mirror: down-leg origin = highest high since the reference low
+f_resetDnLeg(StructState st) =>
+    int k0 = bar_index - st.refLow.bar
+    float mx = na
+    int mb = na
+    int mt = na
+    for k = k0 to 0
+        if na(mx) or high[k] > mx
+            mx := high[k]
+            mb := bar_index - k
+            mt := time[k]
+    float ll = na
+    int fd = na
+    int k1 = bar_index - mb
+    for k = k1 to 0
+        ll := na(ll) ? low[k] : math.min(ll, low[k])
+        if k < k1 and na(fd) and isDispDn[k]
+            fd := bar_index - k
+    st.dnOrigHigh := mx
+    st.dnOrigBar := mb
+    st.dnOrigT := mt
+    st.dnLegLow := ll
+    st.dnFirstDisp := fd
+    true
+
+// Incremental leg tracking on every confirmed bar
+f_trackLegs(StructState st) =>
+    if not na(st.upOrigLow)
+        if low < st.upOrigLow
+            st.upOrigLow := low
+            st.upOrigBar := bar_index
+            st.upOrigT := time
+            st.upLegHigh := high
+            st.upFirstDisp := na
+        else
+            st.upLegHigh := math.max(st.upLegHigh, high)
+            if na(st.upFirstDisp) and isDispUp
+                st.upFirstDisp := bar_index
+    if not na(st.dnOrigHigh)
+        if high > st.dnOrigHigh
+            st.dnOrigHigh := high
+            st.dnOrigBar := bar_index
+            st.dnOrigT := time
+            st.dnLegLow := low
+            st.dnFirstDisp := na
+        else
+            st.dnLegLow := math.min(st.dnLegLow, low)
+            if na(st.dnFirstDisp) and isDispDn
+                st.dnFirstDisp := bar_index
+    true
+
+f_recordBreak(StructState st, int dir, int kind) =>
+    st.prevBrkBar := st.lastBrkBar
+    st.prevBrkDir := st.lastBrkDir
+    st.prevBrkKind := st.lastBrkKind
+    st.lastBrkBar := bar_index
+    st.lastBrkDir := dir
+    st.lastBrkKind := kind
+    true
+
+// Bullish break of the reference high (A.4)
+f_breakUp(Core c, StructState st) =>
+    Swing rh = st.refHigh
+    int kind = st.trend == -1 ? BK_CHOCH : BK_BOS
+    bool initial = st.trend == 0
+    float legHi = math.max(st.upLegHigh, high)
+    float disp = (legHi - st.upOrigLow) / vu
+    bool hasFvg = not na(c.lastFvgUpBar) and c.lastFvgUpBar >= st.upOrigBar + 2
+    bool mss = kind == BK_CHOCH and disp >= i_kLeg and hasFvg
+    int cause = not na(c.lastDispUpBar) and c.lastDispUpBar >= st.upOrigBar ? c.lastDispUpId : na
+    Brk b = Brk.new(id = f_nextId(c), kind = kind, dir = 1, lvl = st.lvl, price = rh.price, swingBar = rh.bar, swingT = rh.t, bar = bar_index, t = time, legExt0 = st.upOrigLow, legExt1 = legHi, origBar = st.upOrigBar, origT = st.upOrigT, firstDisp = st.upFirstDisp, disp = disp, mss = mss, initial = initial)
+    rh.broken := true
+    f_recordBreak(st, 1, kind)
+    st.trend := 1
+    st.protLow := st.upOrigLow
+    st.breaks.push(b)
+    if st.breaks.size() > 300
+        st.breaks.shift()
+    Event e = f_emit(c, kind == BK_BOS ? EV_BOS : EV_CHOCH, 1, rh.price, b.id, cause, st.lvl == LV_SWG ? 1 : 3, st.lvl, disp, mss ? 1.0 : 0.0, initial ? "initial" : "")
+    b.evId := e.id
+    st.newUp := b
+    b
+
+// Bearish break of the reference low (mirror of f_breakUp)
+f_breakDn(Core c, StructState st) =>
+    Swing rl = st.refLow
+    int kind = st.trend == 1 ? BK_CHOCH : BK_BOS
+    bool initial = st.trend == 0
+    float legLo = math.min(st.dnLegLow, low)
+    float disp = (st.dnOrigHigh - legLo) / vu
+    bool hasFvg = not na(c.lastFvgDnBar) and c.lastFvgDnBar >= st.dnOrigBar + 2
+    bool mss = kind == BK_CHOCH and disp >= i_kLeg and hasFvg
+    int cause = not na(c.lastDispDnBar) and c.lastDispDnBar >= st.dnOrigBar ? c.lastDispDnId : na
+    Brk b = Brk.new(id = f_nextId(c), kind = kind, dir = -1, lvl = st.lvl, price = rl.price, swingBar = rl.bar, swingT = rl.t, bar = bar_index, t = time, legExt0 = st.dnOrigHigh, legExt1 = legLo, origBar = st.dnOrigBar, origT = st.dnOrigT, firstDisp = st.dnFirstDisp, disp = disp, mss = mss, initial = initial)
+    rl.broken := true
+    f_recordBreak(st, -1, kind)
+    st.trend := -1
+    st.protHigh := st.dnOrigHigh
+    st.breaks.push(b)
+    if st.breaks.size() > 300
+        st.breaks.shift()
+    Event e = f_emit(c, kind == BK_BOS ? EV_BOS : EV_CHOCH, -1, rl.price, b.id, cause, st.lvl == LV_SWG ? 1 : 3, st.lvl, disp, mss ? 1.0 : 0.0, initial ? "initial" : "")
+    b.evId := e.id
+    st.newDn := b
+    b
+
+// One confirmed-bar step for a structure level
+f_structStep(Core c, StructState st, float ph, float pl) =>
+    st.newUp := na
+    st.newDn := na
+    st.newHigh := na
+    st.newLow := na
+    f_trackLegs(st)
+    if not na(ph)
+        Swing swH = f_makeSwing(c, st, 1, ph)
+        st.refHigh := swH
+        st.newHigh := swH
+        f_resetUpLeg(st)
+    if not na(pl)
+        Swing swL = f_makeSwing(c, st, -1, pl)
+        st.refLow := swL
+        st.newLow := swL
+        f_resetDnLeg(st)
+    float srcUp = i_brk == BreakSrc.wick ? high : close
+    float srcDn = i_brk == BreakSrc.wick ? low : close
+    Swing rh = st.refHigh
+    if not na(rh)
+        if not rh.broken and srcUp > rh.price
+            f_breakUp(c, st)
+    Swing rl = st.refLow
+    if not na(rl)
+        if not rl.broken and srcDn < rl.price
+            f_breakDn(c, st)
+    true

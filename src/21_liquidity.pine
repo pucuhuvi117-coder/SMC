@@ -1,0 +1,136 @@
+// ═══ 21 · LIQUIDITY ENGINE ══════════════════════════════════════════════════════
+// Levels from swing pivots, equal-level clusters, key levels and the sweep/taken
+// automaton (Appendix A.12–A.13, §7.2). Session tracking feeds session high/low levels.
+
+// New swing pivot → merge into an equal-level cluster or open a new level
+f_liqAddSwing(Core c, array<Liq> lv, Swing sw) =>
+    float tol = i_liqTol * vu
+    bool merged = false
+    int n = lv.size()
+    if n > 0
+        for i = n - 1 to 0
+            Liq x = lv.get(i)
+            if x.side == sw.side and x.kind == LK_SWING and x.state == LS_ACTIVE and math.abs(x.price - sw.price) <= tol and sw.bar - x.lastBar <= i_eqMaxBars
+                x.touches := x.touches + 1
+                x.price := sw.side == 1 ? math.max(x.price, sw.price) : math.min(x.price, sw.price)
+                x.lastBar := sw.bar
+                x.tag := sw.side == 1 ? "EQH" : "EQL"
+                if x.touches == 2
+                    f_emit(c, EV_LIQ_EQ, sw.side, x.price, x.id, na, 2, x.touches, na, na, x.tag)
+                merged := true
+                break
+    if not merged
+        Liq nl = Liq.new(id = f_nextId(c), side = sw.side, kind = LK_SWING, tf = TF_CHART, price = sw.price, bar = sw.bar, t = sw.t, born = bar_index, lastBar = sw.bar, touches = 1, major = false, state = LS_ACTIVE, lvl = sw.lvl, tag = sw.side == 1 ? "BSL" : "SSL")
+        lv.push(nl)
+        f_emit(c, EV_LIQ_NEW, sw.side, sw.price, nl.id, na, 3, LK_SWING, na, na, nl.tag)
+    merged
+
+// Key level (PDH/PDL/PWH/PWL/session H/L). A new level with the same tag retires the old one.
+f_liqAddKey(Core c, array<Liq> lv, int kind, int side, float price, int t0, string tag) =>
+    int n = lv.size()
+    if n > 0
+        for i = n - 1 to 0
+            Liq x = lv.get(i)
+            if x.kind == kind and x.tag == tag and (x.state == LS_ACTIVE or x.state == LS_PENDING)
+                x.state := LS_EXPIRED
+                x.endBar := bar_index
+                x.endT := time
+    Liq nl = Liq.new(id = f_nextId(c), side = side, kind = kind, tf = TF_CHART, price = price, bar = bar_index, t = t0, born = bar_index, lastBar = bar_index, touches = 1, major = true, state = LS_ACTIVE, lvl = -1, tag = tag)
+    lv.push(nl)
+    f_emit(c, EV_KEY_SET, side, price, nl.id, na, 3, kind, na, na, tag)
+    nl
+
+f_liqSwept(Core c, Liq x, float extreme, int stype) =>
+    x.state := LS_SWEPT
+    x.ext := extreme
+    x.sweepType := stype
+    x.endBar := bar_index
+    x.endT := time
+    float pen = math.abs(extreme - x.price) / vu
+    string sideTxt = x.side == 1 ? "BSL" : "SSL"
+    f_emit(c, EV_LIQ_SWEPT, -x.side, x.price, x.id, na, x.major ? 1 : 2, pen, stype, x.major ? 1.0 : 0.0, sideTxt + " " + x.tag)
+
+f_liqTaken(Core c, Liq x, float pen) =>
+    x.state := LS_TAKEN
+    x.endBar := bar_index
+    x.endT := time
+    string sideTxt = x.side == 1 ? "BSL" : "SSL"
+    f_emit(c, EV_LIQ_TAKEN, x.side, x.price, x.id, na, 2, pen / vu, na, x.major ? 1.0 : 0.0, sideTxt + " " + x.tag)
+
+// Confirmed-bar step: sweep / taken checks, major flag, expiry, turtle soup, cleanup (A.13)
+f_liqStep(Core c, array<Liq> lv, int keep, int chochIntDir) =>
+    int n = lv.size()
+    float maxPen = i_maxSweepPen * vu
+    float tb = syminfo.mintick
+    if n > 0
+        for i = n - 1 to 0
+            Liq x = lv.get(i)
+            bool live = x.state == LS_ACTIVE or x.state == LS_PENDING
+            if live
+                if x.born < bar_index
+                    int s = x.side
+                    float ext = s == 1 ? high - x.price : x.price - low
+                    bool beyondClose = s == 1 ? close > x.price : close < x.price
+                    if x.state == LS_ACTIVE
+                        if ext > tb
+                            if ext > maxPen
+                                f_liqTaken(c, x, ext)
+                            else if not beyondClose
+                                f_liqSwept(c, x, s == 1 ? high : low, SWEEP_WICK)
+                            else
+                                x.state := LS_PENDING
+                                x.pendSince := bar_index
+                                x.ext := s == 1 ? high : low
+                    else
+                        x.ext := s == 1 ? math.max(x.ext, high) : math.min(x.ext, low)
+                        float pen = s == 1 ? x.ext - x.price : x.price - x.ext
+                        if pen > maxPen
+                            f_liqTaken(c, x, pen)
+                        else if not beyondClose
+                            f_liqSwept(c, x, x.ext, SWEEP_RECLAIM)
+                        else if bar_index - x.pendSince >= i_reclaimBars
+                            f_liqTaken(c, x, pen)
+                if x.state == LS_ACTIVE or x.state == LS_PENDING
+                    x.major := x.kind != LK_SWING or x.touches >= 2 or bar_index - x.bar >= i_oldAge
+                    if math.abs(close - x.price) > LIQ_MAX_DIST * vu or bar_index - x.bar > LIQ_MAX_AGE
+                        x.state := LS_EXPIRED
+                        x.endBar := bar_index
+                        x.endT := time
+                        f_emit(c, EV_LIQ_EXPIRED, x.side, x.price, x.id, na, 4)
+            else
+                if x.state == LS_SWEPT and chochIntDir == -x.side and x.sweepType < SWEEP_TURTLE and bar_index - x.endBar <= i_tsWindow and x.endBar - x.bar >= i_tsMinAge
+                    x.sweepType := SWEEP_TURTLE
+                if bar_index - x.endBar > keep
+                    lv.remove(i)
+    if lv.size() > LIQ_CAP
+        lv.shift()
+    true
+
+// Session tracking: start / running high-low / end → history box + key levels (A.15)
+f_sessEndT(string spec, string tz) =>
+    int eh = int(str.tonumber(str.substring(spec, 5, 7)))
+    int em = int(str.tonumber(str.substring(spec, 7, 9)))
+    int e = timestamp(tz, year(time, tz), month(time, tz), dayofmonth(time, tz), eh, em)
+    e <= time ? e + 86400000 : e
+
+f_sessStep(Core c, Sess s, bool inNow, array<Liq> lv, array<SessBox> hist) =>
+    if inNow and not s.on
+        s.on := true
+        s.hi := high
+        s.lo := low
+        s.t0 := time
+        s.endT := f_sessEndT(s.spec, sesTz)
+        f_emit(c, EV_SESSION_START, 0, open, na, na, 3, na, na, na, s.code)
+    else if inNow and s.on
+        s.hi := math.max(s.hi, high)
+        s.lo := math.min(s.lo, low)
+    else if not inNow and s.on
+        s.on := false
+        hist.push(SessBox.new(s.code, s.hi, s.lo, s.t0, time))
+        if hist.size() > 40
+            hist.shift()
+        f_emit(c, EV_SESSION_END, 0, close, na, na, 3, s.hi, s.lo, na, s.code)
+        if i_keySess
+            f_liqAddKey(c, lv, LK_SESS, 1, s.hi, s.t0, s.tagHi)
+            f_liqAddKey(c, lv, LK_SESS, -1, s.lo, s.t0, s.tagLo)
+    true

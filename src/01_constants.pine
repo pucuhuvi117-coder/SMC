@@ -1,0 +1,91 @@
+// ═══ 01 · CONSTANTS ═════════════════════════════════════════════════════════════
+BUILD = "{{VERSION}}"
+
+// Timeframe slots (docs §8.2). v0.1 computes the chart TF only; HTF arrives with the HTF Feed (P5).
+TF_CHART = 0
+
+// Structure levels and break kinds (Appendix A.4)
+LV_INT = 0
+LV_SWG = 1
+BK_BOS = 1
+BK_CHOCH = 2
+
+// Event types (docs/03-domain-models.md §6.4)
+EV_SWING = 1
+EV_BOS = 2
+EV_CHOCH = 3
+EV_DISP = 4
+EV_LIQ_NEW = 10
+EV_LIQ_EQ = 11
+EV_LIQ_SWEPT = 12
+EV_LIQ_TAKEN = 13
+EV_LIQ_EXPIRED = 14
+EV_KEY_SET = 15
+EV_ZONE_NEW = 20
+EV_ZONE_TOUCHED = 21
+EV_ZONE_MITIGATED = 22
+EV_ZONE_CE = 23
+EV_ZONE_FILLED = 24
+EV_ZONE_BROKEN = 25
+EV_ZONE_CONVERTED = 26
+EV_ZONE_EXPIRED = 27
+EV_RANGE_NEW = 30
+EV_PD_ENTER = 31
+EV_OTE_ENTER = 32
+EV_SESSION_START = 33
+EV_SESSION_END = 34
+EV_SYS_WARM = 90
+EV_SYS_WARN = 91
+
+// Liquidity kinds and states (§7.2, A.12–A.13)
+LK_SWING = 1
+LK_PDH = 3
+LK_PDL = 4
+LK_PWH = 5
+LK_PWL = 6
+LK_SESS = 7
+LS_ACTIVE = 1
+LS_PENDING = 2
+LS_SWEPT = 3
+LS_TAKEN = 4
+LS_EXPIRED = 5
+SWEEP_WICK = 1
+SWEEP_RECLAIM = 2
+SWEEP_TURTLE = 3
+
+// Zone kinds and states (§7.3–7.4). States below ZS_FILLED are live.
+ZK_OB = 1
+ZK_BB = 2
+ZK_MB = 3
+ZK_FVG = 5
+ZK_IFVG = 6
+ZS_FRESH = 1
+ZS_TOUCHED = 2
+ZS_MITIGATED = 3
+ZS_PARTIAL = 4
+ZS_CE = 5
+ZS_FILLED = 6
+ZS_CONVERTED = 8
+ZS_INVALID = 9
+ZS_EXPIRED = 10
+
+// Market bias codes (A.16)
+MK_NONE = 0
+MK_BULL = 1
+MK_BEAR = -1
+MK_RANGE = 2
+
+// Fixed detector parameters (Appendix A.19)
+OB_NPRE = 3
+OB_MAX_SEARCH = 30
+OB_MAX_AGE = 500
+FVG_MAX_AGE = 300
+ZONE_MAX_DIST = 20.0
+LIQ_MAX_DIST = 20.0
+LIQ_MAX_AGE = 1000
+EQ_BAND = 0.02
+ZONE_CAP = 250
+LIQ_CAP = 150
+// History buffer for dynamic offsets and the guard that keeps every lookback below it
+MAXBACK = 600
+MAXBACK_GUARD = 550

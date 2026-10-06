@@ -285,38 +285,34 @@ request.security(tickerid, HTF, [o,h,l,c,v,t,atr][1], lookahead_on)   ← под
 Pine не поддерживает `include`. Публикуемый invite-only скрипт с ядром в публичной библиотеке раскрыл бы IP (P-12). Решение — **модульные исходники + сборка в монолит** (ADR-04).
 
 ```
-/src
-  00_header.pine          — объявление indicator(), лимиты, behind_chart
-  01_config.pine          — inputs, профили, пресеты, валидация, авто-HTF
-  02_types.pine           — enums, UDT (логические), константы
-  03_registry_bus.pine    — Registry, Event Bus, ID/keys
-  10_data_engine.pine
-  11_htf_feed.pine
-  20_structure_engine.pine
-  21_liquidity_engine.pine
-  22_zone_engine.pine
-  23_context_engine.pine
-  30_setup_engine.pine
-  31_confluence.pine
-  32_signal_engine.pine
-  40_risk_tradeplan.pine
-  41_execution_adapter.pine  — no-op в indicator-сборке
-  50_alerts_webhook.pine
-  51_analytics_logger.pine
-  60_visual_tokens.pine   — палитры, opacity, размеры
-  61_visual_priority.pine
-  62_visual_clutter.pine
-  63_visual_labels.pine
-  64_visual_renderers.pine
-  65_setup_composer.pine
-  66_dashboard_ribbon.pine
-  99_main.pine            — конвейер §4.5
+/src                       (фактическая раскладка — DEVELOPMENT.md)
+  00_header.pine          — //@version=6, объявление indicator(), лимиты
+  01_constants.pine       — коды событий, видов, состояний; параметры A.19
+  02_types.pine           — enums, UDT (логические и пулы отрисовки)
+  03_inputs.pine          — inputs, профили, пресеты, валидация, потолки режимов
+  04_core.pine            — ID, Event Bus (f_emit), хелперы
+  10_data.pine            — Data Engine: ATR, displacement, гэпы, FVG-паттерны, пивоты, сессии, D/W-фиды
+  11_htf_feed.pine        — (P5)
+  20_structure.pine
+  21_liquidity.pine       — уровни, свипы, сессии и key levels
+  22_zones.pine
+  23_context.pine
+  30_setup_engine.pine    — (P7) + 31_confluence, 32_signal, 40_risk_tradeplan, 41_execution_adapter
+  50_webhook.pine         — (P9) батч-alert() JSON
+  60_visual_tokens.pine   — палитры, opacity, тема
+  61_visual_priority.pine — Relevance Score
+  62_visual_render.pine   — пулы, отбор (anti-clutter), рендереры
+  65_setup_composer.pine  — (P8)
+  66_panels.pine          — Ribbon, Dashboard, Debug-таблица
+  90_main.pine            — конвейер §4.5, пулы, проход рендера
+  95_alerts.pine          — alertcondition() из шины событий
 /build
-  targets.(yml|json)      — indicator | strategy (v2): список модулей и заголовок
-  build script            — конкатенация, подстановка версии, проверка размера
+  targets.json            — indicator | strategy (v2): список модулей
+  build.py                — конкатенация, версия, отчёт о размере, lint, проверка синтаксиса
 /dist
-  SMC_Visualizer_Pro_v1.x.pine
+  SMC_Visualizer_Pro.pine
 /tests
+  README.md               — проверка сборки в TradingView
   golden/                 — эталонные журналы событий (CSV) по инструментам и отрезкам
   annotations/            — эталонные ручные разметки (скриншоты + описание)
   vac/                    — протоколы визуальных тестов

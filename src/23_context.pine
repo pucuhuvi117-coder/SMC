@@ -1,0 +1,99 @@
+// ═══ 23 · CONTEXT ENGINE ════════════════════════════════════════════════════════
+// Dealing range, premium/discount, OTE, regime and the MarketContext snapshot used by
+// the Ribbon and Dashboard (Appendix A.14, A.16, A.17, §7.5).
+
+// Dealing range follows swing-level breaks: protected extreme → far extreme of the leg
+f_rangeStep(Core c, Range r, StructState sw) =>
+    Brk bu = sw.newUp
+    Brk bd = sw.newDn
+    if not na(bu)
+        r.id := f_nextId(c)
+        r.dir := 1
+        r.state := 1
+        r.lo := bu.legExt0
+        r.loBar := bu.origBar
+        r.hi := bu.legExt1
+        r.hiBar := bar_index
+        r.t0 := bu.origT
+        r.inOte := false
+        f_emit(c, EV_RANGE_NEW, 1, (r.hi + r.lo) / 2, r.id, bu.evId, 3, r.hi, r.lo, 1)
+    else if not na(bd)
+        r.id := f_nextId(c)
+        r.dir := -1
+        r.state := 1
+        r.hi := bd.legExt0
+        r.hiBar := bd.origBar
+        r.lo := bd.legExt1
+        r.loBar := bar_index
+        r.t0 := bd.origT
+        r.inOte := false
+        f_emit(c, EV_RANGE_NEW, -1, (r.hi + r.lo) / 2, r.id, bd.evId, 3, r.hi, r.lo, 1)
+    else if r.state > 0
+        if high > r.hi and r.dir == 1
+            r.hi := high
+            r.hiBar := bar_index
+        if low < r.lo and r.dir == -1
+            r.lo := low
+            r.loBar := bar_index
+        if r.state == 1
+            Swing nh = sw.newHigh
+            Swing nl = sw.newLow
+            if r.dir == 1 and not na(nh)
+                if nh.bar >= r.loBar
+                    r.state := 2
+            if r.dir == -1 and not na(nl)
+                if nl.bar >= r.hiBar
+                    r.state := 2
+    true
+
+// Premium / discount location and OTE entry (A.14). Returns pd (0 = range low, 1 = high).
+f_pdStep(Core c, Range r) =>
+    float pd = na
+    if r.state > 0 and r.hi > r.lo
+        pd := (close - r.lo) / (r.hi - r.lo)
+        int zone = pd > 0.5 + EQ_BAND ? 1 : pd < 0.5 - EQ_BAND ? -1 : 0
+        if zone != r.pdZone
+            r.pdZone := zone
+            f_emit(c, EV_PD_ENTER, zone, close, r.id, na, 3, pd, na, na, zone == 1 ? "PREMIUM" : zone == -1 ? "DISCOUNT" : "EQ")
+        bool ote = r.dir == 1 ? (pd >= 1 - oteHi and pd <= 1 - oteLo) : (pd >= oteLo and pd <= oteHi)
+        if ote and not r.inOte
+            f_emit(c, EV_OTE_ENTER, r.dir, close, r.id, na, 2, pd)
+        r.inOte := ote
+    pd
+
+// MarketContext snapshot (A.16, A.17). HTF bias joins with the HTF Feed (P5).
+f_ctxBuild(Ctx x, StructState sw, StructState si, Range r, float pd, array<Liq> lv, Sess sa, Sess sl, Sess sn) =>
+    x.swTrend := sw.trend
+    x.inTrend := si.trend
+    bool chop = sw.lastBrkKind == BK_CHOCH and sw.prevBrkKind == BK_CHOCH and sw.lastBrkDir != sw.prevBrkDir and not na(sw.prevBrkBar) and sw.lastBrkBar - sw.prevBrkBar <= 6 * sw.len
+    bool stale = not na(sw.lastBrkBar) and bar_index - sw.lastBrkBar >= 8 * sw.len and not na(pd) and pd >= 0 and pd <= 1
+    x.ranging := chop or stale
+    x.market := x.ranging ? MK_RANGE : sw.trend
+    x.pd := pd
+    x.pdZone := r.pdZone
+    x.inOte := r.inOte
+    x.rangeState := r.state
+    string code = ""
+    int left = na
+    if sl.on
+        code := sl.code
+        left := sl.endT
+    else if sn.on
+        code := sn.code
+        left := sn.endT
+    else if sa.on
+        code := sa.code
+        left := sa.endT
+    x.sessCode := code
+    x.minsLeft := na(left) ? na : math.max(0, int(math.round((left - time_close) / 60000.0)))
+    Liq nb = na
+    Liq ns = na
+    for l in lv
+        if (l.state == LS_ACTIVE or l.state == LS_PENDING) and l.major
+            if l.side == 1 and l.price > close and (na(nb) or l.price < nb.price)
+                nb := l
+            if l.side == -1 and l.price < close and (na(ns) or l.price > ns.price)
+                ns := l
+    x.nextBsl := nb
+    x.nextSsl := ns
+    true

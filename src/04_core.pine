@@ -1,0 +1,91 @@
+// ═══ 04 · CORE: IDS, EVENT BUS, HELPERS ═════════════════════════════════════════
+// Engines emit events only on confirmed bars (T-3). Sinks (visual, alerts, panels) read
+// barEvents / history and never write back (T-1).
+
+f_nextId(Core c) =>
+    c.nextId := c.nextId + 1
+    c.nextId
+
+f_evName(int typ) =>
+    switch typ
+        EV_SWING => "SWING"
+        EV_BOS => "BOS"
+        EV_CHOCH => "CHOCH"
+        EV_DISP => "DISPLACEMENT"
+        EV_LIQ_NEW => "LIQ_NEW"
+        EV_LIQ_EQ => "LIQ_EQ"
+        EV_LIQ_SWEPT => "LIQ_SWEPT"
+        EV_LIQ_TAKEN => "LIQ_TAKEN"
+        EV_LIQ_EXPIRED => "LIQ_EXPIRED"
+        EV_KEY_SET => "KEYLEVEL_SET"
+        EV_ZONE_NEW => "ZONE_NEW"
+        EV_ZONE_TOUCHED => "ZONE_TOUCHED"
+        EV_ZONE_MITIGATED => "ZONE_MITIGATED"
+        EV_ZONE_CE => "ZONE_CE"
+        EV_ZONE_FILLED => "ZONE_FILLED"
+        EV_ZONE_BROKEN => "ZONE_BROKEN"
+        EV_ZONE_CONVERTED => "ZONE_CONVERTED"
+        EV_ZONE_EXPIRED => "ZONE_EXPIRED"
+        EV_RANGE_NEW => "RANGE_NEW"
+        EV_PD_ENTER => "PD_ENTER"
+        EV_OTE_ENTER => "OTE_ENTER"
+        EV_SESSION_START => "SESSION_START"
+        EV_SESSION_END => "SESSION_END"
+        EV_SYS_WARM => "SYS_WARM"
+        EV_SYS_WARN => "SYS_WARN"
+        => "EV" + str.tostring(typ)
+
+f_kindTag(int k) =>
+    switch k
+        ZK_OB => "OB"
+        ZK_BB => "BB"
+        ZK_MB => "MB"
+        ZK_FVG => "FVG"
+        ZK_IFVG => "IFVG"
+        => "ZONE"
+
+f_zoneStateName(int s) =>
+    switch s
+        ZS_FRESH => "FRESH"
+        ZS_TOUCHED => "TOUCHED"
+        ZS_MITIGATED => "MITIGATED"
+        ZS_PARTIAL => "PARTIAL"
+        ZS_CE => "CE"
+        ZS_FILLED => "FILLED"
+        ZS_CONVERTED => "CONVERTED"
+        ZS_INVALID => "INVALID"
+        ZS_EXPIRED => "EXPIRED"
+        => "?"
+
+f_arrow(int d) =>
+    d > 0 ? "↑" : d < 0 ? "↓" : "·"
+
+f_px(float p) =>
+    str.tostring(p, format.mintick)
+
+f_timeStr(int t) =>
+    str.format_time(t, "yyyy-MM-dd HH:mm", sesTz)
+
+// Emit an event into the bar queue and the history ring (docs §6.3)
+f_emit(Core c, int typ, int dir, float price, int ref, int cause, int tier, float v1 = na, float v2 = na, float v3 = na, string s1 = "") =>
+    Event e = Event.new(id = f_nextId(c), typ = typ, dir = dir, tf = TF_CHART, bar = bar_index, t = time, price = price, ref = ref, cause = cause, tier = tier, v1 = v1, v2 = v2, v3 = v3, s1 = s1)
+    c.barEvents.push(e)
+    c.history.push(e)
+    if c.history.size() > c.histCap
+        c.history.shift()
+    if (typ == EV_BOS or typ == EV_CHOCH) and v1 == LV_SWG
+        c.lastStruct := e
+    if typ == EV_LIQ_SWEPT or (typ == EV_LIQ_TAKEN and v3 == 1)
+        c.lastLiq := e
+    if i_log
+        log.info(str.format("EV|{0}|{1}|{2}|dir={3}|px={4}|ref={5}|cause={6}|tier={7}|v1={8}|v2={9}|v3={10}|{11}", e.id, f_evName(typ), f_timeStr(time), dir, f_px(price), ref, cause, tier, v1, v2, v3, s1))
+    e
+
+// True if the current bar emitted an event of this type (dir 0 = any; v1Eq na = any)
+f_evFlag(Core c, int typ, int dir, float v1Eq) =>
+    bool found = false
+    for e in c.barEvents
+        if e.typ == typ and (dir == 0 or e.dir == dir) and (na(v1Eq) or e.v1 == v1Eq)
+            found := true
+            break
+    found

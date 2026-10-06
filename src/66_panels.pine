@@ -1,0 +1,141 @@
+// ═══ 66 · PANELS: CONTEXT RIBBON, DASHBOARD, DEBUG TABLE ════════════════════════
+// Ribbon answers "what is happening" in one line (§14.6); Dashboard gives the answers
+// with details in tooltips (§14.5); Debug shows budgets and data health (§19.1).
+
+f_pos(string s) =>
+    switch s
+        "Top Right" => position.top_right
+        "Top Left" => position.top_left
+        "Bottom Right" => position.bottom_right
+        "Bottom Left" => position.bottom_left
+        "Top Center" => position.top_center
+        "Bottom Center" => position.bottom_center
+        => position.top_right
+
+f_structText(Event e) =>
+    na(e) ? "—" : (e.typ == EV_BOS ? "BOS " : e.v3 == 1 ? "MSS " : "CHoCH ") + f_arrow(e.dir)
+
+f_liqText(Event e) =>
+    string out = "—"
+    if not na(e)
+        bool swept = e.typ == EV_LIQ_SWEPT
+        int side = swept ? -e.dir : e.dir
+        out := (side == 1 ? "BSL" : "SSL") + (swept ? " SWEPT" : " TAKEN")
+    out
+
+f_pdText(Ctx x, bool longForm) =>
+    string out = "—"
+    if not na(x.pd)
+        string z = x.pdZone == 1 ? (longForm ? "PREMIUM " : "PREM ") : x.pdZone == -1 ? (longForm ? "DISCOUNT " : "DISC ") : "EQ "
+        out := z + str.tostring(math.round(x.pd * 100)) + "%" + (x.inOte ? " · OTE" : "")
+    out
+
+f_pdColor(Ctx x) =>
+    na(x.pd) ? C_NEUT : x.pdZone == 1 ? C_BEAR : x.pdZone == -1 ? C_BULL : C_NEUT
+
+f_statusText(Core c) =>
+    not c.warm ? "WARMING UP" : nonStdChart ? "⚠ NON-STANDARD CHART" : ""
+
+// Context Ribbon: STR │ SESSION │ PD │ LIQ │ status
+f_ribbon(table tb, Ctx x, Core c) =>
+    if not na(tb)
+        string sz = size.small
+        string s0 = x.ranging ? "STR ◆ RANGE" : x.swTrend == 1 ? "STR ▲ BULL" : x.swTrend == -1 ? "STR ▼ BEAR" : "STR —"
+        color c0 = x.ranging ? C_NEUT : f_dirColor(x.swTrend)
+        table.cell(tb, 0, 0, s0, text_color = c0, text_size = sz, tooltip = "Swing structure on the chart timeframe" + (x.ranging ? " · regime: ranging" : ""))
+        string s1 = x.sessCode == "" ? "NO KZ" : x.sessCode + (na(x.minsLeft) ? "" : " " + str.tostring(x.minsLeft) + "m")
+        table.cell(tb, 1, 0, s1, text_color = x.sessCode == "" ? C_NEUT : C_TEXT, text_size = sz, tooltip = "Active session or killzone (" + sesTz + "), minutes left")
+        table.cell(tb, 2, 0, na(x.pd) ? "PD —" : f_pdText(x, false), text_color = f_pdColor(x), text_size = sz, tooltip = "Location in the dealing range: 0% = range low, 100% = range high")
+        Event le = c.lastLiq
+        string s3 = "LIQ —"
+        if not na(le)
+            if bar_index - le.bar <= 20
+                bool swept = le.typ == EV_LIQ_SWEPT
+                int side = swept ? -le.dir : le.dir
+                s3 := (side == 1 ? "BSL" : "SSL") + (swept ? " ✕ " : " TAKEN ") + str.tostring(bar_index - le.bar) + "b"
+        table.cell(tb, 3, 0, s3, text_color = s3 == "LIQ —" ? C_NEUT : C_LIQ, text_size = sz, tooltip = na(le) ? "No recent liquidity event" : le.s1 + " · " + f_px(le.price) + " · " + f_timeStr(le.t))
+        string s4 = f_statusText(c)
+        if s4 == ""
+            table.clear(tb, 4, 0)
+        else
+            table.cell(tb, 4, 0, s4, text_color = C_WARN, text_size = sz, tooltip = "Signals and alerts are suppressed during warm-up (first " + str.tostring(warmBars) + " bars).")
+    true
+
+f_dashRow(table tb, int row, string k, string v, color vc, string tip, string sz) =>
+    table.cell(tb, 0, row, k, text_color = color.new(C_TEXT, 45), text_size = sz, text_halign = text.align_left)
+    table.cell(tb, 1, row, v, text_color = vc, text_size = sz, text_halign = text.align_left, tooltip = tip)
+    row + 1
+
+// Dashboard: answers instead of statistics (§14.5). Rows for HTF, SETUP and QUALITY arrive with P5/P7.
+f_dashboard(table tb, Ctx x, Core c, StructState si, Range r) =>
+    if not na(tb)
+        bool exp = i_dashSize == "Expanded"
+        string sz = exp ? size.small : size.tiny
+        int row = 0
+        string mk = x.market == MK_RANGE ? "RANGING" : x.market == MK_BULL ? "BULLISH" : x.market == MK_BEAR ? "BEARISH" : "UNDEFINED"
+        row := f_dashRow(tb, row, "MARKET", mk, x.market == MK_RANGE ? C_NEUT : f_dirColor(x.market), "Swing structure and regime on the chart timeframe. HTF bias joins with the HTF Feed (v0.2).", sz)
+        Event ls = c.lastStruct
+        string st = na(ls) ? "—" : f_structText(ls) + " · " + str.tostring(bar_index - ls.bar) + " bars"
+        row := f_dashRow(tb, row, "STRUCTURE", st, na(ls) ? C_NEUT : f_dirColor(ls.dir), na(ls) ? "No swing break yet" : "Broken level " + f_px(ls.price) + " · leg " + str.tostring(ls.v2, "0.0") + " ATR · " + f_timeStr(ls.t), sz)
+        string ses = x.sessCode == "" ? "—" : x.sessCode + (na(x.minsLeft) ? "" : " · " + str.tostring(x.minsLeft) + "m")
+        row := f_dashRow(tb, row, "SESSION", ses, x.sessCode == "" ? C_NEUT : C_TEXT, "Session timezone: " + sesTz, sz)
+        string rngTip = r.state > 0 ? "Dealing range " + f_px(r.lo) + " – " + f_px(r.hi) + (r.state == 1 ? " (developing)" : " (established)") : "No dealing range yet"
+        row := f_dashRow(tb, row, "LOCATION", f_pdText(x, true), f_pdColor(x), rngTip, sz)
+        Event le = c.lastLiq
+        string lq = na(le) ? "—" : f_liqText(le) + " · " + str.tostring(bar_index - le.bar) + " bars"
+        row := f_dashRow(tb, row, "LIQUIDITY", lq, na(le) ? C_NEUT : C_LIQ, na(le) ? "No sweep yet" : le.s1 + " · " + f_px(le.price) + " · " + f_timeStr(le.t), sz)
+        Liq nb = x.nextBsl
+        Liq ns = x.nextSsl
+        string nbT = na(nb) ? "—" : nb.tag + " " + f_px(nb.price) + " (+" + str.tostring((nb.price - close) / vu, "0.0") + " ATR)"
+        string nsT = na(ns) ? "—" : ns.tag + " " + f_px(ns.price) + " (−" + str.tostring((close - ns.price) / vu, "0.0") + " ATR)"
+        row := f_dashRow(tb, row, "TARGET ↑", nbT, na(nb) ? C_NEUT : C_LIQ, "Nearest major buy-side liquidity above price", sz)
+        row := f_dashRow(tb, row, "TARGET ↓", nsT, na(ns) ? C_NEUT : C_LIQ, "Nearest major sell-side liquidity below price", sz)
+        if exp
+            string inT = x.inTrend == 1 ? "BULLISH" : x.inTrend == -1 ? "BEARISH" : "—"
+            row := f_dashRow(tb, row, "INTERNAL", inT, f_dirColor(x.inTrend), "Internal structure trend", sz)
+            row := f_dashRow(tb, row, "MODE", str.tostring(i_mode) + " · v" + BUILD, C_NEUT, "Display mode and build", sz)
+        string stt = f_statusText(c)
+        if stt != ""
+            row := f_dashRow(tb, row, "STATUS", stt, C_WARN, "Signals and alerts are suppressed during warm-up", sz)
+        if mc.labelLevel >= 3 and exp
+            int nh = c.history.size()
+            int shown = 0
+            if nh > 0
+                for i = nh - 1 to 0
+                    Event e = c.history.get(i)
+                    if shown < 5 and row < 15 and (e.typ == EV_BOS or e.typ == EV_CHOCH or e.typ == EV_LIQ_SWEPT) and (e.typ == EV_LIQ_SWEPT or e.v1 == LV_SWG)
+                        string et = e.typ == EV_LIQ_SWEPT ? f_liqText(e) : f_structText(e)
+                        row := f_dashRow(tb, row, str.format_time(e.t, "MM-dd HH:mm", sesTz), et + " · " + f_px(e.price), e.typ == EV_LIQ_SWEPT ? C_LIQ : f_dirColor(e.dir), e.s1, sz)
+                        shown += 1
+        if row <= 15
+            table.clear(tb, 0, row, 1, 15)
+    true
+
+// Debug table (§19.1): budgets, registries, data health
+f_debugTable(table tb, Core c, array<Zone> zs, array<Liq> lv, BoxPool pz, BoxPool pw, BoxPool prb, LinePool pm, LinePool pl, LinePool ps, LinePool prl, LabelPool pb) =>
+    if not na(tb)
+        string sz = size.tiny
+        int zLive = 0
+        for z in zs
+            zLive += z.state < ZS_FILLED ? 1 : 0
+        int lLive = 0
+        for x in lv
+            lLive += x.state == LS_ACTIVE or x.state == LS_PENDING ? 1 : 0
+        int boxUsed = pz.used + pw.used + prb.used
+        int boxCap = pz.items.size() + pw.items.size() + prb.items.size()
+        int lineUsed = pm.used + pl.used + ps.used + prl.used
+        int lineCap = pm.items.size() + pl.items.size() + ps.items.size() + prl.items.size()
+        int row = 0
+        row := f_dashRow(tb, row, "BUILD", "v" + BUILD + " · " + str.tostring(i_mode), C_TEXT, "", sz)
+        row := f_dashRow(tb, row, "BARS", str.tostring(bar_index + 1) + (c.warm ? " · warm" : " · warming up"), c.warm ? C_TEXT : C_WARN, "Warm-up: " + str.tostring(warmBars) + " bars", sz)
+        row := f_dashRow(tb, row, "ZONES", str.tostring(zLive) + " live / " + str.tostring(zs.size()), C_TEXT, "Registry cap " + str.tostring(ZONE_CAP), sz)
+        row := f_dashRow(tb, row, "LEVELS", str.tostring(lLive) + " live / " + str.tostring(lv.size()), C_TEXT, "Registry cap " + str.tostring(LIQ_CAP), sz)
+        row := f_dashRow(tb, row, "EVENTS", str.tostring(c.barEvents.size()) + " bar · " + str.tostring(c.history.size()) + " hist", C_TEXT, "Event bus: current bar / history ring", sz)
+        row := f_dashRow(tb, row, "BOXES", str.tostring(boxUsed) + " / " + str.tostring(boxCap), C_TEXT, "Drawn / pool size (platform limit 500)", sz)
+        row := f_dashRow(tb, row, "LINES", str.tostring(lineUsed) + " / " + str.tostring(lineCap), C_TEXT, "Drawn / pool size (platform limit 500)", sz)
+        row := f_dashRow(tb, row, "LABELS", str.tostring(pb.used) + " / " + str.tostring(pb.items.size()), C_TEXT, "Drawn / pool size (platform limit 500)", sz)
+        row := f_dashRow(tb, row, "VOLUME", hasVolume ? "yes" : "none (filters off)", hasVolume ? C_TEXT : C_WARN, "", sz)
+        row := f_dashRow(tb, row, "CHART", nonStdChart ? "non-standard" : "standard", nonStdChart ? C_WARN : C_TEXT, "", sz)
+        row := f_dashRow(tb, row, "LENGTHS", "swing " + str.tostring(swLen) + " · int " + str.tostring(inLen), C_TEXT, "", sz)
+        row := f_dashRow(tb, row, "SESSIONS", sesOk ? sesTz : "off (TF > 1H)", C_TEXT, specAsia + " · " + specLon + " · " + specNy, sz)
+    true

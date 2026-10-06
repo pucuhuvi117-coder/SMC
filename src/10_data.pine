@@ -1,0 +1,65 @@
+// ═══ 10 · DATA ENGINE ═══════════════════════════════════════════════════════════
+// Per-bar measurements shared by all engines (Appendix A.1, A.6, A.10). Everything that
+// needs history (ta.*, request.*, pivots) is computed here at global scope on every bar,
+// so engine functions can read it safely with the [] operator.
+
+// Volatility unit (VU) and candle geometry
+float atrRaw = ta.atr(i_atrLen)
+float vu = na(atrRaw) or atrRaw <= 0 ? math.max(high - low, syminfo.mintick) : atrRaw
+float body = math.abs(close - open)
+float barRange = high - low
+float bodyRatio = body / math.max(barRange, syminfo.mintick)
+bool isDispUp = close > open and body >= i_kBody * vu and bodyRatio >= i_minBodyRatio
+bool isDispDn = close < open and body >= i_kBody * vu and bodyRatio >= i_minBodyRatio
+
+// Bar timing and session gaps (A.1)
+int barMs = timeframe.in_seconds() * 1000
+bool isGapBar = timeframe.isintraday and bar_index > 0 and (time - time[1]) > 1.5 * barMs
+
+// Volume (auto-degrades when the symbol has none, A.7)
+float volSma = ta.sma(volume, 20)
+float volRatio = not na(volSma) and volSma > 0 ? volume / volSma : na
+bool hasVolume = ta.cum(nz(volume)) > 0
+
+// Raw fair value gap patterns on the current (third) candle (A.10)
+bool gapAround = i_ignoreGaps and (isGapBar or isGapBar[1])
+bool fvgUp = bar_index >= 2 and low > high[2] and (not i_fvgMidDir or close[1] > open[1]) and (low - high[2]) >= i_fvgMin * vu and not gapAround
+bool fvgDn = bar_index >= 2 and high < low[2] and (not i_fvgMidDir or close[1] < open[1]) and (low[2] - high) >= i_fvgMin * vu and not gapAround
+bool dispFvgUp = fvgUp and isDispUp[1]
+bool dispFvgDn = fvgDn and isDispDn[1]
+
+// Pivots for both structure levels (A.2)
+float phS = ta.pivothigh(high, swLen, swLen)
+float plS = ta.pivotlow(low, swLen, swLen)
+float phI = ta.pivothigh(high, inLen, inLen)
+float plI = ta.pivotlow(low, inLen, inLen)
+
+// Sessions clock (A.15): tracked on intraday charts up to 1H
+bool sesOk = timeframe.isintraday and timeframe.in_seconds() <= 3600
+int tAsia = time(timeframe.period, specAsia, sesTz)
+int tLon = time(timeframe.period, specLon, sesTz)
+int tNy = time(timeframe.period, specNy, sesTz)
+bool inAsia = sesOk and i_asiaOn and not na(tAsia)
+bool inLon = sesOk and i_lonOn and not na(tLon)
+bool inNy = sesOk and i_nyOn and not na(tNy)
+
+// Key levels from confirmed D / W bars: the [1] + lookahead_on idiom never repaints (§4.7)
+[pdH, pdL, pdT] = request.security(syminfo.tickerid, "D", [high[1], low[1], time[1]], lookahead = barmerge.lookahead_on)
+[pwH, pwL, pwT] = request.security(syminfo.tickerid, "W", [high[1], low[1], time[1]], lookahead = barmerge.lookahead_on)
+bool keyDayOk = i_keyDay and timeframe.isintraday
+bool keyWeekOk = i_keyWeek and timeframe.in_seconds() < 604800
+bool newDay = not na(pdT) and pdT != nz(pdT[1])
+bool newWeek = not na(pwT) and pwT != nz(pwT[1])
+
+// Data health (T-10, T-14)
+bool nonStdChart = not chart.is_standard
+
+// Buffers for dynamic lookbacks; every offset in the engines stays below MAXBACK_GUARD
+max_bars_back(time, MAXBACK)
+max_bars_back(open, MAXBACK)
+max_bars_back(high, MAXBACK)
+max_bars_back(low, MAXBACK)
+max_bars_back(close, MAXBACK)
+max_bars_back(volRatio, MAXBACK)
+max_bars_back(isDispUp, MAXBACK)
+max_bars_back(isDispDn, MAXBACK)
