@@ -14,9 +14,11 @@
       "22_zones.pine",
       "23_context.pine",
       "24_htf_ingest.pine",
+      "30_setup.pine",
       "60_visual_tokens.pine",
       "61_visual_priority.pine",
       "62_visual_render.pine",
+      "63_visual_setup.pine",
       "66_panels.pine",
       "90_main.pine",
       "95_alerts.pine"

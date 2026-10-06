@@ -30,6 +30,9 @@ bool htfOk = htfTf != "" and htfSec > chartSec
 bool htfBadCfg = i_htfMode == HtfMode.manual and not htfOk
 string htfReq = htfOk ? htfTf : timeframe.period
 string htfLabel = f_tfLabel(htfSec)
+
+f_htfPrefix(int tf) =>
+    tf != TF_CHART ? "◆" + htfLabel + " " : ""
 // HTF objects count their age in HTF bars (hBorn vs hLastBars below); distance limits scale
 // with the root of the TF ratio
 float htfDistMult = htfOk ? math.max(3.0, math.sqrt(htfSec / chartSec)) : 1.0

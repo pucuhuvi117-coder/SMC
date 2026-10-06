@@ -1,0 +1,136 @@
+// ═══ 63 · SETUP COMPOSER ════════════════════════════════════════════════════════
+// Setup composition (§14.8, §14.9) in the convention of TradingView's Long/Short Position
+// tool: entry zone (POI), Entry / SL / TP lines, reward and risk boxes, the card. Every stage
+// has its own look (FORMING outline → READY full → ACTIVE with entry marker → DONE faded with
+// the outcome). Visual only: reads Setup objects, never changes them.
+
+f_reasonText(string r) =>
+    str.replace_all(str.lower(r), "_", " ")
+
+f_setOutcome(Setup s) =>
+    s.state == SS_WIN ? "✓ " + (s.rReal >= 0 ? "+" : "") + str.tostring(s.rReal, "0.0") + "R" + (s.reason == "BE" ? " · BE" : "") : s.state == SS_SL ? "✕ SL " + str.tostring(s.rReal, "0.0") + "R" : s.state == SS_INVALID ? "✕ INVALID · " + f_reasonText(s.reason) : s.state == SS_EXPIRED ? "⌛ EXPIRED · " + f_reasonText(s.reason) : s.state == SS_MISSED ? "MISSED · TP1 before entry" : ""
+
+f_setPlanText(Setup s) =>
+    float risk = (s.entry - s.slInit) * s.dir
+    string t = "E " + f_px(s.entry) + " · SL " + f_px(s.slInit) + " (" + str.tostring(risk / vu, "0.0") + " ATR, " + str.tostring(math.round(risk / syminfo.mintick)) + " ticks)"
+    for n = 1 to 3
+        if n <= s.nTp
+            string tg = n == 1 ? s.tp1Tag : n == 2 ? s.tp2Tag : s.tp3Tag
+            t := t + "\nTP" + str.tostring(n) + " " + f_px(f_tpAt(s, n)) + " · " + str.tostring(f_rrAt(s, f_tpAt(s, n)), "0.0") + "R · " + tg
+    t + "\ninvalidation: close " + (s.dir == 1 ? "below " : "above ") + f_px(s.inv)
+
+// Full explanation (§9.7) for the card tooltip
+f_setTip(Setup s) =>
+    string head = f_sideName(s.dir) + " · " + str.upper(f_modelName(s.model)) + (na(s.readyBar) ? " · FORMING" : " · " + f_gradeName(s.grade) + " " + str.tostring(s.score, "0.0") + "/10")
+    string body = s.chainMid + (s.factors != "" ? "\n" + s.factors : "\n")
+    string plan = na(s.readyBar) ? (s.why != "" ? "waiting: " + f_reasonText(s.why) : "waiting for a valid plan") : f_setPlanText(s)
+    head + "\n" + body + plan + "\nANALYTICAL · not executed. The score measures how complete the setup is, not a win probability."
+
+f_card(LabelPool p, int x, float y, string txt, color tc, color bg, string sz, string tip) =>
+    label lb = p.takeLabel()
+    if not na(lb)
+        label.set_xy(lb, x, y)
+        label.set_yloc(lb, yloc.price)
+        label.set_text(lb, txt)
+        label.set_textcolor(lb, tc)
+        label.set_color(lb, bg)
+        label.set_style(lb, label.style_label_left)
+        label.set_size(lb, sz)
+        label.set_tooltip(lb, tip)
+        label.set_textalign(lb, text.align_left)
+    not na(lb)
+
+// One composition. past: an older setup in the Analysis history (no price tags, small card).
+f_drawSetup(BoxPool pb, LinePool pl, LabelPool plb, Setup s, bool past) =>
+    int d = s.dir
+    bool forming = s.state <= SS_FORMING
+    bool planned = not na(s.readyBar)
+    bool active = f_setActive(s)
+    bool done = s.state >= SS_WIN
+    bool bad = s.state == SS_SL or s.state == SS_INVALID
+    bool lapsed = s.state == SS_EXPIRED or s.state == SS_MISSED
+    int x0 = planned ? s.readyT : s.shiftT
+    int x1 = done ? math.max(s.endT, x0 + 5 * barMs) : math.max(x0 + 20 * barMs, time + 3 * barMs)
+    color sig = bad or lapsed ? C_INV : C_SIG
+    color rew = bad or lapsed ? C_INV : C_BULL
+    color rsk = bad or lapsed ? C_INV : C_BEAR
+    int lnT = done ? OP_FAINT : OP_SOLID
+    // entry zone (POI): outline while forming or lapsed, focus fill when READY / ACTIVE
+    bool outline = forming or lapsed
+    f_box(pb, x0, x1, s.entryTop, s.entryBot, color.new(sig, outline or done ? F_GHOST : F_FOCUS), color.new(sig, outline ? OP_SOFT : done ? OP_FAINT : OP_MEDIUM), 1, outline ? line.style_dashed : line.style_solid, "", color(na), text.align_right)
+    if planned and vPlan and not lapsed
+        float e = s.entry
+        float lastTp = f_tpAt(s, s.nTp)
+        if i_mode != DisplayMode.clean
+            f_box(pb, x0, x1, math.max(e, lastTp), math.min(e, lastTp), color.new(rew, done ? F_GHOST : F_FAINT), color(na), 1, line.style_solid, "", color(na), text.align_right)
+            f_box(pb, x0, x1, math.max(e, s.slInit), math.min(e, s.slInit), color.new(rsk, done ? F_GHOST : F_FAINT), color(na), 1, line.style_solid, "", color(na), text.align_right)
+        f_line(pl, x0, e, x1, e, color.new(sig, lnT), line.style_solid, 2)
+        f_line(pl, x0, s.slInit, x1, s.slInit, color.new(rsk, lnT), line.style_solid, 2)
+        for n = 1 to 3
+            if n <= s.nTp
+                float tp = f_tpAt(s, n)
+                bool hit = n <= s.tpHit
+                f_line(pl, x0, tp, x1, tp, color.new(rew, done or hit ? OP_FAINT : OP_MEDIUM), line.style_dashed, 1)
+                if not past and labelLvl > 0
+                    f_label(plb, x1, tp, "TP" + str.tostring(n) + " " + f_px(tp) + " · " + str.tostring(f_rrAt(s, tp), "0.0") + "R" + (hit ? " ✓" : ""), color.new(rew, done ? OP_SOFT : OP_SOLID), label.style_label_left, size.tiny, (n == 1 ? s.tp1Tag : n == 2 ? s.tp2Tag : s.tp3Tag) + " · " + f_px(tp), yloc.price)
+        if not past and labelLvl > 0
+            f_label(plb, x1, s.slInit, "SL " + f_px(s.slInit) + (s.be and not done ? " → BE" : ""), color.new(rsk, done ? OP_SOFT : OP_SOLID), label.style_label_left, size.tiny, "Stop loss " + f_px(s.slInit) + (s.be ? " · moved to entry after TP1" : ""), yloc.price)
+        // invalidation differs from the stop by the buffer: shown while the entry is pending
+        if s.state == SS_READY and math.abs(s.inv - s.slInit) >= syminfo.mintick
+            f_line(pl, x0, s.inv, x1, s.inv, color.new(C_BEAR, OP_SOFT), line.style_dotted, 1)
+        if not na(s.trigT)
+            f_label(plb, s.trigT, e, "●", color.new(sig, done ? OP_SOFT : OP_SOLID), label.style_label_center, size.small, "Entry " + f_px(e) + " · " + f_timeStr(s.trigT), yloc.price)
+    // card: direction, grade and score, chain, RR / SL size; outcome when done
+    float risk = planned ? (s.entry - s.slInit) * d : na
+    string head = done ? f_setOutcome(s) : f_sideName(d) + (forming ? " — FORMING" : " · " + f_gradeName(s.grade) + " " + str.tostring(s.score, "0.0") + (active ? " · ACTIVE" : ""))
+    string txt = head
+    if not past
+        if planned and not done
+            txt := head + "   E " + f_px(s.entry) + "\n" + s.chain + "\nRR 1:" + str.tostring(s.rrFinal, "0.0") + " · SL " + str.tostring(risk / vu, "0.0") + " ATR"
+        else
+            txt := head + "\n" + s.chain
+    float cy = planned and not lapsed ? s.entry : (s.entryTop + s.entryBot) / 2
+    color tc = done or forming ? color.new(sig, OP_MEDIUM) : sig
+    color bg = past ? color(na) : color.new(C_PANEL, done ? 40 : 15)
+    f_card(plb, x1 + barMs, cy, txt, tc, bg, past ? size.tiny : size.small, f_setTip(s))
+    true
+
+// Live: the focus composition per direction plus recently finished ones (TTL by outcome and
+// mode, §14.8). Analysis / Debug: up to setupPast older setups inside the visible window.
+f_setDoneTtl(Setup s) =>
+    bool clean = i_mode == DisplayMode.clean
+    s.state == SS_WIN ? (clean ? 10 : 30) : s.state == SS_SL or s.state == SS_INVALID ? (clean ? 5 : 30) : (clean ? 0 : 10)
+
+f_setShownDone(Setup s) =>
+    not na(s.readyBar) ? s.grade >= setShowGrade : setShowGrade == GR_C
+
+f_renderSetups(View v, BoxPool pb, LinePool pl, LabelPool plb, array<Setup> ss, array<Setup> arch) =>
+    int shown = 0
+    if i_setups
+        array<int> drawn = array.new<int>()
+        if v.live
+            for d in array.from(1, -1)
+                Setup fs = f_focusSetup(ss, d)
+                if not na(fs)
+                    f_drawSetup(pb, pl, plb, fs, false)
+                    drawn.push(fs.id)
+                    shown += 1
+        int n = arch.size()
+        if n > 0
+            int recent = 0
+            int past = 0
+            for i = n - 1 to 0
+                Setup s = arch.get(i)
+                if not drawn.includes(s.id) and f_setShownDone(s)
+                    if v.live and recent < 2 and bar_index - s.endBar <= f_setDoneTtl(s)
+                        f_drawSetup(pb, pl, plb, s, false)
+                        drawn.push(s.id)
+                        recent += 1
+                        shown += 1
+                    else if mc.setupPast > 0 and past < mc.setupPast
+                        int b0 = na(s.readyBar) ? s.shiftBar : s.readyBar
+                        if s.endBar >= v.iL and b0 <= v.iR
+                            f_drawSetup(pb, pl, plb, s, true)
+                            past += 1
+                            shown += 1
+    shown

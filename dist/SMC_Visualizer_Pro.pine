@@ -1,13 +1,13 @@
 //@version=6
 // ═══════════════════════════════════════════════════════════════════════════════
-//  SMC Visualizer Pro · build 0.3.0 · 2026-10-06
+//  SMC Visualizer Pro · build 0.4.0 · 2026-10-06
 //  Generated from /src by build/build.py. Do not edit dist/ by hand.
 //  Architecture: docs/02-architecture.md · Detectors: docs/appendix-a-detection-spec.md
 // ═══════════════════════════════════════════════════════════════════════════════
 indicator("SMC Visualizer Pro", shorttitle = "SMC Pro", overlay = true, max_boxes_count = 500, max_lines_count = 500, max_labels_count = 500)
 
 // ═══ 01 · CONSTANTS ═════════════════════════════════════════════════════════════
-BUILD = "0.3.0"
+BUILD = "0.4.0"
 
 // Timeframe slots (docs §8.2). v0.1 computes the chart TF only; HTF arrives with the HTF Feed (P5).
 TF_CHART = 0
@@ -44,6 +44,14 @@ EV_OTE_ENTER = 32
 EV_SESSION_START = 33
 EV_SESSION_END = 34
 EV_HTF_BIAS = 35
+EV_SETUP_FORMING = 40
+EV_SETUP_READY = 41
+EV_SETUP_TRIGGERED = 42
+EV_SETUP_TP = 43
+EV_SETUP_SL = 44
+EV_SETUP_INVALID = 45
+EV_SETUP_EXPIRED = 46
+EV_SETUP_MISSED = 47
 EV_SYS_WARM = 90
 EV_SYS_WARN = 91
 
@@ -85,6 +93,30 @@ MK_BULL = 1
 MK_BEAR = -1
 MK_RANGE = 2
 MK_MIXED = 3
+
+// Setup models (§9.3) and states (§7.7). CONTINUATION uses SS_SHIFTED for BOS_SEEN.
+SM_REV = 1
+SM_CONT = 2
+SS_SWEEP = 1
+SS_SHIFTED = 2
+SS_FORMING = 3
+SS_READY = 4
+SS_TRIG = 5
+SS_TP1 = 6
+SS_TP2 = 7
+SS_WIN = 8
+SS_SL = 9
+SS_INVALID = 10
+SS_EXPIRED = 11
+SS_MISSED = 12
+// Grades (§9.5): C 0 · B 1 · A 2 · A+ 3
+GR_C = 0
+GR_B = 1
+GR_A = 2
+GR_AP = 3
+SETUP_CAP = 12
+SETUP_ARCH_CAP = 80
+DASH_ROWS = 22
 
 // Fixed detector parameters (Appendix A.19)
 OB_NPRE = 3
@@ -196,6 +228,31 @@ enum HtfMode
 enum HistView
     visible = "Visible range"
     recent = "Recent only"
+
+enum SetPreset
+    balanced = "Balanced"
+    conservative = "Conservative"
+    aggressive = "Aggressive"
+
+enum EntryMode
+    ce = "CE (50%)"
+    edge = "Zone edge"
+    ote = "OTE 0.705"
+
+enum SlMode
+    auto = "Auto (by model)"
+    poi = "Beyond POI"
+    atr = "ATR × 1.5"
+
+enum TpMode
+    liq = "Liquidity"
+    rr = "RR 1 / 2 / 3"
+
+enum GradeOpt
+    c = "C"
+    b = "B"
+    a = "A"
+    ap = "A+"
 
 // Immutable fact about a state transition, emitted on a confirmed bar (§6.2)
 type Event
@@ -416,6 +473,79 @@ type Ctx
     bool htfLow = false
     int htfTrend = 0
 
+// Setup: an evolving trade hypothesis with its evidence, plan and score (§7.7, §9, §10).
+// v1.0 setups are analytical: drawn and alerted, never executed. The DRAFT TradePlan
+// (entry / SL / targets / RR) is kept inside the setup until the P9 webhook needs it apart.
+type Setup
+    int id
+    int model
+    int dir
+    int state
+    int bornBar
+    int bornT
+    int stageBar
+    // liquidity component
+    int sweepEvId
+    int sweptLiqId
+    float sweepExt
+    bool sweepMajor = false
+    string sweepTag = ""
+    int sweepBar
+    bool contSweep = false
+    // shift component
+    int shiftEvId
+    int shiftBrkId
+    int shiftBar
+    int shiftT
+    int shiftLvl
+    int shiftKind
+    bool isMSS = false
+    float disp
+    // location: range built by the shift leg
+    float rLo
+    float rHi
+    int legBar
+    // POI
+    Zone poi
+    Zone poiAlt
+    bool combo = false
+    float entryTop
+    float entryBot
+    // plan (DRAFT TradePlan)
+    float entry
+    float sl
+    float slInit
+    float inv
+    float tp1
+    float tp2
+    float tp3
+    string tp1Tag = ""
+    string tp2Tag = ""
+    string tp3Tag = ""
+    int nTp = 0
+    float rrFinal
+    bool drawLiq = false
+    string drawTxt = ""
+    // score
+    float score = 0.0
+    int grade = 0
+    string factors = ""
+    string chain = ""
+    string chainMid = ""
+    string why = ""
+    bool kz = false
+    // lifecycle
+    int readyBar
+    int readyT
+    int trigBar
+    int trigT
+    int endBar
+    int endT
+    int tpHit = 0
+    bool be = false
+    float rReal = 0.0
+    string reason = ""
+
 // Display mode ceilings (§15.3, §19.2)
 type ModeCfg
     int structEvents
@@ -450,6 +580,11 @@ type ModeCfg
     int htfStructEvents
     int htfStructWin
     int keyCap
+    int gradeFloor = 1
+    int setupPast = 0
+    int poolSetBox = 8
+    int poolSetLine = 16
+    int poolSetLab = 16
 
 // What the render pass draws: a bar window, split into time segments. Each segment ranks
 // objects against its own anchor (close and ATR at the segment's last bar), so a wide or
@@ -489,7 +624,7 @@ type Tag
 
 // ═══ 03 · INPUTS & EFFECTIVE CONFIG ═════════════════════════════════════════════
 // Settings panel per docs/05-ux-ui-spec.md §14.4. All inputs use display.none so the
-// status line stays clean (V-10). Groups for HTF, setups and webhook arrive with P5/P7/P9.
+// status line stays clean (V-10). The webhook group arrives with P9.
 G_PROF = "⚙️ 0 · PROFILE"
 G_VIS = "🎨 1 · VISUAL EXPERIENCE"
 G_STR = "🏗 2 · STRUCTURE"
@@ -499,6 +634,7 @@ G_FVG = "🟨 5 · FAIR VALUE GAPS"
 G_RNG = "🎯 6 · DEALING RANGE"
 G_SES = "⏰ 7 · SESSIONS"
 G_MTF = "🌐 8 · MULTI-TIMEFRAME"
+G_SET = "🧩 9 · SETUPS (analytical)"
 G_ADV = "🛠 11 · ADVANCED"
 
 // ── 0 · Profile
@@ -609,6 +745,31 @@ i_htfOB = input.bool(true, "HTF OB", inline = "hv", group = G_MTF, display = dis
 i_htfFVG = input.bool(false, "HTF FVG", inline = "hv", group = G_MTF, display = display.none)
 i_htfLiq = input.bool(true, "HTF liquidity", inline = "hv", group = G_MTF, display = display.none)
 
+// ── 9 · Setups (analytical: drawn and alerted, never executed)
+i_setups = input.bool(true, "Setup engine", tooltip = "Sweep Reversal and Continuation setups with Entry / SL / TP, confluence score and grade. Analytical only: no orders are placed.", group = G_SET, display = display.none)
+i_smRev = input.bool(true, "Sweep Reversal", inline = "sm", group = G_SET, display = display.none)
+i_smCont = input.bool(true, "Continuation", inline = "sm", tooltip = "Sweep Reversal: liquidity sweep → CHoCH/MSS against it → FVG/OB in discount (long) / premium (short). Continuation: BOS with the trend → FVG/OB in discount / premium.", group = G_SET, display = display.none)
+i_setPreset = input.enum(SetPreset.balanced, "Scoring preset", tooltip = "Balanced: READY from grade B. Conservative: READY from grade A, setups against the HTF bias or with an opposing HTF zone within 1R are rejected. Aggressive: READY from grade C, killzone and HTF POI count double, HTF-against penalty −1.0.", group = G_SET, display = display.none)
+i_reqHtf = input.bool(false, "Require HTF alignment", inline = "req", group = G_SET, display = display.none)
+i_reqKz = input.bool(false, "Require killzone", inline = "req", tooltip = "HTF alignment: only setups in the direction of the HTF bias. Killzone: the shift must happen in the London or NY killzone; READY setups expire when the killzone ends.", group = G_SET, display = display.none)
+i_minGrade = input.enum(GradeOpt.b, "Min grade to show", tooltip = "The display mode sets a floor too: Clean shows A and A+, Normal B and above, Analysis and Debug all grades.", group = G_SET, display = display.none)
+i_entryMode = input.enum(EntryMode.ce, "Entry", inline = "en", group = G_SET, display = display.none)
+i_slMode = input.enum(SlMode.auto, "SL", inline = "en", tooltip = "Entry: CE = middle of the POI, Zone edge = its proximal edge, OTE 0.705 = the 0.705 level of the range if inside the POI (else CE). SL Auto: beyond the sweep (Sweep Reversal) or beyond the protected swing (Continuation).", group = G_SET, display = display.none)
+i_slBufAtr = input.float(0.10, "SL buffer ×ATR", minval = 0.0, maxval = 1.0, step = 0.01, inline = "buf", group = G_SET, display = display.none)
+i_slBufTicks = input.int(2, "ticks", minval = 0, maxval = 100, inline = "buf", tooltip = "The larger of the two is used, plus the spread.", group = G_SET, display = display.none)
+i_tpMode = input.enum(TpMode.liq, "Targets", inline = "tp", group = G_SET, display = display.none)
+i_minRR = input.float(2.0, "Min RR", minval = 0.5, maxval = 10.0, step = 0.1, inline = "tp", tooltip = "Liquidity: TP1 = nearest opposite liquidity at least 1R away, TP2 = major liquidity or the range extreme, TP3 = HTF or key level; missing targets fall back to 1R / 2R / 3R. RR is measured to the last target.", group = G_SET, display = display.none)
+i_expiry = input.int(30, "Expiry (bars)", minval = 5, maxval = 500, inline = "ex", group = G_SET, display = display.none)
+i_spread = input.int(0, "Spread (ticks)", minval = 0, maxval = 100, inline = "ex", tooltip = "Expiry: how long a setup may stay FORMING or READY. Spread is added to the SL buffer (bid charts).", group = G_SET, display = display.none)
+i_nShift = input.int(20, "Shift window (bars)", minval = 3, maxval = 100, inline = "sh", group = G_SET, display = display.none)
+i_shiftDisp = input.float(1.0, "min leg ×ATR", minval = 0.0, maxval = 5.0, step = 0.1, inline = "sh", tooltip = "Sweep Reversal: the CHoCH/BOS against the sweep must come within this many bars, with a leg of at least this size starting at the sweep. Continuation: minimum leg of the BOS.", group = G_SET, display = display.none)
+i_maxSlAtr = input.float(3.0, "Max SL ×ATR", minval = 0.5, maxval = 10.0, step = 0.1, inline = "slr", group = G_SET, display = display.none)
+i_minSlTicks = input.int(5, "Min SL ticks", minval = 1, maxval = 100, inline = "slr", group = G_SET, display = display.none)
+i_beAfterTp1 = input.bool(true, "Move SL to entry after TP1", group = G_SET, display = display.none)
+i_showPlan = input.bool(true, "Show Entry/SL/TP", inline = "sp", group = G_SET, display = display.none)
+i_priceMarkers = input.bool(false, "Price-scale markers", inline = "sp", tooltip = "Entry, SL and TP1 of the focus setup as values on the price scale.", group = G_SET, display = display.none)
+i_alertGrade = input.enum(GradeOpt.a, "Alert min grade", tooltip = "Setup READY alerts fire only from this grade.", group = G_SET, display = display.none)
+
 // ── 11 · Advanced
 i_atrLen = input.int(14, "ATR length", minval = 5, maxval = 200, tooltip = "Volatility unit for every threshold expressed in ×ATR.", group = G_ADV, display = display.none)
 i_kBody = input.float(1.0, "Displacement body ×ATR", minval = 0.3, maxval = 3.0, step = 0.1, inline = "disp", group = G_ADV, display = display.none)
@@ -649,11 +810,11 @@ specNy = f_sesSpec("0700-1000", "1200-1500", i_nyS)
 // screen is covered. Pool sizes keep every mode within the 500-object limits.
 f_modeCfg(DisplayMode m) =>
     switch m
-        DisplayMode.clean => ModeCfg.new(structEvents = 1, internalEvents = 0, swingLabels = false, zonesPerSide = 1, majorPerSide = 1, minorPerSide = 0, sweptShow = 1, distMax = 3.0, theta = 0.55, ttl = 0, hist = 500, mitigated = false, pdCap = 1, gauge = false, sessions = 0, dashboard = false, labelLevel = 1, debug = false, structWin = 6, internalWin = 0, swingLabelWin = 0, sweepWin = 6, sessWin = 0, rangeWin = 1, poolZone = 24, poolWash = 4, poolLvl = 30, poolStr = 14, poolLab = 40, htfStructEvents = 1, htfStructWin = 3, keyCap = 2)
-        DisplayMode.normal => ModeCfg.new(structEvents = 3, internalEvents = 0, swingLabels = false, zonesPerSide = 2, majorPerSide = 2, minorPerSide = 1, sweptShow = 3, distMax = 6.0, theta = 0.40, ttl = 10, hist = 1500, mitigated = true, pdCap = 2, gauge = true, sessions = 4, dashboard = true, labelLevel = 2, debug = false, structWin = 36, internalWin = 0, swingLabelWin = 0, sweepWin = 30, sessWin = 60, rangeWin = 6, poolZone = 64, poolWash = 64, poolLvl = 100, poolStr = 56, poolLab = 190, htfStructEvents = 2, htfStructWin = 8, keyCap = 3)
-        DisplayMode.analysis => ModeCfg.new(structEvents = 15, internalEvents = 15, swingLabels = true, zonesPerSide = 6, majorPerSide = 6, minorPerSide = 4, sweptShow = 15, distMax = 12.0, theta = 0.25, ttl = 50, hist = 5000, mitigated = true, pdCap = 2, gauge = true, sessions = 20, dashboard = true, labelLevel = 3, debug = false, structWin = 80, internalWin = 60, swingLabelWin = 60, sweepWin = 60, sessWin = 80, rangeWin = 12, poolZone = 140, poolWash = 90, poolLvl = 150, poolStr = 160, poolLab = 400, htfStructEvents = 6, htfStructWin = 16, keyCap = 4)
-        DisplayMode.debug => ModeCfg.new(structEvents = 30, internalEvents = 30, swingLabels = true, zonesPerSide = 20, majorPerSide = 20, minorPerSide = 20, sweptShow = 30, distMax = 1000.0, theta = 0.0, ttl = 100000, hist = 100000, mitigated = true, pdCap = 3, gauge = true, sessions = 30, dashboard = true, labelLevel = 3, debug = true, structWin = 80, internalWin = 60, swingLabelWin = 60, sweepWin = 80, sessWin = 80, rangeWin = 12, poolZone = 180, poolWash = 90, poolLvl = 150, poolStr = 160, poolLab = 480, htfStructEvents = 10, htfStructWin = 20, keyCap = 10)
-        => ModeCfg.new(structEvents = 15, internalEvents = 15, swingLabels = true, zonesPerSide = 6, majorPerSide = 6, minorPerSide = 4, sweptShow = 15, distMax = 12.0, theta = 0.25, ttl = 50, hist = 5000, mitigated = true, pdCap = 3, gauge = true, sessions = 20, dashboard = true, labelLevel = 3, debug = false, structWin = 80, internalWin = 60, swingLabelWin = 60, sweepWin = 60, sessWin = 80, rangeWin = 12, poolZone = 140, poolWash = 90, poolLvl = 150, poolStr = 160, poolLab = 400, htfStructEvents = 6, htfStructWin = 16, keyCap = 4)
+        DisplayMode.clean => ModeCfg.new(structEvents = 1, internalEvents = 0, swingLabels = false, zonesPerSide = 1, majorPerSide = 1, minorPerSide = 0, sweptShow = 1, distMax = 3.0, theta = 0.55, ttl = 0, hist = 500, mitigated = false, pdCap = 1, gauge = false, sessions = 0, dashboard = false, labelLevel = 1, debug = false, structWin = 6, internalWin = 0, swingLabelWin = 0, sweepWin = 6, sessWin = 0, rangeWin = 1, poolZone = 24, poolWash = 4, poolLvl = 30, poolStr = 14, poolLab = 40, htfStructEvents = 1, htfStructWin = 3, keyCap = 2, gradeFloor = 2, setupPast = 0, poolSetBox = 4, poolSetLine = 8, poolSetLab = 8)
+        DisplayMode.normal => ModeCfg.new(structEvents = 3, internalEvents = 0, swingLabels = false, zonesPerSide = 2, majorPerSide = 2, minorPerSide = 1, sweptShow = 3, distMax = 6.0, theta = 0.40, ttl = 10, hist = 1500, mitigated = true, pdCap = 2, gauge = true, sessions = 4, dashboard = true, labelLevel = 2, debug = false, structWin = 36, internalWin = 0, swingLabelWin = 0, sweepWin = 30, sessWin = 60, rangeWin = 6, poolZone = 64, poolWash = 64, poolLvl = 100, poolStr = 56, poolLab = 190, htfStructEvents = 2, htfStructWin = 8, keyCap = 3, gradeFloor = 1, setupPast = 0, poolSetBox = 8, poolSetLine = 16, poolSetLab = 16)
+        DisplayMode.analysis => ModeCfg.new(structEvents = 15, internalEvents = 15, swingLabels = true, zonesPerSide = 6, majorPerSide = 6, minorPerSide = 4, sweptShow = 15, distMax = 12.0, theta = 0.25, ttl = 50, hist = 5000, mitigated = true, pdCap = 2, gauge = true, sessions = 20, dashboard = true, labelLevel = 3, debug = false, structWin = 80, internalWin = 60, swingLabelWin = 60, sweepWin = 60, sessWin = 80, rangeWin = 12, poolZone = 140, poolWash = 90, poolLvl = 150, poolStr = 160, poolLab = 400, htfStructEvents = 6, htfStructWin = 16, keyCap = 4, gradeFloor = 0, setupPast = 10, poolSetBox = 40, poolSetLine = 60, poolSetLab = 30)
+        DisplayMode.debug => ModeCfg.new(structEvents = 30, internalEvents = 30, swingLabels = true, zonesPerSide = 20, majorPerSide = 20, minorPerSide = 20, sweptShow = 30, distMax = 1000.0, theta = 0.0, ttl = 100000, hist = 100000, mitigated = true, pdCap = 3, gauge = true, sessions = 30, dashboard = true, labelLevel = 3, debug = true, structWin = 80, internalWin = 60, swingLabelWin = 60, sweepWin = 80, sessWin = 80, rangeWin = 12, poolZone = 180, poolWash = 90, poolLvl = 150, poolStr = 160, poolLab = 460, htfStructEvents = 10, htfStructWin = 20, keyCap = 10, gradeFloor = 0, setupPast = 10, poolSetBox = 40, poolSetLine = 60, poolSetLab = 30)
+        => ModeCfg.new(structEvents = 15, internalEvents = 15, swingLabels = true, zonesPerSide = 6, majorPerSide = 6, minorPerSide = 4, sweptShow = 15, distMax = 12.0, theta = 0.25, ttl = 50, hist = 5000, mitigated = true, pdCap = 3, gauge = true, sessions = 20, dashboard = true, labelLevel = 3, debug = false, structWin = 80, internalWin = 60, swingLabelWin = 60, sweepWin = 60, sessWin = 80, rangeWin = 12, poolZone = 140, poolWash = 90, poolLvl = 150, poolStr = 160, poolLab = 400, htfStructEvents = 6, htfStructWin = 16, keyCap = 4, gradeFloor = 0, setupPast = 10, poolSetBox = 40, poolSetLine = 60, poolSetLab = 30)
 
 var ModeCfg mc = f_modeCfg(i_mode)
 
@@ -687,6 +848,17 @@ nMajorSide = mc.debug ? mc.majorPerSide : math.min(i_levelsPerSide, mc.majorPerS
 nMinorSide = i_reduceMinorLiq ? math.min(1, mc.minorPerSide) : mc.minorPerSide
 histDepth = i_autoHide ? math.min(i_histDepth, mc.hist) : mc.hist
 labelLvl = math.min(verbLevel, mc.labelLevel)
+// Setups: READY threshold by preset (§9.6), display floor = mode floor and user choice (ADR-09)
+f_gradeOf(GradeOpt g) =>
+    switch g
+        GradeOpt.c => GR_C
+        GradeOpt.b => GR_B
+        GradeOpt.a => GR_A
+        => GR_AP
+setReadyGrade = i_setPreset == SetPreset.conservative ? GR_A : i_setPreset == SetPreset.aggressive ? GR_C : GR_B
+setShowGrade = mc.debug ? GR_C : math.max(mc.gradeFloor, f_gradeOf(i_minGrade))
+setAlertGrade = f_gradeOf(i_alertGrade)
+vPlan = i_setups and i_showPlan
 panelSz = switch i_panelSize
     PanelSize.small => size.small
     PanelSize.large => size.large
@@ -726,6 +898,14 @@ f_evName(int typ) =>
         EV_SESSION_START => "SESSION_START"
         EV_SESSION_END => "SESSION_END"
         EV_HTF_BIAS => "HTF_BIAS"
+        EV_SETUP_FORMING => "SETUP_FORMING"
+        EV_SETUP_READY => "SETUP_READY"
+        EV_SETUP_TRIGGERED => "SETUP_TRIGGERED"
+        EV_SETUP_TP => "SETUP_TP"
+        EV_SETUP_SL => "SETUP_SL"
+        EV_SETUP_INVALID => "SETUP_INVALID"
+        EV_SETUP_EXPIRED => "SETUP_EXPIRED"
+        EV_SETUP_MISSED => "SETUP_MISSED"
         EV_SYS_WARM => "SYS_WARM"
         EV_SYS_WARN => "SYS_WARN"
         => "EV" + str.tostring(typ)
@@ -886,6 +1066,9 @@ bool htfOk = htfTf != "" and htfSec > chartSec
 bool htfBadCfg = i_htfMode == HtfMode.manual and not htfOk
 string htfReq = htfOk ? htfTf : timeframe.period
 string htfLabel = f_tfLabel(htfSec)
+
+f_htfPrefix(int tf) =>
+    tf != TF_CHART ? "◆" + htfLabel + " " : ""
 // HTF objects count their age in HTF bars (hBorn vs hLastBars below); distance limits scale
 // with the root of the TF ratio
 float htfDistMult = htfOk ? math.max(3.0, math.sqrt(htfSec / chartSec)) : 1.0
@@ -1962,6 +2145,604 @@ f_htfBreak(Core c, array<Brk> hb, int dir, int kind, float px, int swT, int brkT
     b.evId := e.id
     b
 
+// ═══ 30 · SETUP ENGINE ══════════════════════════════════════════════════════════
+// Setup automaton (§7.7) for the models SWEEP_REVERSAL and CONTINUATION (A.18), POI selection
+// (§9.4), the DRAFT TradePlan (§10), risk checks (§11.3) and the explainable confluence score
+// with presets (§9.5–9.6). Runs on confirmed bars after the Context engine: it reads the event
+// bus and the registries and emits SETUP_* events. Analytical in v1.0: nothing is executed.
+
+f_modelName(int m) =>
+    m == SM_REV ? "Sweep Reversal" : "Continuation"
+
+f_gradeName(int g) =>
+    g == GR_AP ? "A+" : g == GR_A ? "A" : g == GR_B ? "B" : "C"
+
+f_gradeFor(float sc) =>
+    sc >= 8.0 ? GR_AP : sc >= 6.5 ? GR_A : sc >= 5.0 ? GR_B : GR_C
+
+f_sideName(int d) =>
+    d == 1 ? "LONG" : "SHORT"
+
+// UI stage (§7.7 table): FORMING · READY · ACTIVE · DONE
+f_uiStage(int st) =>
+    st <= SS_FORMING ? "FORMING" : st == SS_READY ? "READY" : st <= SS_TP2 ? "ACTIVE" : "DONE"
+
+f_setActive(Setup s) =>
+    s.state >= SS_TRIG and s.state <= SS_TP2
+
+f_tpAt(Setup s, int n) =>
+    n == 1 ? s.tp1 : n == 2 ? s.tp2 : s.tp3
+
+// Position split over the targets (v2 default 0.5 / 0.3 / 0.2, renormalised to the targets that exist)
+f_alloc(int nTp, int n) =>
+    nTp >= 3 ? (n == 1 ? 0.5 : n == 2 ? 0.3 : 0.2) : nTp == 2 ? (n == 1 ? 0.6 : 0.4) : 1.0
+
+f_rrAt(Setup s, float px) =>
+    float risk = (s.entry - s.slInit) * s.dir
+    risk > 0 ? (px - s.entry) * s.dir / risk : na
+
+f_setEmit(Core c, Setup s, int typ, float price, float v1 = na, float v2 = na, float v3 = na, string s1 = "") =>
+    int tier = typ == EV_SETUP_EXPIRED or typ == EV_SETUP_MISSED ? 2 : 1
+    f_emit(c, typ, s.dir, price, s.id, na, tier, v1, v2, v3, s1)
+
+// Terminal transition before entry (INVALID / EXPIRED / MISSED). Only setups that were shown
+// (a POI was chosen) report it on the bus.
+f_setEnd(Core c, Setup s, int st, string why) =>
+    s.state := st
+    s.reason := why
+    s.endBar := bar_index
+    s.endT := time
+    if not na(s.poi)
+        int typ = st == SS_INVALID ? EV_SETUP_INVALID : st == SS_MISSED ? EV_SETUP_MISSED : EV_SETUP_EXPIRED
+        f_setEmit(c, s, typ, close, s.score, na, s.grade, why)
+    true
+
+// POI broken: the zone a setup waits for no longer exists as such
+f_poiBroken(Setup s) =>
+    Zone z = s.poi
+    na(z) ? false : z.state == ZS_CONVERTED or z.state == ZS_INVALID or z.state == ZS_EXPIRED or z.state == ZS_FILLED
+
+f_zoneName(Zone z) =>
+    na(z) ? "—" : f_kindTag(z.kind)
+
+// ── POI selection (§9.4). Candidates: FVG / OB of the shift leg, same direction, FRESH.
+// Location: proximal edge in the discount (long) / premium (short) half of the shift range.
+// Priority: FVG ∩ OB → FVG in OTE → OB in OTE → closest to EQ. Returns 2 = picked,
+// 1 = leg zones exist but none in the right half, 0 = no leg zones.
+f_pickPoi(Setup s, array<Zone> zs) =>
+    int d = s.dir
+    float span = s.rHi - s.rLo
+    float eq = (s.rHi + s.rLo) / 2
+    float bLo = d == 1 ? s.rHi - oteHi * span : s.rLo + oteLo * span
+    float bHi = d == 1 ? s.rHi - oteLo * span : s.rLo + oteHi * span
+    array<Zone> cand = array.new<Zone>()
+    int nLeg = 0
+    if span > 0
+        for z in zs
+            bool legOb = z.kind == ZK_OB and z.brkId == s.shiftBrkId
+            bool legFvg = z.kind == ZK_FVG and z.bar >= s.legBar
+            if z.tf == TF_CHART and z.dir == d and z.state == ZS_FRESH and (legOb or legFvg)
+                nLeg += 1
+                if d == 1 ? z.top <= eq : z.bottom >= eq
+                    cand.push(z)
+    int m = cand.size()
+    Zone best = na
+    Zone alt = na
+    bool combo = false
+    float cTop = na
+    float cBot = na
+    if m > 0
+        // 1 · FVG ∩ OB (overlap ≥ 30% of the smaller zone)
+        float bestC = -1.0
+        for a in cand
+            if a.kind == ZK_FVG
+                for o in cand
+                    if o.kind == ZK_OB
+                        float ov = math.min(a.top, o.top) - math.max(a.bottom, o.bottom)
+                        float sm = math.min(a.top - a.bottom, o.top - o.bottom)
+                        if sm > 0 and ov >= 0.3 * sm
+                            bool inOte = a.top >= bLo and a.bottom <= bHi
+                            float pc = (inOte ? 1.0 : 0.0) - math.abs((d == 1 ? a.top : a.bottom) - eq) / span
+                            if pc > bestC
+                                bestC := pc
+                                best := a
+                                alt := o
+                                combo := true
+                                cTop := math.min(a.top, o.top)
+                                cBot := math.max(a.bottom, o.bottom)
+        // 2 · single zones: FVG in OTE → OB in OTE → closest to EQ; the runner-up is the alt POI
+        if not combo
+            float p1 = -10.0
+            float p2 = -10.0
+            for a in cand
+                bool inOte = a.top >= bLo and a.bottom <= bHi
+                float p = (inOte ? (a.kind == ZK_FVG ? 3.0 : 2.0) : 1.0) - math.abs((d == 1 ? a.top : a.bottom) - eq) / span
+                if p > p1
+                    alt := best
+                    p2 := p1
+                    best := a
+                    p1 := p
+                else if p > p2
+                    alt := a
+                    p2 := p
+            cTop := best.top
+            cBot := best.bottom
+        s.poi := best
+        s.poiAlt := alt
+        s.combo := combo
+        s.entryTop := cTop
+        s.entryBot := cBot
+    m > 0 ? 2 : nLeg > 0 ? 1 : 0
+
+// ── DRAFT TradePlan (§10): entry, SL, targets, RR. Returns "" or the reason it is not valid.
+f_setPlan(Setup s, array<Liq> lv) =>
+    int d = s.dir
+    float tick = syminfo.mintick
+    float span = s.rHi - s.rLo
+    float top = s.entryTop
+    float bot = s.entryBot
+    float ce = (top + bot) / 2
+    float l705 = d == 1 ? s.rHi - 0.705 * span : s.rLo + 0.705 * span
+    float e = i_entryMode == EntryMode.edge ? (d == 1 ? top : bot) : i_entryMode == EntryMode.ote and l705 <= top and l705 >= bot ? l705 : ce
+    e := math.round_to_mintick(e)
+    // stop: beyond the sweep (reversal) / the protected swing (continuation), the POI, or ATR
+    float buf = math.max(i_slBufTicks * tick, i_slBufAtr * vu) + i_spread * tick
+    float distal = d == 1 ? s.poi.bottom : s.poi.top
+    if s.combo and not na(s.poiAlt)
+        distal := d == 1 ? math.min(distal, s.poiAlt.bottom) : math.max(distal, s.poiAlt.top)
+    float anchor = s.model == SM_REV ? s.sweepExt : d == 1 ? s.rLo : s.rHi
+    float sl = i_slMode == SlMode.atr ? e - d * 1.5 * vu : (i_slMode == SlMode.poi ? distal : anchor) - d * buf
+    sl := d == 1 ? math.floor(sl / tick) * tick : math.ceil(sl / tick) * tick
+    s.inv := anchor
+    s.entry := e
+    s.sl := sl
+    s.slInit := sl
+    float risk = (e - sl) * d
+    string fail = risk <= 0 ? "SL_INVALID" : risk / tick < i_minSlTicks ? "SL_TOO_TIGHT" : risk > i_maxSlAtr * vu ? "SL_TOO_WIDE" : ""
+    s.tp1 := na
+    s.tp2 := na
+    s.tp3 := na
+    s.tp1Tag := ""
+    s.tp2Tag := ""
+    s.tp3Tag := ""
+    s.nTp := 0
+    s.drawLiq := false
+    s.drawTxt := ""
+    if fail == ""
+        // opposite liquidity beyond the entry, nearest first; the shift range extreme is the weak high / low
+        array<float> px = array.new<float>()
+        array<float> dist = array.new<float>()
+        array<string> tg = array.new<string>()
+        array<bool> maj = array.new<bool>()
+        array<bool> hk = array.new<bool>()
+        for x in lv
+            if (x.state == LS_ACTIVE or x.state == LS_PENDING) and x.side == d and (x.price - e) * d > 0
+                bool htf = x.tf != TF_CHART
+                px.push(x.price)
+                dist.push((x.price - e) * d)
+                tg.push(f_htfPrefix(x.tf) + (x.kind == LK_SWING ? (d == 1 ? "BSL" : "SSL") : x.tag))
+                maj.push(x.major or htf)
+                hk.push(htf or x.kind != LK_SWING)
+        float ext = d == 1 ? s.rHi : s.rLo
+        if (ext - e) * d > 0
+            px.push(ext)
+            dist.push((ext - e) * d)
+            tg.push(d == 1 ? "Range high" : "Range low")
+            maj.push(true)
+            hk.push(false)
+        int nc = px.size()
+        if i_tpMode == TpMode.liq and nc > 0
+            array<int> ord = dist.sort_indices(order.ascending)
+            for k in ord
+                float dd = dist.get(k)
+                if na(s.tp1)
+                    if dd >= risk
+                        s.tp1 := px.get(k)
+                        s.tp1Tag := tg.get(k)
+                else if na(s.tp2)
+                    if dd > (s.tp1 - e) * d and maj.get(k)
+                        s.tp2 := px.get(k)
+                        s.tp2Tag := tg.get(k)
+                else if na(s.tp3)
+                    if dd > (s.tp2 - e) * d and hk.get(k)
+                        s.tp3 := px.get(k)
+                        s.tp3Tag := tg.get(k)
+                // draw on liquidity: a major opposite target at least 2R away (§9.5)
+                if not s.drawLiq and maj.get(k) and dd >= 2 * risk
+                    s.drawLiq := true
+                    s.drawTxt := tg.get(k) + " " + f_px(px.get(k)) + " (" + str.tostring(dd / risk, "0.0") + "R)"
+        if i_tpMode == TpMode.rr
+            s.tp1 := e + d * risk
+            s.tp2 := e + d * 2 * risk
+            s.tp3 := e + d * 3 * risk
+            s.tp1Tag := "1R"
+            s.tp2Tag := "2R"
+            s.tp3Tag := "3R"
+        // no opposite liquidity at all → one target at Min RR
+        if na(s.tp1)
+            s.tp1 := e + d * i_minRR * risk
+            s.tp1Tag := str.tostring(i_minRR, "0.0#") + "R"
+        s.tp1 := math.round_to_mintick(s.tp1)
+        s.tp2 := na(s.tp2) ? na : math.round_to_mintick(s.tp2)
+        s.tp3 := na(s.tp3) ? na : math.round_to_mintick(s.tp3)
+        s.nTp := na(s.tp2) ? 1 : na(s.tp3) ? 2 : 3
+        s.rrFinal := (f_tpAt(s, s.nTp) - e) * d / risk
+        fail := s.rrFinal < i_minRR ? "RR_LOW" : ""
+    fail
+
+// Opposing FRESH HTF zone between entry and the price `to` (§9.5 penalty, §11.3 check 3)
+f_htfAgainst(Setup s, array<Zone> zs, float to) =>
+    bool hit = false
+    float lo = math.min(s.entry, to)
+    float hi = math.max(s.entry, to)
+    for z in zs
+        if z.tf != TF_CHART and z.dir == -s.dir and z.state == ZS_FRESH and z.top >= lo and z.bottom <= hi
+            hit := true
+    hit
+
+f_fac(string acc, string name, float pts) =>
+    acc + (pts >= 0 ? "+ " : "− ") + name + "  " + (pts >= 0 ? "+" : "−") + str.tostring(math.abs(pts), "0.0#") + "\n"
+
+// ── Confluence score (§9.5) with the preset weights (§9.6). Fills score, grade, factors.
+f_setScore(Setup s, Ctx x, array<Zone> zs) =>
+    bool agg = i_setPreset == SetPreset.aggressive
+    int d = s.dir
+    float span = s.rHi - s.rLo
+    float eq = (s.rHi + s.rLo) / 2
+    float bLo = d == 1 ? s.rHi - oteHi * span : s.rLo + oteLo * span
+    float bHi = d == 1 ? s.rHi - oteLo * span : s.rLo + oteHi * span
+    string f = ""
+    // Context (≤ 3.0)
+    float gC = 0.0
+    float pen = 0.0
+    bool htfRel = x.htfOk and not x.htfLow
+    if htfRel and x.htfTrend == d
+        gC += 1.5
+        f := f_fac(f, "HTF " + htfLabel + (d == 1 ? " BULLISH" : " BEARISH"), 1.5)
+    else if htfRel and x.htfTrend == -d
+        float p = agg ? -1.0 : -1.5
+        pen += p
+        f := f_fac(f, "HTF " + htfLabel + " against", p)
+    bool disc = d == 1 ? s.entryTop <= eq : s.entryBot >= eq
+    bool inOte = s.entryTop >= bLo and s.entryBot <= bHi
+    if disc
+        gC += 0.75
+        f := f_fac(f, d == 1 ? "Discount" : "Premium", 0.75)
+    if inOte
+        gC += 0.75
+        f := f_fac(f, "OTE", 0.75)
+    gC := math.min(3.0, gC)
+    // Liquidity (≤ 2.5)
+    float gL = 0.0
+    if s.model == SM_REV
+        float mp = s.sweepMajor ? 1.0 : 0.3
+        gL += 1.0 + mp
+        f := f_fac(f, s.sweepTag + " swept (" + (s.sweepMajor ? "major" : "minor") + ")", 1.0 + mp)
+    else if s.contSweep
+        gL += 1.0
+        f := f_fac(f, "Internal liquidity swept on the pullback", 1.0)
+    if s.drawLiq
+        gL += 0.5
+        f := f_fac(f, "Draw: " + s.drawTxt, 0.5)
+    gL := math.min(2.5, gL)
+    // Structure (≤ 2.0)
+    float gS = (s.shiftLvl == LV_SWG ? 1.0 : 0.5) + math.min(1.0, nz(s.disp) / 2.0)
+    string sn = s.shiftKind == BK_BOS ? "BOS" : s.isMSS ? "MSS" : "CHoCH"
+    f := f_fac(f, (s.shiftLvl == LV_SWG ? "Swing " : "Internal ") + sn + " " + str.tostring(nz(s.disp), "0.0") + " ATR", math.min(2.0, gS))
+    gS := math.min(2.0, gS)
+    // POI (≤ 1.5; Aggressive: HTF POI ×2)
+    float gP = s.combo ? 1.0 : 0.6
+    f := f_fac(f, s.combo ? "FVG ∩ OB" : f_zoneName(s.poi), gP)
+    bool htfPoi = false
+    for z in zs
+        if z.tf != TF_CHART and z.dir == d and z.state < ZS_FILLED and z.top >= s.entryBot and z.bottom <= s.entryTop
+            htfPoi := true
+    if htfPoi
+        float hp = agg ? 1.0 : 0.5
+        gP += hp
+        f := f_fac(f, "Inside " + htfLabel + " zone", hp)
+    gP := math.min(agg ? 2.0 : 1.5, gP)
+    // Time (≤ 0.5; Aggressive ×2)
+    float gT = 0.0
+    if s.kz
+        gT := agg ? 1.0 : 0.5
+        f := f_fac(f, "Killzone", gT)
+    // Risk (≤ 0.5)
+    float gR = s.rrFinal >= 3.0 ? 0.5 : s.rrFinal >= 2.0 ? 0.25 : 0.0
+    if gR > 0
+        f := f_fac(f, "RR " + str.tostring(s.rrFinal, "0.0"), gR)
+    // Penalties
+    if f_htfAgainst(s, zs, s.tp1)
+        pen -= 1.0
+        f := f_fac(f, htfLabel + " zone against before TP1", -1.0)
+    if s.model == SM_CONT and x.ranging
+        pen -= 0.5
+        f := f_fac(f, "Ranging regime", -0.5)
+    s.score := math.max(0.0, math.min(10.0, gC + gL + gS + gP + gT + gR + pen))
+    s.grade := f_gradeFor(s.score)
+    s.factors := f
+    s.score
+
+// Setup Path text (§9.7): short for the card, medium for Analysis and the tooltip
+f_setChain(Setup s) =>
+    int d = s.dir
+    string sn = s.shiftKind == BK_BOS ? "BOS" : s.isMSS ? "MSS" : "CHoCH"
+    float span = s.rHi - s.rLo
+    float bLo = d == 1 ? s.rHi - oteHi * span : s.rLo + oteLo * span
+    float bHi = d == 1 ? s.rHi - oteLo * span : s.rLo + oteHi * span
+    bool inOte = not na(s.entryTop) and s.entryTop >= bLo and s.entryBot <= bHi
+    string poi = na(s.poi) ? "" : " → " + (s.combo ? "FVG+OB" : f_zoneName(s.poi))
+    string loc = na(s.poi) ? "" : inOte ? " → OTE" : d == 1 ? " → DISC" : " → PREM"
+    string head = s.model == SM_REV ? "Sweep → " + sn : sn
+    s.chain := head + poi + loc
+    string mid0 = s.model == SM_REV ? s.sweepTag + " swept → " : ""
+    s.chainMid := mid0 + (s.shiftLvl == LV_SWG ? "" : "i") + sn + f_arrow(d) + " (" + str.tostring(nz(s.disp), "0.0") + " ATR)" + poi + loc
+    s.chain
+
+// ── Open a setup for model × direction. At most one not-yet-active setup per model × direction
+// (§9.3): a newer one supersedes it unless it is READY. Returns na when blocked.
+f_setOpen(Core c, array<Setup> ss, array<Setup> arch, int model, int dir) =>
+    bool blocked = false
+    int n = ss.size()
+    if n > 0
+        for i = n - 1 to 0
+            Setup o = ss.get(i)
+            if o.model == model and o.dir == dir and o.state < SS_TRIG
+                if o.state == SS_READY
+                    blocked := true
+                else
+                    f_setEnd(c, o, SS_EXPIRED, "SUPERSEDED")
+                    Setup old = ss.remove(i)
+                    if not na(old.poi)
+                        arch.push(old)
+                        if arch.size() > SETUP_ARCH_CAP
+                            arch.shift()
+    Setup s = na
+    if not blocked
+        s := Setup.new(id = f_nextId(c), model = model, dir = dir, state = SS_SWEEP, bornBar = bar_index, bornT = time, stageBar = bar_index)
+        ss.push(s)
+        if ss.size() > SETUP_CAP
+            Setup old = ss.shift()
+            f_setEnd(c, old, SS_EXPIRED, "CAPACITY")
+            if not na(old.poi)
+                arch.push(old)
+                if arch.size() > SETUP_ARCH_CAP
+                    arch.shift()
+    s
+
+// Shift candidate on this bar: swing break first, then internal (A.18)
+f_shiftOf(Setup s, StructState sw, StructState si) =>
+    Brk pick = na
+    for k = 0 to 1
+        Brk b = k == 0 ? (s.dir == 1 ? sw.newUp : sw.newDn) : (s.dir == 1 ? si.newUp : si.newDn)
+        if na(pick) and not na(b)
+            bool fromSweep = s.dir == 1 ? b.legExt0 <= s.sweepExt + 0.25 * vu : b.legExt0 >= s.sweepExt - 0.25 * vu
+            if b.bar >= s.sweepBar and nz(b.disp) >= i_shiftDisp and fromSweep
+                pick := b
+    pick
+
+f_setShift(Setup s, Brk b) =>
+    s.shiftBrkId := b.id
+    s.shiftEvId := b.evId
+    s.shiftBar := bar_index
+    s.shiftT := time
+    s.shiftLvl := b.lvl
+    s.shiftKind := b.kind
+    s.isMSS := b.mss
+    s.disp := b.disp
+    s.legBar := b.origBar
+    if s.dir == 1
+        s.rLo := s.model == SM_REV ? math.min(s.sweepExt, b.legExt0) : b.legExt0
+        s.rHi := b.legExt1
+    else
+        s.rHi := s.model == SM_REV ? math.max(s.sweepExt, b.legExt0) : b.legExt0
+        s.rLo := b.legExt1
+    s.state := SS_SHIFTED
+    s.stageBar := bar_index
+    true
+
+// ── Advance one setup on a confirmed bar (A.18 guards). kzNow: London or NY killzone open.
+f_setAdvance(Core c, Setup s, StructState sw, StructState si, array<Liq> lv, array<Zone> zs, Ctx x, bool kzNow) =>
+    int d = s.dir
+    Brk opp = d == 1 ? sw.newDn : sw.newUp
+    bool oppChoch = not na(opp) and opp.kind == BK_CHOCH
+    // 1 · SWEEP_SEEN: wait for the shift against the sweep
+    if s.state == SS_SWEEP
+        if d == 1 ? close < s.sweepExt : close > s.sweepExt
+            f_setEnd(c, s, SS_EXPIRED, "SWEEP_FAILED")
+        else
+            if d == 1 ? low < s.sweepExt : high > s.sweepExt
+                s.sweepExt := d == 1 ? low : high
+            Brk b = f_shiftOf(s, sw, si)
+            if not na(b) and (not i_reqKz or kzNow)
+                f_setShift(s, b)
+                s.kz := kzNow
+            else if bar_index - s.sweepBar >= i_nShift
+                f_setEnd(c, s, SS_EXPIRED, "NO_SHIFT_IN_WINDOW")
+    // 2 · SHIFTED: the range follows the leg until a POI in the right half appears
+    if s.state == SS_SHIFTED
+        if bar_index > s.shiftBar
+            if d == 1
+                s.rHi := math.max(s.rHi, high)
+            else
+                s.rLo := math.min(s.rLo, low)
+        int pc = f_pickPoi(s, zs)
+        float invLvl = s.model == SM_REV ? s.sweepExt : d == 1 ? s.rLo : s.rHi
+        if pc == 2
+            s.state := SS_FORMING
+            s.stageBar := bar_index
+            f_setChain(s)
+            f_setEmit(c, s, EV_SETUP_FORMING, close, s.model, SS_FORMING, na, s.chain)
+        else if (d == 1 ? close < invLvl : close > invLvl) or oppChoch
+            f_setEnd(c, s, SS_EXPIRED, oppChoch ? "OPPOSITE_CHOCH" : "CLOSE_BEYOND")
+        else if bar_index - s.shiftBar >= i_expiry
+            f_setEnd(c, s, SS_EXPIRED, pc == 0 ? "NO_POI" : d == 1 ? "POI_IN_PREMIUM" : "POI_IN_DISCOUNT")
+    // 3 · FORMING: build the plan, score it, promote to READY (checks are repeated every bar)
+    if s.state == SS_FORMING
+        float invLvl = s.model == SM_REV ? s.sweepExt : d == 1 ? s.rLo : s.rHi
+        if d == 1 ? close < invLvl : close > invLvl
+            f_setEnd(c, s, SS_INVALID, "CLOSE_BEYOND " + f_px(invLvl))
+        else if oppChoch
+            f_setEnd(c, s, SS_INVALID, "OPPOSITE_CHOCH")
+        else if f_poiBroken(s)
+            f_setEnd(c, s, SS_INVALID, "POI_BROKEN")
+        else
+            string fail = f_setPlan(s, lv)
+            if fail == ""
+                s.kz := s.kz or kzNow
+                f_setScore(s, x, zs)
+                float r1 = s.entry + d * (s.entry - s.slInit) * d
+                if i_setPreset == SetPreset.conservative and f_htfAgainst(s, zs, r1)
+                    fail := "HTF_ZONE_NEAR"
+                else if s.grade < setReadyGrade
+                    fail := "GRADE_LOW"
+            s.why := fail
+            if fail == ""
+                f_setChain(s)
+                s.state := SS_READY
+                s.stageBar := bar_index
+                s.readyBar := bar_index
+                s.readyT := time
+                f_setEmit(c, s, EV_SETUP_READY, s.entry, s.score, s.rrFinal, s.grade, s.chain)
+            else if bar_index - s.stageBar >= i_expiry
+                f_setEnd(c, s, SS_EXPIRED, fail)
+    // 4 · READY: wait for the entry from the next bar on; cancel rules before it (§10.2)
+    if s.state == SS_READY and bar_index > s.readyBar
+        if d == 1 ? low <= s.entry : high >= s.entry
+            s.state := SS_TRIG
+            s.stageBar := bar_index
+            s.trigBar := bar_index
+            s.trigT := time
+            f_setEmit(c, s, EV_SETUP_TRIGGERED, s.entry, s.score, s.rrFinal, s.grade)
+        else if d == 1 ? close < s.inv : close > s.inv
+            f_setEnd(c, s, SS_INVALID, "CLOSE_BEYOND " + f_px(s.inv))
+        else if oppChoch
+            f_setEnd(c, s, SS_INVALID, "OPPOSITE_CHOCH")
+        else if f_poiBroken(s)
+            f_setEnd(c, s, SS_INVALID, "POI_BROKEN")
+        else if d == 1 ? high >= s.tp1 : low <= s.tp1
+            f_setEnd(c, s, SS_MISSED, "TP1_BEFORE_ENTRY")
+        else if bar_index - s.readyBar >= i_expiry
+            f_setEnd(c, s, SS_EXPIRED, "EXPIRY")
+        else if i_reqKz and s.kz and not kzNow
+            f_setEnd(c, s, SS_EXPIRED, "SESSION_END")
+    // 5 · ACTIVE: SL first when SL and TP fall on one bar (§20.3); BE after TP1 (option)
+    if f_setActive(s)
+        bool hitSl = d == 1 ? low <= s.sl : high >= s.sl
+        if hitSl
+            float rSl = f_rrAt(s, s.sl)
+            float left = 1.0
+            if s.tpHit > 0
+                for n = 1 to s.tpHit
+                    left -= f_alloc(s.nTp, n)
+            s.rReal += left * rSl
+            s.state := s.tpHit > 0 ? SS_WIN : SS_SL
+            s.reason := s.be ? "BE" : "SL"
+            s.endBar := bar_index
+            s.endT := time
+            f_setEmit(c, s, EV_SETUP_SL, s.sl, rSl, s.rReal)
+        else if s.tpHit < s.nTp
+            for n = s.tpHit + 1 to s.nTp
+                float tp = f_tpAt(s, n)
+                if n == s.tpHit + 1 and (d == 1 ? high >= tp : low <= tp)
+                    float rr = f_rrAt(s, tp)
+                    s.tpHit := n
+                    s.rReal += f_alloc(s.nTp, n) * rr
+                    f_setEmit(c, s, EV_SETUP_TP, tp, n, rr)
+                    if n == 1 and i_beAfterTp1
+                        s.sl := s.entry
+                        s.be := true
+            if s.tpHit >= s.nTp
+                s.state := SS_WIN
+                s.reason := "TP" + str.tostring(s.nTp)
+                s.endBar := bar_index
+                s.endT := time
+            else if s.tpHit > 0
+                s.state := s.tpHit == 1 ? SS_TP1 : SS_TP2
+    true
+
+// ── One confirmed-bar step: advance live setups, then open new ones from this bar's events
+f_setupStep(Core c, array<Setup> ss, array<Setup> arch, StructState sw, StructState si, array<Liq> lv, array<Zone> zs, Ctx x, bool kzNow) =>
+    int n = ss.size()
+    if n > 0
+        for i = n - 1 to 0
+            Setup s = ss.get(i)
+            f_setAdvance(c, s, sw, si, lv, zs, x, kzNow)
+            // continuation bonus: internal liquidity swept on the pullback before the entry
+            if s.model == SM_CONT and (s.state == SS_FORMING or s.state == SS_READY)
+                if f_evFlag(c, EV_LIQ_SWEPT, s.dir, na)
+                    s.contSweep := true
+            if s.state >= SS_WIN
+                Setup done = ss.remove(i)
+                if not na(done.poi)
+                    arch.push(done)
+                    if arch.size() > SETUP_ARCH_CAP
+                        arch.shift()
+    bool htfRel = x.htfOk and not x.htfLow
+    bool cons = i_setPreset == SetPreset.conservative
+    // SWEEP_REVERSAL: every sweep on this bar opens a hypothesis in the reaction direction
+    if i_smRev
+        int nb = c.barEvents.size()
+        if nb > 0
+            for k = 0 to nb - 1
+                Event e = c.barEvents.get(k)
+                if e.typ == EV_LIQ_SWEPT
+                    int d = e.dir
+                    bool htfOkDir = not (htfRel and x.htfTrend == -d and cons) and (not i_reqHtf or (htfRel and x.htfTrend == d))
+                    Liq lq = na
+                    for l in lv
+                        if l.id == e.ref
+                            lq := l
+                    if htfOkDir and not na(lq)
+                        Setup s = f_setOpen(c, ss, arch, SM_REV, d)
+                        if not na(s)
+                            s.sweepEvId := e.id
+                            s.sweptLiqId := lq.id
+                            s.sweepExt := nz(lq.ext, d == 1 ? low : high)
+                            s.sweepMajor := lq.major or lq.tf != TF_CHART
+                            s.sweepTag := f_htfPrefix(lq.tf) + (d == 1 ? "SSL" : "BSL") + (lq.kind == LK_SWING ? (lq.touches >= 2 ? " ≡" + str.tostring(lq.touches) : "") : " " + lq.tag)
+                            s.sweepBar := bar_index
+                            // a shift on the sweep bar itself counts (sweep and CHoCH on one bar, §12.3)
+                            f_setAdvance(c, s, sw, si, lv, zs, x, kzNow)
+    // CONTINUATION: BOS with the swing trend and a real leg (swing, or internal inside a swing trend)
+    if i_smCont
+        for k = 0 to 3
+            Brk b = k == 0 ? sw.newUp : k == 1 ? sw.newDn : k == 2 ? si.newUp : si.newDn
+            if not na(b)
+                int d = b.dir
+                bool okB = b.kind == BK_BOS and nz(b.disp) >= i_shiftDisp and sw.trend == d and not b.shadowed
+                bool htfOkDir = (not cons or (htfRel and x.htfTrend == d)) and (not i_reqHtf or (htfRel and x.htfTrend == d))
+                if okB and htfOkDir and (not i_reqKz or kzNow)
+                    Setup s = f_setOpen(c, ss, arch, SM_CONT, d)
+                    if not na(s)
+                        s.sweepExt := b.legExt0
+                        s.sweepBar := bar_index
+                        f_setShift(s, b)
+                        s.kz := kzNow
+                        f_setAdvance(c, s, sw, si, lv, zs, x, kzNow)
+    true
+
+// Focus setup for the Ribbon, the Dashboard and the price-scale markers: the most advanced
+// visible stage first (ACTIVE → READY → FORMING), then the higher score, then the newer one
+f_setRank(Setup s) =>
+    f_setActive(s) ? 3 : s.state == SS_READY ? 2 : s.state == SS_FORMING ? 1 : 0
+
+f_setShown(Setup s) =>
+    s.state == SS_FORMING or (s.state >= SS_READY and s.grade >= setShowGrade)
+
+f_focusSetup(array<Setup> ss, int dirOnly) =>
+    Setup best = na
+    for s in ss
+        if f_setShown(s) and s.state < SS_WIN and (dirOnly == 0 or s.dir == dirOnly)
+            if na(best)
+                best := s
+            else
+                int ra = f_setRank(s)
+                int rb = f_setRank(best)
+                if ra > rb or (ra == rb and (s.score > best.score or (s.score == best.score and s.bornBar > best.bornBar)))
+                    best := s
+    best
+
 // ═══ 60 · VISUAL TOKENS ═════════════════════════════════════════════════════════
 // Design system tokens (docs/04-visual-design-system.md §13.3–13.7). Renderers use only
 // these values: hue = meaning, form = entity type, transparency = state × relevance.
@@ -2301,9 +3082,6 @@ f_spreadPick(View v, array<int> xs, array<int> sg, int q, int slots) =>
                             cnt.set(s, cnt.get(s) + 1)
                             out.push(k)
     out
-
-f_htfPrefix(int tf) =>
-    tf != TF_CHART ? "◆" + htfLabel + " " : ""
 
 // ── Zones (§13.8, §14.10, §15 M2/M3/M6)
 // Converted zones (BB / MB / IFVG) start where the parent broke, so they never overlap it.
@@ -2836,6 +3614,143 @@ f_renderSessions(View v, BoxPool pw, LabelPool pb, array<SessBox> hist, Sess sa,
             shown := sel.size()
     shown
 
+// ═══ 63 · SETUP COMPOSER ════════════════════════════════════════════════════════
+// Setup composition (§14.8, §14.9) in the convention of TradingView's Long/Short Position
+// tool: entry zone (POI), Entry / SL / TP lines, reward and risk boxes, the card. Every stage
+// has its own look (FORMING outline → READY full → ACTIVE with entry marker → DONE faded with
+// the outcome). Visual only: reads Setup objects, never changes them.
+
+f_reasonText(string r) =>
+    str.replace_all(str.lower(r), "_", " ")
+
+f_setOutcome(Setup s) =>
+    s.state == SS_WIN ? "✓ " + (s.rReal >= 0 ? "+" : "") + str.tostring(s.rReal, "0.0") + "R" + (s.reason == "BE" ? " · BE" : "") : s.state == SS_SL ? "✕ SL " + str.tostring(s.rReal, "0.0") + "R" : s.state == SS_INVALID ? "✕ INVALID · " + f_reasonText(s.reason) : s.state == SS_EXPIRED ? "⌛ EXPIRED · " + f_reasonText(s.reason) : s.state == SS_MISSED ? "MISSED · TP1 before entry" : ""
+
+f_setPlanText(Setup s) =>
+    float risk = (s.entry - s.slInit) * s.dir
+    string t = "E " + f_px(s.entry) + " · SL " + f_px(s.slInit) + " (" + str.tostring(risk / vu, "0.0") + " ATR, " + str.tostring(math.round(risk / syminfo.mintick)) + " ticks)"
+    for n = 1 to 3
+        if n <= s.nTp
+            string tg = n == 1 ? s.tp1Tag : n == 2 ? s.tp2Tag : s.tp3Tag
+            t := t + "\nTP" + str.tostring(n) + " " + f_px(f_tpAt(s, n)) + " · " + str.tostring(f_rrAt(s, f_tpAt(s, n)), "0.0") + "R · " + tg
+    t + "\ninvalidation: close " + (s.dir == 1 ? "below " : "above ") + f_px(s.inv)
+
+// Full explanation (§9.7) for the card tooltip
+f_setTip(Setup s) =>
+    string head = f_sideName(s.dir) + " · " + str.upper(f_modelName(s.model)) + (na(s.readyBar) ? " · FORMING" : " · " + f_gradeName(s.grade) + " " + str.tostring(s.score, "0.0") + "/10")
+    string body = s.chainMid + (s.factors != "" ? "\n" + s.factors : "\n")
+    string plan = na(s.readyBar) ? (s.why != "" ? "waiting: " + f_reasonText(s.why) : "waiting for a valid plan") : f_setPlanText(s)
+    head + "\n" + body + plan + "\nANALYTICAL · not executed. The score measures how complete the setup is, not a win probability."
+
+f_card(LabelPool p, int x, float y, string txt, color tc, color bg, string sz, string tip) =>
+    label lb = p.takeLabel()
+    if not na(lb)
+        label.set_xy(lb, x, y)
+        label.set_yloc(lb, yloc.price)
+        label.set_text(lb, txt)
+        label.set_textcolor(lb, tc)
+        label.set_color(lb, bg)
+        label.set_style(lb, label.style_label_left)
+        label.set_size(lb, sz)
+        label.set_tooltip(lb, tip)
+        label.set_textalign(lb, text.align_left)
+    not na(lb)
+
+// One composition. past: an older setup in the Analysis history (no price tags, small card).
+f_drawSetup(BoxPool pb, LinePool pl, LabelPool plb, Setup s, bool past) =>
+    int d = s.dir
+    bool forming = s.state <= SS_FORMING
+    bool planned = not na(s.readyBar)
+    bool active = f_setActive(s)
+    bool done = s.state >= SS_WIN
+    bool bad = s.state == SS_SL or s.state == SS_INVALID
+    bool lapsed = s.state == SS_EXPIRED or s.state == SS_MISSED
+    int x0 = planned ? s.readyT : s.shiftT
+    int x1 = done ? math.max(s.endT, x0 + 5 * barMs) : math.max(x0 + 20 * barMs, time + 3 * barMs)
+    color sig = bad or lapsed ? C_INV : C_SIG
+    color rew = bad or lapsed ? C_INV : C_BULL
+    color rsk = bad or lapsed ? C_INV : C_BEAR
+    int lnT = done ? OP_FAINT : OP_SOLID
+    // entry zone (POI): outline while forming or lapsed, focus fill when READY / ACTIVE
+    bool outline = forming or lapsed
+    f_box(pb, x0, x1, s.entryTop, s.entryBot, color.new(sig, outline or done ? F_GHOST : F_FOCUS), color.new(sig, outline ? OP_SOFT : done ? OP_FAINT : OP_MEDIUM), 1, outline ? line.style_dashed : line.style_solid, "", color(na), text.align_right)
+    if planned and vPlan and not lapsed
+        float e = s.entry
+        float lastTp = f_tpAt(s, s.nTp)
+        if i_mode != DisplayMode.clean
+            f_box(pb, x0, x1, math.max(e, lastTp), math.min(e, lastTp), color.new(rew, done ? F_GHOST : F_FAINT), color(na), 1, line.style_solid, "", color(na), text.align_right)
+            f_box(pb, x0, x1, math.max(e, s.slInit), math.min(e, s.slInit), color.new(rsk, done ? F_GHOST : F_FAINT), color(na), 1, line.style_solid, "", color(na), text.align_right)
+        f_line(pl, x0, e, x1, e, color.new(sig, lnT), line.style_solid, 2)
+        f_line(pl, x0, s.slInit, x1, s.slInit, color.new(rsk, lnT), line.style_solid, 2)
+        for n = 1 to 3
+            if n <= s.nTp
+                float tp = f_tpAt(s, n)
+                bool hit = n <= s.tpHit
+                f_line(pl, x0, tp, x1, tp, color.new(rew, done or hit ? OP_FAINT : OP_MEDIUM), line.style_dashed, 1)
+                if not past and labelLvl > 0
+                    f_label(plb, x1, tp, "TP" + str.tostring(n) + " " + f_px(tp) + " · " + str.tostring(f_rrAt(s, tp), "0.0") + "R" + (hit ? " ✓" : ""), color.new(rew, done ? OP_SOFT : OP_SOLID), label.style_label_left, size.tiny, (n == 1 ? s.tp1Tag : n == 2 ? s.tp2Tag : s.tp3Tag) + " · " + f_px(tp), yloc.price)
+        if not past and labelLvl > 0
+            f_label(plb, x1, s.slInit, "SL " + f_px(s.slInit) + (s.be and not done ? " → BE" : ""), color.new(rsk, done ? OP_SOFT : OP_SOLID), label.style_label_left, size.tiny, "Stop loss " + f_px(s.slInit) + (s.be ? " · moved to entry after TP1" : ""), yloc.price)
+        // invalidation differs from the stop by the buffer: shown while the entry is pending
+        if s.state == SS_READY and math.abs(s.inv - s.slInit) >= syminfo.mintick
+            f_line(pl, x0, s.inv, x1, s.inv, color.new(C_BEAR, OP_SOFT), line.style_dotted, 1)
+        if not na(s.trigT)
+            f_label(plb, s.trigT, e, "●", color.new(sig, done ? OP_SOFT : OP_SOLID), label.style_label_center, size.small, "Entry " + f_px(e) + " · " + f_timeStr(s.trigT), yloc.price)
+    // card: direction, grade and score, chain, RR / SL size; outcome when done
+    float risk = planned ? (s.entry - s.slInit) * d : na
+    string head = done ? f_setOutcome(s) : f_sideName(d) + (forming ? " — FORMING" : " · " + f_gradeName(s.grade) + " " + str.tostring(s.score, "0.0") + (active ? " · ACTIVE" : ""))
+    string txt = head
+    if not past
+        if planned and not done
+            txt := head + "   E " + f_px(s.entry) + "\n" + s.chain + "\nRR 1:" + str.tostring(s.rrFinal, "0.0") + " · SL " + str.tostring(risk / vu, "0.0") + " ATR"
+        else
+            txt := head + "\n" + s.chain
+    float cy = planned and not lapsed ? s.entry : (s.entryTop + s.entryBot) / 2
+    color tc = done or forming ? color.new(sig, OP_MEDIUM) : sig
+    color bg = past ? color(na) : color.new(C_PANEL, done ? 40 : 15)
+    f_card(plb, x1 + barMs, cy, txt, tc, bg, past ? size.tiny : size.small, f_setTip(s))
+    true
+
+// Live: the focus composition per direction plus recently finished ones (TTL by outcome and
+// mode, §14.8). Analysis / Debug: up to setupPast older setups inside the visible window.
+f_setDoneTtl(Setup s) =>
+    bool clean = i_mode == DisplayMode.clean
+    s.state == SS_WIN ? (clean ? 10 : 30) : s.state == SS_SL or s.state == SS_INVALID ? (clean ? 5 : 30) : (clean ? 0 : 10)
+
+f_setShownDone(Setup s) =>
+    not na(s.readyBar) ? s.grade >= setShowGrade : setShowGrade == GR_C
+
+f_renderSetups(View v, BoxPool pb, LinePool pl, LabelPool plb, array<Setup> ss, array<Setup> arch) =>
+    int shown = 0
+    if i_setups
+        array<int> drawn = array.new<int>()
+        if v.live
+            for d in array.from(1, -1)
+                Setup fs = f_focusSetup(ss, d)
+                if not na(fs)
+                    f_drawSetup(pb, pl, plb, fs, false)
+                    drawn.push(fs.id)
+                    shown += 1
+        int n = arch.size()
+        if n > 0
+            int recent = 0
+            int past = 0
+            for i = n - 1 to 0
+                Setup s = arch.get(i)
+                if not drawn.includes(s.id) and f_setShownDone(s)
+                    if v.live and recent < 2 and bar_index - s.endBar <= f_setDoneTtl(s)
+                        f_drawSetup(pb, pl, plb, s, false)
+                        drawn.push(s.id)
+                        recent += 1
+                        shown += 1
+                    else if mc.setupPast > 0 and past < mc.setupPast
+                        int b0 = na(s.readyBar) ? s.shiftBar : s.readyBar
+                        if s.endBar >= v.iL and b0 <= v.iR
+                            f_drawSetup(pb, pl, plb, s, true)
+                            past += 1
+                            shown += 1
+    shown
+
 // ═══ 66 · PANELS: CONTEXT RIBBON, DASHBOARD, DEBUG TABLE ════════════════════════
 // Ribbon answers "what is happening" in one line (§14.6); Dashboard gives the answers
 // with details in tooltips (§14.5); Debug shows budgets and data health (§19.1).
@@ -2874,7 +3789,7 @@ f_pdColor(Ctx x) =>
 f_statusText(Core c, bool liveView) =>
     not c.warm ? "WARMING UP" : nonStdChart ? "⚠ NON-STANDARD CHART" : not liveView ? "◀ HISTORY VIEW" : ""
 
-// Context Ribbon: STR │ SESSION │ PD │ LIQ │ status
+// Context Ribbon: HTF │ STR │ SESSION │ PD │ LIQ │ SETUP │ status
 f_htfText(Ctx x) =>
     htfBadCfg ? "⚠ HTF ≤ TF" : not x.htfOk ? "HTF OFF" : x.htfLow ? "HTF " + htfLabel + " ⚠" : "HTF " + htfLabel + (x.htfTrend == 1 ? " ▲ BULL" : x.htfTrend == -1 ? " ▼ BEAR" : " —")
 
@@ -2884,7 +3799,18 @@ f_htfColor(Ctx x) =>
 f_htfTip(Ctx x) =>
     htfBadCfg ? "The manual higher timeframe must be above the chart timeframe; the HTF Feed is off" : not x.htfOk ? "Higher timeframe is off" : x.htfLow ? "Fewer than " + str.tostring(i_minHtfBars) + " confirmed " + htfLabel + " bars: the HTF bias is treated as unknown (A.16)" : "Higher-timeframe swing structure from confirmed " + htfLabel + " bars"
 
-f_ribbon(table tb, Ctx x, Core c, bool liveView) =>
+// Setup segment / rows (§14.5, §14.6)
+f_setRibbonText(Setup s) =>
+    na(s) ? "SETUP —" : f_sideName(s.dir) + " " + f_uiStage(s.state) + (s.state >= SS_READY ? " " + f_gradeName(s.grade) : "")
+
+f_setColor(Setup s) =>
+    na(s) ? C_NEUT : s.state >= SS_READY ? C_SIG : color.new(C_SIG, 35)
+
+f_qualityBar(float sc) =>
+    int k = int(math.round(sc))
+    str.repeat("▮", k) + str.repeat("▯", 10 - k)
+
+f_ribbon(table tb, Ctx x, Core c, bool liveView, Setup fs) =>
     if not na(tb)
         string sz = panelSz
         table.cell(tb, 0, 0, f_htfText(x), text_color = f_htfColor(x), text_size = sz, tooltip = f_htfTip(x))
@@ -2902,11 +3828,12 @@ f_ribbon(table tb, Ctx x, Core c, bool liveView) =>
                 int side = swept ? -le.dir : le.dir
                 s3 := (side == 1 ? "BSL" : "SSL") + (swept ? " ✕ " : " TAKEN ") + str.tostring(bar_index - le.bar) + "b"
         table.cell(tb, 4, 0, s3, text_color = s3 == "LIQ —" ? C_NEUT : C_LIQ, text_size = sz, tooltip = na(le) ? "No recent liquidity event" : le.s1 + " · " + f_px(le.price) + " · " + f_timeStr(le.t))
+        table.cell(tb, 5, 0, f_setRibbonText(fs), text_color = f_setColor(fs), text_size = sz, tooltip = na(fs) ? "No setup: watching liquidity" : f_setTip(fs))
         string s4 = f_statusText(c, liveView)
         if s4 == ""
-            table.clear(tb, 5, 0)
+            table.clear(tb, 6, 0)
         else
-            table.cell(tb, 5, 0, s4, text_color = C_WARN, text_size = sz, tooltip = not liveView ? "The chart shows history for the visible range. Ribbon and Dashboard always describe the latest bar." : "Signals and alerts are suppressed during warm-up (first " + str.tostring(warmBars) + " bars).")
+            table.cell(tb, 6, 0, s4, text_color = C_WARN, text_size = sz, tooltip = not liveView ? "The chart shows history for the visible range. Ribbon and Dashboard always describe the latest bar." : "Signals and alerts are suppressed during warm-up (first " + str.tostring(warmBars) + " bars).")
     true
 
 f_dashRow(table tb, int row, string k, string v, color vc, string tip, string sz) =>
@@ -2914,8 +3841,8 @@ f_dashRow(table tb, int row, string k, string v, color vc, string tip, string sz
     table.cell(tb, 1, row, v, text_color = vc, text_size = sz, text_halign = text.align_left, tooltip = tip)
     row + 1
 
-// Dashboard: answers instead of statistics (§14.5). Rows for HTF, SETUP and QUALITY arrive with P5/P7.
-f_dashboard(table tb, Ctx x, Core c, StructState si, Range r, bool liveView) =>
+// Dashboard: answers instead of statistics (§14.5)
+f_dashboard(table tb, Ctx x, Core c, StructState si, Range r, bool liveView, Setup fs) =>
     if not na(tb)
         bool exp = i_dashSize == "Expanded"
         string sz = panelSz
@@ -2936,8 +3863,27 @@ f_dashboard(table tb, Ctx x, Core c, StructState si, Range r, bool liveView) =>
         Event le = c.lastLiq
         string lq = na(le) ? "—" : f_liqText(le) + " · " + str.tostring(bar_index - le.bar) + " bars"
         row := f_dashRow(tb, row, "LIQUIDITY", lq, na(le) ? C_NEUT : C_LIQ, na(le) ? "No sweep yet" : le.s1 + " · " + f_px(le.price) + " · " + f_timeStr(le.t), sz)
+        // SETUP / QUALITY (one "watching" row when there is no setup)
         Liq nb = x.nextBsl
         Liq ns = x.nextSsl
+        if i_setups
+            if na(fs)
+                Liq w = na(nb) ? ns : na(ns) ? nb : nb.price - close <= close - ns.price ? nb : ns
+                string wt = na(w) ? "— watching" : "— watching " + (w.side == 1 ? "BSL " : "SSL ") + f_px(w.price)
+                row := f_dashRow(tb, row, "SETUP", wt, C_NEUT, "No setup. A sweep of the nearest liquidity followed by a shift, or a BOS with the trend, starts one.", sz)
+            else
+                int left = i_expiry - (bar_index - fs.stageBar)
+                string stg = f_sideName(fs.dir) + " — " + f_uiStage(fs.state) + " · " + (fs.model == SM_REV ? "Reversal" : "Continuation")
+                string tipS = f_modelName(fs.model) + " · " + fs.chainMid + (fs.state <= SS_READY ? "
+expires in " + str.tostring(math.max(0, left)) + " bars" : "") + (fs.state == SS_FORMING and fs.why != "" ? "
+waiting: " + f_reasonText(fs.why) : "")
+                row := f_dashRow(tb, row, "SETUP", stg, f_setColor(fs), tipS, sz)
+                if fs.state >= SS_READY
+                    color gc = fs.grade >= GR_A ? C_SIG : fs.grade == GR_B ? C_TEXT : C_NEUT
+                    row := f_dashRow(tb, row, "QUALITY", str.tostring(fs.score, "0.0") + " / 10 · " + f_gradeName(fs.grade) + "  " + f_qualityBar(fs.score), gc, fs.factors + "Score = completeness of the setup, not a win probability", sz)
+                    if exp
+                        row := f_dashRow(tb, row, "PLAN", "E " + f_px(fs.entry) + " · SL " + f_px(fs.slInit) + " · TP1 " + f_px(fs.tp1), C_SIG, f_setPlanText(fs), sz)
+                        row := f_dashRow(tb, row, "INVALID", f_px(fs.inv) + " · close " + (fs.dir == 1 ? "below" : "above"), C_BEAR, "Before the entry the setup is cancelled by a close beyond this level, an opposite swing CHoCH or a broken POI", sz)
         string nbT = na(nb) ? "—" : nb.tag + " " + f_px(nb.price) + " (+" + str.tostring((nb.price - close) / vu, "0.0") + " ATR)"
         string nsT = na(ns) ? "—" : ns.tag + " " + f_px(ns.price) + " (−" + str.tostring((close - ns.price) / vu, "0.0") + " ATR)"
         row := f_dashRow(tb, row, "TARGET ↑", nbT, na(nb) ? C_NEUT : C_LIQ, "Nearest major buy-side liquidity above price", sz)
@@ -2955,16 +3901,16 @@ f_dashboard(table tb, Ctx x, Core c, StructState si, Range r, bool liveView) =>
             if nh > 0
                 for i = nh - 1 to 0
                     Event e = c.history.get(i)
-                    if shown < 5 and row < 15 and (e.typ == EV_BOS or e.typ == EV_CHOCH or e.typ == EV_LIQ_SWEPT) and (e.typ == EV_LIQ_SWEPT or e.v1 == LV_SWG)
+                    if shown < 5 and row < DASH_ROWS - 1 and (e.typ == EV_BOS or e.typ == EV_CHOCH or e.typ == EV_LIQ_SWEPT) and (e.typ == EV_LIQ_SWEPT or e.v1 == LV_SWG)
                         string et = e.typ == EV_LIQ_SWEPT ? f_liqText(e) : f_structText(e)
                         row := f_dashRow(tb, row, str.format_time(e.t, "MM-dd HH:mm", sesTz), et + " · " + f_px(e.price), e.typ == EV_LIQ_SWEPT ? C_LIQ : f_dirColor(e.dir), e.s1, sz)
                         shown += 1
-        if row <= 15
-            table.clear(tb, 0, row, 1, 15)
+        if row <= DASH_ROWS - 1
+            table.clear(tb, 0, row, 1, DASH_ROWS - 1)
     true
 
 // Debug table (§19.1): budgets, registries, data health
-f_debugTable(table tb, View v, Core c, array<Zone> zs, array<Zone> za, array<Liq> lv, array<Liq> la, BoxPool pz, BoxPool pw, BoxPool prb, LinePool pm, LinePool pl, LinePool ps, LinePool prl, LabelPool pb) =>
+f_debugTable(table tb, View v, Core c, array<Zone> zs, array<Zone> za, array<Liq> lv, array<Liq> la, BoxPool pz, BoxPool pw, BoxPool prb, LinePool pm, LinePool pl, LinePool ps, LinePool prl, LabelPool pb, array<Setup> ss, array<Setup> sa, BoxPool psb, LinePool psl, LabelPool pslb) =>
     if not na(tb)
         string sz = size.tiny
         int zLive = 0
@@ -2973,10 +3919,10 @@ f_debugTable(table tb, View v, Core c, array<Zone> zs, array<Zone> za, array<Liq
         int lLive = 0
         for x in lv
             lLive += x.state == LS_ACTIVE or x.state == LS_PENDING ? 1 : 0
-        int boxUsed = pz.used + pw.used + prb.used
-        int boxCap = pz.items.size() + pw.items.size() + prb.items.size()
-        int lineUsed = pm.used + pl.used + ps.used + prl.used
-        int lineCap = pm.items.size() + pl.items.size() + ps.items.size() + prl.items.size()
+        int boxUsed = pz.used + pw.used + prb.used + psb.used
+        int boxCap = pz.items.size() + pw.items.size() + prb.items.size() + psb.items.size()
+        int lineUsed = pm.used + pl.used + ps.used + prl.used + psl.used
+        int lineCap = pm.items.size() + pl.items.size() + ps.items.size() + prl.items.size() + psl.items.size()
         int row = 0
         row := f_dashRow(tb, row, "BUILD", "v" + BUILD + " · " + str.tostring(i_mode), C_TEXT, "", sz)
         row := f_dashRow(tb, row, "BARS", str.tostring(bar_index + 1) + (c.warm ? " · warm" : " · warming up"), c.warm ? C_TEXT : C_WARN, "Warm-up: " + str.tostring(warmBars) + " bars", sz)
@@ -2988,7 +3934,11 @@ f_debugTable(table tb, View v, Core c, array<Zone> zs, array<Zone> za, array<Liq
         row := f_dashRow(tb, row, "EVENTS", str.tostring(c.barEvents.size()) + " bar · " + str.tostring(c.history.size()) + " hist", C_TEXT, "Event bus: current bar / history ring", sz)
         row := f_dashRow(tb, row, "BOXES", str.tostring(boxUsed) + " / " + str.tostring(boxCap), C_TEXT, "Drawn / pool size (platform limit 500)", sz)
         row := f_dashRow(tb, row, "LINES", str.tostring(lineUsed) + " / " + str.tostring(lineCap), C_TEXT, "Drawn / pool size (platform limit 500)", sz)
-        row := f_dashRow(tb, row, "LABELS", str.tostring(pb.used) + " / " + str.tostring(pb.items.size()), C_TEXT, "Drawn / pool size (platform limit 500)", sz)
+        row := f_dashRow(tb, row, "LABELS", str.tostring(pb.used + pslb.used) + " / " + str.tostring(pb.items.size() + pslb.items.size()), C_TEXT, "Drawn / pool size (platform limit 500)", sz)
+        int nAct = 0
+        for s in ss
+            nAct += f_setActive(s) ? 1 : 0
+        row := f_dashRow(tb, row, "SETUPS", str.tostring(ss.size()) + " live (" + str.tostring(nAct) + " active) · arch " + str.tostring(sa.size()), C_TEXT, "Setup registry: live cap " + str.tostring(SETUP_CAP) + ", archive cap " + str.tostring(SETUP_ARCH_CAP), sz)
         row := f_dashRow(tb, row, "VOLUME", hasVolume ? "yes" : "none (filters off)", hasVolume ? C_TEXT : C_WARN, "", sz)
         row := f_dashRow(tb, row, "CHART", nonStdChart ? "non-standard" : "standard", nonStdChart ? C_WARN : C_TEXT, "", sz)
         row := f_dashRow(tb, row, "LENGTHS", "swing " + str.tostring(swLen) + " · int " + str.tostring(inLen), C_TEXT, "", sz)
@@ -2997,7 +3947,7 @@ f_debugTable(table tb, View v, Core c, array<Zone> zs, array<Zone> za, array<Liq
     true
 
 // ═══ 90 · MAIN PIPELINE ═════════════════════════════════════════════════════════
-// Fixed engine order per bar (docs §4.5): Data → Structure → Liquidity → Zones → Context.
+// Fixed engine order per bar (docs §4.5): Data → Structure → Liquidity → Zones → Context → Setup.
 // Logic runs only on confirmed bars; visuals run only on the last bar.
 
 // ── Logical state (registry: live sets + archives of finished objects)
@@ -3016,6 +3966,8 @@ var Sess sNy = Sess.new("New York AM killzone", "NY KZ", "NYH", "NYL", specNy)
 var array<SessBox> sessHist = array.new<SessBox>()
 var array<Brk> htfBreaks = array.new<Brk>()
 var Ctx ctx = Ctx.new()
+var array<Setup> setups = array.new<Setup>()
+var array<Setup> setupArch = array.new<Setup>()
 var float confClose = na
 // Per-bar close and ATR, so a scrolled-back view can rank objects at any past bar
 var array<float> histClose = array.new<float>()
@@ -3118,6 +4070,23 @@ if barstate.isconfirmed
     f_rangeStep(core, rng, stS, rangeArch)
     float pdNow = f_pdStep(core, rng)
     f_ctxBuild(ctx, stS, stI, rng, pdNow, liqs, sAsia, sLon, sNy, htfOk, htfLowHist, hBias)
+    // Setups (P7): never during warm-up (AC-08)
+    if i_setups and core.warm
+        f_setupStep(core, setups, setupArch, stS, stI, liqs, zones, ctx, sLon.on or sNy.on)
+
+// Price-scale markers (§14.9): entry, SL and TP1 of the focus setup once it has a plan
+var float pmE = na
+var float pmSL = na
+var float pmTP = na
+if barstate.isconfirmed
+    Setup pmS = i_setups ? f_focusSetup(setups, 0) : na
+    bool pmOk = not na(pmS) and pmS.state >= SS_READY and pmS.state <= SS_TP2
+    pmE := pmOk ? pmS.entry : na
+    pmSL := pmOk ? pmS.slInit : na
+    pmTP := pmOk ? pmS.tp1 : na
+plot(i_priceMarkers ? pmE : na, "Setup entry", color = C_SIG, display = display.price_scale, editable = false)
+plot(i_priceMarkers ? pmSL : na, "Setup SL", color = C_BEAR, display = display.price_scale, editable = false)
+plot(i_priceMarkers ? pmTP : na, "Setup TP1", color = C_BULL, display = display.price_scale, editable = false)
 
 // ── Visible range (§15 AC-M16): bar indices of the leftmost and rightmost visible bars.
 // Using these built-ins makes the script recalculate when the chart is scrolled or zoomed.
@@ -3139,19 +4108,26 @@ var LinePool pMid = LinePool.new(array.new<line>())
 var LinePool pLvl = LinePool.new(array.new<line>())
 var LinePool pStr = LinePool.new(array.new<line>())
 var LabelPool pLab = LabelPool.new(array.new<label>())
+// setup composition pools come last, so compositions sit above zones and levels
+var BoxPool pSetBox = BoxPool.new(array.new<box>())
+var LinePool pSetLine = LinePool.new(array.new<line>())
+var LabelPool pSetLab = LabelPool.new(array.new<label>())
 if barstate.isfirst
     f_fillBoxPool(pWash, mc.poolWash)
     f_fillBoxPool(pRngBox, 6)
     f_fillBoxPool(pZone, mc.poolZone)
     f_fillLinePool(pRngLine, 30)
-    f_fillLinePool(pMid, math.min(mc.poolZone, 120))
+    f_fillLinePool(pMid, math.min(mc.poolZone, 90))
     f_fillLinePool(pLvl, mc.poolLvl)
     f_fillLinePool(pStr, mc.poolStr)
     f_fillLabelPool(pLab, mc.poolLab)
+    f_fillBoxPool(pSetBox, i_setups ? mc.poolSetBox : 0)
+    f_fillLinePool(pSetLine, i_setups ? mc.poolSetLine : 0)
+    f_fillLabelPool(pSetLab, i_setups ? mc.poolSetLab : 0)
 
 // ── Panels
-var table tRibbon = vRibbon ? table.new(f_pos(i_ribbonPos), 6, 1, bgcolor = color.new(C_PANEL, F_PANEL), frame_color = C_PBORDER, frame_width = 1, border_color = C_PBORDER, border_width = 1) : na
-var table tDash = vDash ? table.new(f_pos(i_dashPos), 2, 16, bgcolor = color.new(C_PANEL, F_PANEL), frame_color = C_PBORDER, frame_width = 1, border_width = 0) : na
+var table tRibbon = vRibbon ? table.new(f_pos(i_ribbonPos), 7, 1, bgcolor = color.new(C_PANEL, F_PANEL), frame_color = C_PBORDER, frame_width = 1, border_color = C_PBORDER, border_width = 1) : na
+var table tDash = vDash ? table.new(f_pos(i_dashPos), 2, DASH_ROWS, bgcolor = color.new(C_PANEL, F_PANEL), frame_color = C_PBORDER, frame_width = 1, border_width = 0) : na
 var table tDebug = mc.debug and i_debugTable ? table.new(position.middle_left, 2, 16, bgcolor = color.new(C_PANEL, F_PANEL), frame_color = C_PBORDER, frame_width = 1, border_width = 0) : na
 
 // ── Render pass (last bar only; call order decides who gets the label budget)
@@ -3167,6 +4143,9 @@ if barstate.islast
     pLvl.used := 0
     pStr.used := 0
     pLab.used := 0
+    pSetBox.used := 0
+    pSetLine.used := 0
+    pSetLab.used := 0
     array<Tag> tags = array.new<Tag>()
     f_renderZones(view, pZone, pMid, tags, zones, zoneArch, rightT, histClose, histAtr, histBase)
     f_renderLevels(view, pLvl, tags, liqs, liqArch, rightT)
@@ -3185,6 +4164,7 @@ if barstate.islast
         f_renderBreaks(view, pStr, pLab, stI.breaks, view.vp ? mc.internalWin : mc.internalEvents, true)
     if vSwingLabels
         f_renderSwings(view, pLab, stS, view.vp ? mc.swingLabelWin : 30)
+    f_renderSetups(view, pSetBox, pSetLine, pSetLab, setups, setupArch)
     f_finishBoxes(pWash)
     f_finishBoxes(pRngBox)
     f_finishBoxes(pZone)
@@ -3193,9 +4173,13 @@ if barstate.islast
     f_finishLines(pLvl)
     f_finishLines(pStr)
     f_finishLabels(pLab)
-    f_ribbon(tRibbon, ctx, core, view.live)
-    f_dashboard(tDash, ctx, core, stI, rng, view.live)
-    f_debugTable(tDebug, view, core, zones, zoneArch, liqs, liqArch, pZone, pWash, pRngBox, pMid, pLvl, pStr, pRngLine, pLab)
+    f_finishBoxes(pSetBox)
+    f_finishLines(pSetLine)
+    f_finishLabels(pSetLab)
+    Setup focus = i_setups ? f_focusSetup(setups, 0) : na
+    f_ribbon(tRibbon, ctx, core, view.live, focus)
+    f_dashboard(tDash, ctx, core, stI, rng, view.live, focus)
+    f_debugTable(tDebug, view, core, zones, zoneArch, liqs, liqArch, pZone, pWash, pRngBox, pMid, pLvl, pStr, pRngLine, pLab, setups, setupArch, pSetBox, pSetLine, pSetLab)
 
 // ═══ 95 · ALERTS ════════════════════════════════════════════════════════════════
 // Static alertcondition() set (docs §12.7). Conditions are read from the event bus of the
@@ -3203,7 +4187,7 @@ if barstate.islast
 // during warm-up (AC-08). Chart-TF structure alerts ignore HTF events (separate conditions).
 // Sweep, OB-touch and FVG-fill alerts also fire for HTF objects: those happen on chart bars,
 // and their events carry tf = HTF1 for logs and the P9 webhook.
-// The batched JSON webhook alert() arrives with P9.
+// Setup alerts also send a detailed alert() message; the batched JSON webhook arrives with P9.
 bool alertOk = barstate.isconfirmed and core.warm
 bool aBosUp = alertOk and f_evFlag(core, EV_BOS, 1, LV_SWG, TF_CHART)
 bool aBosDn = alertOk and f_evFlag(core, EV_BOS, -1, LV_SWG, TF_CHART)
@@ -3219,6 +4203,42 @@ bool aSession = alertOk and f_evFlag(core, EV_SESSION_START, 0, na)
 bool aPdEnter = alertOk and f_evFlag(core, EV_PD_ENTER, 0, na)
 bool aOteEnter = alertOk and f_evFlag(core, EV_OTE_ENTER, 0, na)
 
+// Setups: READY / TRIGGERED / INVALID from the alert grade on (grade is v3 of these events)
+f_setupEv(Core c, int typ, int minGrade) =>
+    Event hit = na
+    for e in c.barEvents
+        if na(hit) and e.typ == typ and nz(e.v3) >= minGrade
+            hit := e
+    hit
+
+Event evReady = alertOk and i_setups ? f_setupEv(core, EV_SETUP_READY, setAlertGrade) : na
+Event evTrig = alertOk and i_setups ? f_setupEv(core, EV_SETUP_TRIGGERED, setAlertGrade) : na
+Event evInv = alertOk and i_setups ? f_setupEv(core, EV_SETUP_INVALID, setAlertGrade) : na
+bool aSetReady = not na(evReady)
+bool aSetTrig = not na(evTrig)
+bool aSetInv = not na(evInv)
+
+// Detailed text for "Any alert() function call" alerts: direction, grade, plan (P9 adds JSON)
+f_setupMsg(Event e, string what) =>
+    Setup s = na
+    for x in setups
+        if x.id == e.ref
+            s := x
+    // a setup that ended on this bar has already moved to the archive
+    if na(s) and setupArch.size() > 0
+        Setup y = setupArch.last()
+        if y.id == e.ref
+            s := y
+    string body = na(s) ? "" : " · " + f_modelName(s.model) + " · " + f_gradeName(s.grade) + " " + str.tostring(s.score, "0.0") + " · E " + f_px(s.entry) + " · SL " + f_px(s.slInit) + " · TP1 " + f_px(s.tp1) + " · RR " + str.tostring(s.rrFinal, "0.0") + " · " + s.chain
+    "SMC Pro · " + syminfo.ticker + " " + timeframe.period + " · " + (e.dir == 1 ? "LONG " : "SHORT ") + what + body + (what == "INVALID" ? " · " + e.s1 : "")
+
+if aSetReady
+    alert(f_setupMsg(evReady, "READY"), alert.freq_once_per_bar_close)
+if aSetTrig
+    alert(f_setupMsg(evTrig, "TRIGGERED"), alert.freq_once_per_bar_close)
+if aSetInv
+    alert(f_setupMsg(evInv, "INVALID"), alert.freq_once_per_bar_close)
+
 alertcondition(aBosUp, "BOS ↑ (swing)", "SMC Pro · {{ticker}} {{interval}} · BOS ↑ · close {{close}}")
 alertcondition(aBosDn, "BOS ↓ (swing)", "SMC Pro · {{ticker}} {{interval}} · BOS ↓ · close {{close}}")
 alertcondition(aChochUp, "CHoCH ↑ (swing)", "SMC Pro · {{ticker}} {{interval}} · CHoCH ↑ · close {{close}}")
@@ -3232,3 +4252,6 @@ alertcondition(aPdEnter, "Premium / discount change", "SMC Pro · {{ticker}} {{i
 alertcondition(aHtfBias, "HTF bias change", "SMC Pro · {{ticker}} {{interval}} · higher-timeframe bias changed · close {{close}}")
 alertcondition(aHtfBrk, "HTF BOS / CHoCH", "SMC Pro · {{ticker}} {{interval}} · higher-timeframe structure break · close {{close}}")
 alertcondition(aOteEnter, "OTE entered", "SMC Pro · {{ticker}} {{interval}} · price entered the OTE band · close {{close}}")
+alertcondition(aSetReady, "Setup READY", "SMC Pro · {{ticker}} {{interval}} · setup READY (grade ≥ alert min grade) · close {{close}}")
+alertcondition(aSetTrig, "Setup TRIGGERED", "SMC Pro · {{ticker}} {{interval}} · setup entry reached · close {{close}}")
+alertcondition(aSetInv, "Setup INVALID", "SMC Pro · {{ticker}} {{interval}} · setup invalidated before entry · close {{close}}")

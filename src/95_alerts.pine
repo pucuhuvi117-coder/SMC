@@ -4,7 +4,7 @@
 // during warm-up (AC-08). Chart-TF structure alerts ignore HTF events (separate conditions).
 // Sweep, OB-touch and FVG-fill alerts also fire for HTF objects: those happen on chart bars,
 // and their events carry tf = HTF1 for logs and the P9 webhook.
-// The batched JSON webhook alert() arrives with P9.
+// Setup alerts also send a detailed alert() message; the batched JSON webhook arrives with P9.
 bool alertOk = barstate.isconfirmed and core.warm
 bool aBosUp = alertOk and f_evFlag(core, EV_BOS, 1, LV_SWG, TF_CHART)
 bool aBosDn = alertOk and f_evFlag(core, EV_BOS, -1, LV_SWG, TF_CHART)
@@ -20,6 +20,42 @@ bool aSession = alertOk and f_evFlag(core, EV_SESSION_START, 0, na)
 bool aPdEnter = alertOk and f_evFlag(core, EV_PD_ENTER, 0, na)
 bool aOteEnter = alertOk and f_evFlag(core, EV_OTE_ENTER, 0, na)
 
+// Setups: READY / TRIGGERED / INVALID from the alert grade on (grade is v3 of these events)
+f_setupEv(Core c, int typ, int minGrade) =>
+    Event hit = na
+    for e in c.barEvents
+        if na(hit) and e.typ == typ and nz(e.v3) >= minGrade
+            hit := e
+    hit
+
+Event evReady = alertOk and i_setups ? f_setupEv(core, EV_SETUP_READY, setAlertGrade) : na
+Event evTrig = alertOk and i_setups ? f_setupEv(core, EV_SETUP_TRIGGERED, setAlertGrade) : na
+Event evInv = alertOk and i_setups ? f_setupEv(core, EV_SETUP_INVALID, setAlertGrade) : na
+bool aSetReady = not na(evReady)
+bool aSetTrig = not na(evTrig)
+bool aSetInv = not na(evInv)
+
+// Detailed text for "Any alert() function call" alerts: direction, grade, plan (P9 adds JSON)
+f_setupMsg(Event e, string what) =>
+    Setup s = na
+    for x in setups
+        if x.id == e.ref
+            s := x
+    // a setup that ended on this bar has already moved to the archive
+    if na(s) and setupArch.size() > 0
+        Setup y = setupArch.last()
+        if y.id == e.ref
+            s := y
+    string body = na(s) ? "" : " · " + f_modelName(s.model) + " · " + f_gradeName(s.grade) + " " + str.tostring(s.score, "0.0") + " · E " + f_px(s.entry) + " · SL " + f_px(s.slInit) + " · TP1 " + f_px(s.tp1) + " · RR " + str.tostring(s.rrFinal, "0.0") + " · " + s.chain
+    "SMC Pro · " + syminfo.ticker + " " + timeframe.period + " · " + (e.dir == 1 ? "LONG " : "SHORT ") + what + body + (what == "INVALID" ? " · " + e.s1 : "")
+
+if aSetReady
+    alert(f_setupMsg(evReady, "READY"), alert.freq_once_per_bar_close)
+if aSetTrig
+    alert(f_setupMsg(evTrig, "TRIGGERED"), alert.freq_once_per_bar_close)
+if aSetInv
+    alert(f_setupMsg(evInv, "INVALID"), alert.freq_once_per_bar_close)
+
 alertcondition(aBosUp, "BOS ↑ (swing)", "SMC Pro · {{ticker}} {{interval}} · BOS ↑ · close {{close}}")
 alertcondition(aBosDn, "BOS ↓ (swing)", "SMC Pro · {{ticker}} {{interval}} · BOS ↓ · close {{close}}")
 alertcondition(aChochUp, "CHoCH ↑ (swing)", "SMC Pro · {{ticker}} {{interval}} · CHoCH ↑ · close {{close}}")
@@ -33,3 +69,6 @@ alertcondition(aPdEnter, "Premium / discount change", "SMC Pro · {{ticker}} {{i
 alertcondition(aHtfBias, "HTF bias change", "SMC Pro · {{ticker}} {{interval}} · higher-timeframe bias changed · close {{close}}")
 alertcondition(aHtfBrk, "HTF BOS / CHoCH", "SMC Pro · {{ticker}} {{interval}} · higher-timeframe structure break · close {{close}}")
 alertcondition(aOteEnter, "OTE entered", "SMC Pro · {{ticker}} {{interval}} · price entered the OTE band · close {{close}}")
+alertcondition(aSetReady, "Setup READY", "SMC Pro · {{ticker}} {{interval}} · setup READY (grade ≥ alert min grade) · close {{close}}")
+alertcondition(aSetTrig, "Setup TRIGGERED", "SMC Pro · {{ticker}} {{interval}} · setup entry reached · close {{close}}")
+alertcondition(aSetInv, "Setup INVALID", "SMC Pro · {{ticker}} {{interval}} · setup invalidated before entry · close {{close}}")

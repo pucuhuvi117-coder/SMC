@@ -1,0 +1,597 @@
+// ═══ 30 · SETUP ENGINE ══════════════════════════════════════════════════════════
+// Setup automaton (§7.7) for the models SWEEP_REVERSAL and CONTINUATION (A.18), POI selection
+// (§9.4), the DRAFT TradePlan (§10), risk checks (§11.3) and the explainable confluence score
+// with presets (§9.5–9.6). Runs on confirmed bars after the Context engine: it reads the event
+// bus and the registries and emits SETUP_* events. Analytical in v1.0: nothing is executed.
+
+f_modelName(int m) =>
+    m == SM_REV ? "Sweep Reversal" : "Continuation"
+
+f_gradeName(int g) =>
+    g == GR_AP ? "A+" : g == GR_A ? "A" : g == GR_B ? "B" : "C"
+
+f_gradeFor(float sc) =>
+    sc >= 8.0 ? GR_AP : sc >= 6.5 ? GR_A : sc >= 5.0 ? GR_B : GR_C
+
+f_sideName(int d) =>
+    d == 1 ? "LONG" : "SHORT"
+
+// UI stage (§7.7 table): FORMING · READY · ACTIVE · DONE
+f_uiStage(int st) =>
+    st <= SS_FORMING ? "FORMING" : st == SS_READY ? "READY" : st <= SS_TP2 ? "ACTIVE" : "DONE"
+
+f_setActive(Setup s) =>
+    s.state >= SS_TRIG and s.state <= SS_TP2
+
+f_tpAt(Setup s, int n) =>
+    n == 1 ? s.tp1 : n == 2 ? s.tp2 : s.tp3
+
+// Position split over the targets (v2 default 0.5 / 0.3 / 0.2, renormalised to the targets that exist)
+f_alloc(int nTp, int n) =>
+    nTp >= 3 ? (n == 1 ? 0.5 : n == 2 ? 0.3 : 0.2) : nTp == 2 ? (n == 1 ? 0.6 : 0.4) : 1.0
+
+f_rrAt(Setup s, float px) =>
+    float risk = (s.entry - s.slInit) * s.dir
+    risk > 0 ? (px - s.entry) * s.dir / risk : na
+
+f_setEmit(Core c, Setup s, int typ, float price, float v1 = na, float v2 = na, float v3 = na, string s1 = "") =>
+    int tier = typ == EV_SETUP_EXPIRED or typ == EV_SETUP_MISSED ? 2 : 1
+    f_emit(c, typ, s.dir, price, s.id, na, tier, v1, v2, v3, s1)
+
+// Terminal transition before entry (INVALID / EXPIRED / MISSED). Only setups that were shown
+// (a POI was chosen) report it on the bus.
+f_setEnd(Core c, Setup s, int st, string why) =>
+    s.state := st
+    s.reason := why
+    s.endBar := bar_index
+    s.endT := time
+    if not na(s.poi)
+        int typ = st == SS_INVALID ? EV_SETUP_INVALID : st == SS_MISSED ? EV_SETUP_MISSED : EV_SETUP_EXPIRED
+        f_setEmit(c, s, typ, close, s.score, na, s.grade, why)
+    true
+
+// POI broken: the zone a setup waits for no longer exists as such
+f_poiBroken(Setup s) =>
+    Zone z = s.poi
+    na(z) ? false : z.state == ZS_CONVERTED or z.state == ZS_INVALID or z.state == ZS_EXPIRED or z.state == ZS_FILLED
+
+f_zoneName(Zone z) =>
+    na(z) ? "—" : f_kindTag(z.kind)
+
+// ── POI selection (§9.4). Candidates: FVG / OB of the shift leg, same direction, FRESH.
+// Location: proximal edge in the discount (long) / premium (short) half of the shift range.
+// Priority: FVG ∩ OB → FVG in OTE → OB in OTE → closest to EQ. Returns 2 = picked,
+// 1 = leg zones exist but none in the right half, 0 = no leg zones.
+f_pickPoi(Setup s, array<Zone> zs) =>
+    int d = s.dir
+    float span = s.rHi - s.rLo
+    float eq = (s.rHi + s.rLo) / 2
+    float bLo = d == 1 ? s.rHi - oteHi * span : s.rLo + oteLo * span
+    float bHi = d == 1 ? s.rHi - oteLo * span : s.rLo + oteHi * span
+    array<Zone> cand = array.new<Zone>()
+    int nLeg = 0
+    if span > 0
+        for z in zs
+            bool legOb = z.kind == ZK_OB and z.brkId == s.shiftBrkId
+            bool legFvg = z.kind == ZK_FVG and z.bar >= s.legBar
+            if z.tf == TF_CHART and z.dir == d and z.state == ZS_FRESH and (legOb or legFvg)
+                nLeg += 1
+                if d == 1 ? z.top <= eq : z.bottom >= eq
+                    cand.push(z)
+    int m = cand.size()
+    Zone best = na
+    Zone alt = na
+    bool combo = false
+    float cTop = na
+    float cBot = na
+    if m > 0
+        // 1 · FVG ∩ OB (overlap ≥ 30% of the smaller zone)
+        float bestC = -1.0
+        for a in cand
+            if a.kind == ZK_FVG
+                for o in cand
+                    if o.kind == ZK_OB
+                        float ov = math.min(a.top, o.top) - math.max(a.bottom, o.bottom)
+                        float sm = math.min(a.top - a.bottom, o.top - o.bottom)
+                        if sm > 0 and ov >= 0.3 * sm
+                            bool inOte = a.top >= bLo and a.bottom <= bHi
+                            float pc = (inOte ? 1.0 : 0.0) - math.abs((d == 1 ? a.top : a.bottom) - eq) / span
+                            if pc > bestC
+                                bestC := pc
+                                best := a
+                                alt := o
+                                combo := true
+                                cTop := math.min(a.top, o.top)
+                                cBot := math.max(a.bottom, o.bottom)
+        // 2 · single zones: FVG in OTE → OB in OTE → closest to EQ; the runner-up is the alt POI
+        if not combo
+            float p1 = -10.0
+            float p2 = -10.0
+            for a in cand
+                bool inOte = a.top >= bLo and a.bottom <= bHi
+                float p = (inOte ? (a.kind == ZK_FVG ? 3.0 : 2.0) : 1.0) - math.abs((d == 1 ? a.top : a.bottom) - eq) / span
+                if p > p1
+                    alt := best
+                    p2 := p1
+                    best := a
+                    p1 := p
+                else if p > p2
+                    alt := a
+                    p2 := p
+            cTop := best.top
+            cBot := best.bottom
+        s.poi := best
+        s.poiAlt := alt
+        s.combo := combo
+        s.entryTop := cTop
+        s.entryBot := cBot
+    m > 0 ? 2 : nLeg > 0 ? 1 : 0
+
+// ── DRAFT TradePlan (§10): entry, SL, targets, RR. Returns "" or the reason it is not valid.
+f_setPlan(Setup s, array<Liq> lv) =>
+    int d = s.dir
+    float tick = syminfo.mintick
+    float span = s.rHi - s.rLo
+    float top = s.entryTop
+    float bot = s.entryBot
+    float ce = (top + bot) / 2
+    float l705 = d == 1 ? s.rHi - 0.705 * span : s.rLo + 0.705 * span
+    float e = i_entryMode == EntryMode.edge ? (d == 1 ? top : bot) : i_entryMode == EntryMode.ote and l705 <= top and l705 >= bot ? l705 : ce
+    e := math.round_to_mintick(e)
+    // stop: beyond the sweep (reversal) / the protected swing (continuation), the POI, or ATR
+    float buf = math.max(i_slBufTicks * tick, i_slBufAtr * vu) + i_spread * tick
+    float distal = d == 1 ? s.poi.bottom : s.poi.top
+    if s.combo and not na(s.poiAlt)
+        distal := d == 1 ? math.min(distal, s.poiAlt.bottom) : math.max(distal, s.poiAlt.top)
+    float anchor = s.model == SM_REV ? s.sweepExt : d == 1 ? s.rLo : s.rHi
+    float sl = i_slMode == SlMode.atr ? e - d * 1.5 * vu : (i_slMode == SlMode.poi ? distal : anchor) - d * buf
+    sl := d == 1 ? math.floor(sl / tick) * tick : math.ceil(sl / tick) * tick
+    s.inv := anchor
+    s.entry := e
+    s.sl := sl
+    s.slInit := sl
+    float risk = (e - sl) * d
+    string fail = risk <= 0 ? "SL_INVALID" : risk / tick < i_minSlTicks ? "SL_TOO_TIGHT" : risk > i_maxSlAtr * vu ? "SL_TOO_WIDE" : ""
+    s.tp1 := na
+    s.tp2 := na
+    s.tp3 := na
+    s.tp1Tag := ""
+    s.tp2Tag := ""
+    s.tp3Tag := ""
+    s.nTp := 0
+    s.drawLiq := false
+    s.drawTxt := ""
+    if fail == ""
+        // opposite liquidity beyond the entry, nearest first; the shift range extreme is the weak high / low
+        array<float> px = array.new<float>()
+        array<float> dist = array.new<float>()
+        array<string> tg = array.new<string>()
+        array<bool> maj = array.new<bool>()
+        array<bool> hk = array.new<bool>()
+        for x in lv
+            if (x.state == LS_ACTIVE or x.state == LS_PENDING) and x.side == d and (x.price - e) * d > 0
+                bool htf = x.tf != TF_CHART
+                px.push(x.price)
+                dist.push((x.price - e) * d)
+                tg.push(f_htfPrefix(x.tf) + (x.kind == LK_SWING ? (d == 1 ? "BSL" : "SSL") : x.tag))
+                maj.push(x.major or htf)
+                hk.push(htf or x.kind != LK_SWING)
+        float ext = d == 1 ? s.rHi : s.rLo
+        if (ext - e) * d > 0
+            px.push(ext)
+            dist.push((ext - e) * d)
+            tg.push(d == 1 ? "Range high" : "Range low")
+            maj.push(true)
+            hk.push(false)
+        int nc = px.size()
+        if i_tpMode == TpMode.liq and nc > 0
+            array<int> ord = dist.sort_indices(order.ascending)
+            for k in ord
+                float dd = dist.get(k)
+                if na(s.tp1)
+                    if dd >= risk
+                        s.tp1 := px.get(k)
+                        s.tp1Tag := tg.get(k)
+                else if na(s.tp2)
+                    if dd > (s.tp1 - e) * d and maj.get(k)
+                        s.tp2 := px.get(k)
+                        s.tp2Tag := tg.get(k)
+                else if na(s.tp3)
+                    if dd > (s.tp2 - e) * d and hk.get(k)
+                        s.tp3 := px.get(k)
+                        s.tp3Tag := tg.get(k)
+                // draw on liquidity: a major opposite target at least 2R away (§9.5)
+                if not s.drawLiq and maj.get(k) and dd >= 2 * risk
+                    s.drawLiq := true
+                    s.drawTxt := tg.get(k) + " " + f_px(px.get(k)) + " (" + str.tostring(dd / risk, "0.0") + "R)"
+        if i_tpMode == TpMode.rr
+            s.tp1 := e + d * risk
+            s.tp2 := e + d * 2 * risk
+            s.tp3 := e + d * 3 * risk
+            s.tp1Tag := "1R"
+            s.tp2Tag := "2R"
+            s.tp3Tag := "3R"
+        // no opposite liquidity at all → one target at Min RR
+        if na(s.tp1)
+            s.tp1 := e + d * i_minRR * risk
+            s.tp1Tag := str.tostring(i_minRR, "0.0#") + "R"
+        s.tp1 := math.round_to_mintick(s.tp1)
+        s.tp2 := na(s.tp2) ? na : math.round_to_mintick(s.tp2)
+        s.tp3 := na(s.tp3) ? na : math.round_to_mintick(s.tp3)
+        s.nTp := na(s.tp2) ? 1 : na(s.tp3) ? 2 : 3
+        s.rrFinal := (f_tpAt(s, s.nTp) - e) * d / risk
+        fail := s.rrFinal < i_minRR ? "RR_LOW" : ""
+    fail
+
+// Opposing FRESH HTF zone between entry and the price `to` (§9.5 penalty, §11.3 check 3)
+f_htfAgainst(Setup s, array<Zone> zs, float to) =>
+    bool hit = false
+    float lo = math.min(s.entry, to)
+    float hi = math.max(s.entry, to)
+    for z in zs
+        if z.tf != TF_CHART and z.dir == -s.dir and z.state == ZS_FRESH and z.top >= lo and z.bottom <= hi
+            hit := true
+    hit
+
+f_fac(string acc, string name, float pts) =>
+    acc + (pts >= 0 ? "+ " : "− ") + name + "  " + (pts >= 0 ? "+" : "−") + str.tostring(math.abs(pts), "0.0#") + "\n"
+
+// ── Confluence score (§9.5) with the preset weights (§9.6). Fills score, grade, factors.
+f_setScore(Setup s, Ctx x, array<Zone> zs) =>
+    bool agg = i_setPreset == SetPreset.aggressive
+    int d = s.dir
+    float span = s.rHi - s.rLo
+    float eq = (s.rHi + s.rLo) / 2
+    float bLo = d == 1 ? s.rHi - oteHi * span : s.rLo + oteLo * span
+    float bHi = d == 1 ? s.rHi - oteLo * span : s.rLo + oteHi * span
+    string f = ""
+    // Context (≤ 3.0)
+    float gC = 0.0
+    float pen = 0.0
+    bool htfRel = x.htfOk and not x.htfLow
+    if htfRel and x.htfTrend == d
+        gC += 1.5
+        f := f_fac(f, "HTF " + htfLabel + (d == 1 ? " BULLISH" : " BEARISH"), 1.5)
+    else if htfRel and x.htfTrend == -d
+        float p = agg ? -1.0 : -1.5
+        pen += p
+        f := f_fac(f, "HTF " + htfLabel + " against", p)
+    bool disc = d == 1 ? s.entryTop <= eq : s.entryBot >= eq
+    bool inOte = s.entryTop >= bLo and s.entryBot <= bHi
+    if disc
+        gC += 0.75
+        f := f_fac(f, d == 1 ? "Discount" : "Premium", 0.75)
+    if inOte
+        gC += 0.75
+        f := f_fac(f, "OTE", 0.75)
+    gC := math.min(3.0, gC)
+    // Liquidity (≤ 2.5)
+    float gL = 0.0
+    if s.model == SM_REV
+        float mp = s.sweepMajor ? 1.0 : 0.3
+        gL += 1.0 + mp
+        f := f_fac(f, s.sweepTag + " swept (" + (s.sweepMajor ? "major" : "minor") + ")", 1.0 + mp)
+    else if s.contSweep
+        gL += 1.0
+        f := f_fac(f, "Internal liquidity swept on the pullback", 1.0)
+    if s.drawLiq
+        gL += 0.5
+        f := f_fac(f, "Draw: " + s.drawTxt, 0.5)
+    gL := math.min(2.5, gL)
+    // Structure (≤ 2.0)
+    float gS = (s.shiftLvl == LV_SWG ? 1.0 : 0.5) + math.min(1.0, nz(s.disp) / 2.0)
+    string sn = s.shiftKind == BK_BOS ? "BOS" : s.isMSS ? "MSS" : "CHoCH"
+    f := f_fac(f, (s.shiftLvl == LV_SWG ? "Swing " : "Internal ") + sn + " " + str.tostring(nz(s.disp), "0.0") + " ATR", math.min(2.0, gS))
+    gS := math.min(2.0, gS)
+    // POI (≤ 1.5; Aggressive: HTF POI ×2)
+    float gP = s.combo ? 1.0 : 0.6
+    f := f_fac(f, s.combo ? "FVG ∩ OB" : f_zoneName(s.poi), gP)
+    bool htfPoi = false
+    for z in zs
+        if z.tf != TF_CHART and z.dir == d and z.state < ZS_FILLED and z.top >= s.entryBot and z.bottom <= s.entryTop
+            htfPoi := true
+    if htfPoi
+        float hp = agg ? 1.0 : 0.5
+        gP += hp
+        f := f_fac(f, "Inside " + htfLabel + " zone", hp)
+    gP := math.min(agg ? 2.0 : 1.5, gP)
+    // Time (≤ 0.5; Aggressive ×2)
+    float gT = 0.0
+    if s.kz
+        gT := agg ? 1.0 : 0.5
+        f := f_fac(f, "Killzone", gT)
+    // Risk (≤ 0.5)
+    float gR = s.rrFinal >= 3.0 ? 0.5 : s.rrFinal >= 2.0 ? 0.25 : 0.0
+    if gR > 0
+        f := f_fac(f, "RR " + str.tostring(s.rrFinal, "0.0"), gR)
+    // Penalties
+    if f_htfAgainst(s, zs, s.tp1)
+        pen -= 1.0
+        f := f_fac(f, htfLabel + " zone against before TP1", -1.0)
+    if s.model == SM_CONT and x.ranging
+        pen -= 0.5
+        f := f_fac(f, "Ranging regime", -0.5)
+    s.score := math.max(0.0, math.min(10.0, gC + gL + gS + gP + gT + gR + pen))
+    s.grade := f_gradeFor(s.score)
+    s.factors := f
+    s.score
+
+// Setup Path text (§9.7): short for the card, medium for Analysis and the tooltip
+f_setChain(Setup s) =>
+    int d = s.dir
+    string sn = s.shiftKind == BK_BOS ? "BOS" : s.isMSS ? "MSS" : "CHoCH"
+    float span = s.rHi - s.rLo
+    float bLo = d == 1 ? s.rHi - oteHi * span : s.rLo + oteLo * span
+    float bHi = d == 1 ? s.rHi - oteLo * span : s.rLo + oteHi * span
+    bool inOte = not na(s.entryTop) and s.entryTop >= bLo and s.entryBot <= bHi
+    string poi = na(s.poi) ? "" : " → " + (s.combo ? "FVG+OB" : f_zoneName(s.poi))
+    string loc = na(s.poi) ? "" : inOte ? " → OTE" : d == 1 ? " → DISC" : " → PREM"
+    string head = s.model == SM_REV ? "Sweep → " + sn : sn
+    s.chain := head + poi + loc
+    string mid0 = s.model == SM_REV ? s.sweepTag + " swept → " : ""
+    s.chainMid := mid0 + (s.shiftLvl == LV_SWG ? "" : "i") + sn + f_arrow(d) + " (" + str.tostring(nz(s.disp), "0.0") + " ATR)" + poi + loc
+    s.chain
+
+// ── Open a setup for model × direction. At most one not-yet-active setup per model × direction
+// (§9.3): a newer one supersedes it unless it is READY. Returns na when blocked.
+f_setOpen(Core c, array<Setup> ss, array<Setup> arch, int model, int dir) =>
+    bool blocked = false
+    int n = ss.size()
+    if n > 0
+        for i = n - 1 to 0
+            Setup o = ss.get(i)
+            if o.model == model and o.dir == dir and o.state < SS_TRIG
+                if o.state == SS_READY
+                    blocked := true
+                else
+                    f_setEnd(c, o, SS_EXPIRED, "SUPERSEDED")
+                    Setup old = ss.remove(i)
+                    if not na(old.poi)
+                        arch.push(old)
+                        if arch.size() > SETUP_ARCH_CAP
+                            arch.shift()
+    Setup s = na
+    if not blocked
+        s := Setup.new(id = f_nextId(c), model = model, dir = dir, state = SS_SWEEP, bornBar = bar_index, bornT = time, stageBar = bar_index)
+        ss.push(s)
+        if ss.size() > SETUP_CAP
+            Setup old = ss.shift()
+            f_setEnd(c, old, SS_EXPIRED, "CAPACITY")
+            if not na(old.poi)
+                arch.push(old)
+                if arch.size() > SETUP_ARCH_CAP
+                    arch.shift()
+    s
+
+// Shift candidate on this bar: swing break first, then internal (A.18)
+f_shiftOf(Setup s, StructState sw, StructState si) =>
+    Brk pick = na
+    for k = 0 to 1
+        Brk b = k == 0 ? (s.dir == 1 ? sw.newUp : sw.newDn) : (s.dir == 1 ? si.newUp : si.newDn)
+        if na(pick) and not na(b)
+            bool fromSweep = s.dir == 1 ? b.legExt0 <= s.sweepExt + 0.25 * vu : b.legExt0 >= s.sweepExt - 0.25 * vu
+            if b.bar >= s.sweepBar and nz(b.disp) >= i_shiftDisp and fromSweep
+                pick := b
+    pick
+
+f_setShift(Setup s, Brk b) =>
+    s.shiftBrkId := b.id
+    s.shiftEvId := b.evId
+    s.shiftBar := bar_index
+    s.shiftT := time
+    s.shiftLvl := b.lvl
+    s.shiftKind := b.kind
+    s.isMSS := b.mss
+    s.disp := b.disp
+    s.legBar := b.origBar
+    if s.dir == 1
+        s.rLo := s.model == SM_REV ? math.min(s.sweepExt, b.legExt0) : b.legExt0
+        s.rHi := b.legExt1
+    else
+        s.rHi := s.model == SM_REV ? math.max(s.sweepExt, b.legExt0) : b.legExt0
+        s.rLo := b.legExt1
+    s.state := SS_SHIFTED
+    s.stageBar := bar_index
+    true
+
+// ── Advance one setup on a confirmed bar (A.18 guards). kzNow: London or NY killzone open.
+f_setAdvance(Core c, Setup s, StructState sw, StructState si, array<Liq> lv, array<Zone> zs, Ctx x, bool kzNow) =>
+    int d = s.dir
+    Brk opp = d == 1 ? sw.newDn : sw.newUp
+    bool oppChoch = not na(opp) and opp.kind == BK_CHOCH
+    // 1 · SWEEP_SEEN: wait for the shift against the sweep
+    if s.state == SS_SWEEP
+        if d == 1 ? close < s.sweepExt : close > s.sweepExt
+            f_setEnd(c, s, SS_EXPIRED, "SWEEP_FAILED")
+        else
+            if d == 1 ? low < s.sweepExt : high > s.sweepExt
+                s.sweepExt := d == 1 ? low : high
+            Brk b = f_shiftOf(s, sw, si)
+            if not na(b) and (not i_reqKz or kzNow)
+                f_setShift(s, b)
+                s.kz := kzNow
+            else if bar_index - s.sweepBar >= i_nShift
+                f_setEnd(c, s, SS_EXPIRED, "NO_SHIFT_IN_WINDOW")
+    // 2 · SHIFTED: the range follows the leg until a POI in the right half appears
+    if s.state == SS_SHIFTED
+        if bar_index > s.shiftBar
+            if d == 1
+                s.rHi := math.max(s.rHi, high)
+            else
+                s.rLo := math.min(s.rLo, low)
+        int pc = f_pickPoi(s, zs)
+        float invLvl = s.model == SM_REV ? s.sweepExt : d == 1 ? s.rLo : s.rHi
+        if pc == 2
+            s.state := SS_FORMING
+            s.stageBar := bar_index
+            f_setChain(s)
+            f_setEmit(c, s, EV_SETUP_FORMING, close, s.model, SS_FORMING, na, s.chain)
+        else if (d == 1 ? close < invLvl : close > invLvl) or oppChoch
+            f_setEnd(c, s, SS_EXPIRED, oppChoch ? "OPPOSITE_CHOCH" : "CLOSE_BEYOND")
+        else if bar_index - s.shiftBar >= i_expiry
+            f_setEnd(c, s, SS_EXPIRED, pc == 0 ? "NO_POI" : d == 1 ? "POI_IN_PREMIUM" : "POI_IN_DISCOUNT")
+    // 3 · FORMING: build the plan, score it, promote to READY (checks are repeated every bar)
+    if s.state == SS_FORMING
+        float invLvl = s.model == SM_REV ? s.sweepExt : d == 1 ? s.rLo : s.rHi
+        if d == 1 ? close < invLvl : close > invLvl
+            f_setEnd(c, s, SS_INVALID, "CLOSE_BEYOND " + f_px(invLvl))
+        else if oppChoch
+            f_setEnd(c, s, SS_INVALID, "OPPOSITE_CHOCH")
+        else if f_poiBroken(s)
+            f_setEnd(c, s, SS_INVALID, "POI_BROKEN")
+        else
+            string fail = f_setPlan(s, lv)
+            if fail == ""
+                s.kz := s.kz or kzNow
+                f_setScore(s, x, zs)
+                float r1 = s.entry + d * (s.entry - s.slInit) * d
+                if i_setPreset == SetPreset.conservative and f_htfAgainst(s, zs, r1)
+                    fail := "HTF_ZONE_NEAR"
+                else if s.grade < setReadyGrade
+                    fail := "GRADE_LOW"
+            s.why := fail
+            if fail == ""
+                f_setChain(s)
+                s.state := SS_READY
+                s.stageBar := bar_index
+                s.readyBar := bar_index
+                s.readyT := time
+                f_setEmit(c, s, EV_SETUP_READY, s.entry, s.score, s.rrFinal, s.grade, s.chain)
+            else if bar_index - s.stageBar >= i_expiry
+                f_setEnd(c, s, SS_EXPIRED, fail)
+    // 4 · READY: wait for the entry from the next bar on; cancel rules before it (§10.2)
+    if s.state == SS_READY and bar_index > s.readyBar
+        if d == 1 ? low <= s.entry : high >= s.entry
+            s.state := SS_TRIG
+            s.stageBar := bar_index
+            s.trigBar := bar_index
+            s.trigT := time
+            f_setEmit(c, s, EV_SETUP_TRIGGERED, s.entry, s.score, s.rrFinal, s.grade)
+        else if d == 1 ? close < s.inv : close > s.inv
+            f_setEnd(c, s, SS_INVALID, "CLOSE_BEYOND " + f_px(s.inv))
+        else if oppChoch
+            f_setEnd(c, s, SS_INVALID, "OPPOSITE_CHOCH")
+        else if f_poiBroken(s)
+            f_setEnd(c, s, SS_INVALID, "POI_BROKEN")
+        else if d == 1 ? high >= s.tp1 : low <= s.tp1
+            f_setEnd(c, s, SS_MISSED, "TP1_BEFORE_ENTRY")
+        else if bar_index - s.readyBar >= i_expiry
+            f_setEnd(c, s, SS_EXPIRED, "EXPIRY")
+        else if i_reqKz and s.kz and not kzNow
+            f_setEnd(c, s, SS_EXPIRED, "SESSION_END")
+    // 5 · ACTIVE: SL first when SL and TP fall on one bar (§20.3); BE after TP1 (option)
+    if f_setActive(s)
+        bool hitSl = d == 1 ? low <= s.sl : high >= s.sl
+        if hitSl
+            float rSl = f_rrAt(s, s.sl)
+            float left = 1.0
+            if s.tpHit > 0
+                for n = 1 to s.tpHit
+                    left -= f_alloc(s.nTp, n)
+            s.rReal += left * rSl
+            s.state := s.tpHit > 0 ? SS_WIN : SS_SL
+            s.reason := s.be ? "BE" : "SL"
+            s.endBar := bar_index
+            s.endT := time
+            f_setEmit(c, s, EV_SETUP_SL, s.sl, rSl, s.rReal)
+        else if s.tpHit < s.nTp
+            for n = s.tpHit + 1 to s.nTp
+                float tp = f_tpAt(s, n)
+                if n == s.tpHit + 1 and (d == 1 ? high >= tp : low <= tp)
+                    float rr = f_rrAt(s, tp)
+                    s.tpHit := n
+                    s.rReal += f_alloc(s.nTp, n) * rr
+                    f_setEmit(c, s, EV_SETUP_TP, tp, n, rr)
+                    if n == 1 and i_beAfterTp1
+                        s.sl := s.entry
+                        s.be := true
+            if s.tpHit >= s.nTp
+                s.state := SS_WIN
+                s.reason := "TP" + str.tostring(s.nTp)
+                s.endBar := bar_index
+                s.endT := time
+            else if s.tpHit > 0
+                s.state := s.tpHit == 1 ? SS_TP1 : SS_TP2
+    true
+
+// ── One confirmed-bar step: advance live setups, then open new ones from this bar's events
+f_setupStep(Core c, array<Setup> ss, array<Setup> arch, StructState sw, StructState si, array<Liq> lv, array<Zone> zs, Ctx x, bool kzNow) =>
+    int n = ss.size()
+    if n > 0
+        for i = n - 1 to 0
+            Setup s = ss.get(i)
+            f_setAdvance(c, s, sw, si, lv, zs, x, kzNow)
+            // continuation bonus: internal liquidity swept on the pullback before the entry
+            if s.model == SM_CONT and (s.state == SS_FORMING or s.state == SS_READY)
+                if f_evFlag(c, EV_LIQ_SWEPT, s.dir, na)
+                    s.contSweep := true
+            if s.state >= SS_WIN
+                Setup done = ss.remove(i)
+                if not na(done.poi)
+                    arch.push(done)
+                    if arch.size() > SETUP_ARCH_CAP
+                        arch.shift()
+    bool htfRel = x.htfOk and not x.htfLow
+    bool cons = i_setPreset == SetPreset.conservative
+    // SWEEP_REVERSAL: every sweep on this bar opens a hypothesis in the reaction direction
+    if i_smRev
+        int nb = c.barEvents.size()
+        if nb > 0
+            for k = 0 to nb - 1
+                Event e = c.barEvents.get(k)
+                if e.typ == EV_LIQ_SWEPT
+                    int d = e.dir
+                    bool htfOkDir = not (htfRel and x.htfTrend == -d and cons) and (not i_reqHtf or (htfRel and x.htfTrend == d))
+                    Liq lq = na
+                    for l in lv
+                        if l.id == e.ref
+                            lq := l
+                    if htfOkDir and not na(lq)
+                        Setup s = f_setOpen(c, ss, arch, SM_REV, d)
+                        if not na(s)
+                            s.sweepEvId := e.id
+                            s.sweptLiqId := lq.id
+                            s.sweepExt := nz(lq.ext, d == 1 ? low : high)
+                            s.sweepMajor := lq.major or lq.tf != TF_CHART
+                            s.sweepTag := f_htfPrefix(lq.tf) + (d == 1 ? "SSL" : "BSL") + (lq.kind == LK_SWING ? (lq.touches >= 2 ? " ≡" + str.tostring(lq.touches) : "") : " " + lq.tag)
+                            s.sweepBar := bar_index
+                            // a shift on the sweep bar itself counts (sweep and CHoCH on one bar, §12.3)
+                            f_setAdvance(c, s, sw, si, lv, zs, x, kzNow)
+    // CONTINUATION: BOS with the swing trend and a real leg (swing, or internal inside a swing trend)
+    if i_smCont
+        for k = 0 to 3
+            Brk b = k == 0 ? sw.newUp : k == 1 ? sw.newDn : k == 2 ? si.newUp : si.newDn
+            if not na(b)
+                int d = b.dir
+                bool okB = b.kind == BK_BOS and nz(b.disp) >= i_shiftDisp and sw.trend == d and not b.shadowed
+                bool htfOkDir = (not cons or (htfRel and x.htfTrend == d)) and (not i_reqHtf or (htfRel and x.htfTrend == d))
+                if okB and htfOkDir and (not i_reqKz or kzNow)
+                    Setup s = f_setOpen(c, ss, arch, SM_CONT, d)
+                    if not na(s)
+                        s.sweepExt := b.legExt0
+                        s.sweepBar := bar_index
+                        f_setShift(s, b)
+                        s.kz := kzNow
+                        f_setAdvance(c, s, sw, si, lv, zs, x, kzNow)
+    true
+
+// Focus setup for the Ribbon, the Dashboard and the price-scale markers: the most advanced
+// visible stage first (ACTIVE → READY → FORMING), then the higher score, then the newer one
+f_setRank(Setup s) =>
+    f_setActive(s) ? 3 : s.state == SS_READY ? 2 : s.state == SS_FORMING ? 1 : 0
+
+f_setShown(Setup s) =>
+    s.state == SS_FORMING or (s.state >= SS_READY and s.grade >= setShowGrade)
+
+f_focusSetup(array<Setup> ss, int dirOnly) =>
+    Setup best = na
+    for s in ss
+        if f_setShown(s) and s.state < SS_WIN and (dirOnly == 0 or s.dir == dirOnly)
+            if na(best)
+                best := s
+            else
+                int ra = f_setRank(s)
+                int rb = f_setRank(best)
+                if ra > rb or (ra == rb and (s.score > best.score or (s.score == best.score and s.bornBar > best.bornBar)))
+                    best := s
+    best

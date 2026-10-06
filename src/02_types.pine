@@ -82,6 +82,31 @@ enum HistView
     visible = "Visible range"
     recent = "Recent only"
 
+enum SetPreset
+    balanced = "Balanced"
+    conservative = "Conservative"
+    aggressive = "Aggressive"
+
+enum EntryMode
+    ce = "CE (50%)"
+    edge = "Zone edge"
+    ote = "OTE 0.705"
+
+enum SlMode
+    auto = "Auto (by model)"
+    poi = "Beyond POI"
+    atr = "ATR × 1.5"
+
+enum TpMode
+    liq = "Liquidity"
+    rr = "RR 1 / 2 / 3"
+
+enum GradeOpt
+    c = "C"
+    b = "B"
+    a = "A"
+    ap = "A+"
+
 // Immutable fact about a state transition, emitted on a confirmed bar (§6.2)
 type Event
     int id
@@ -301,6 +326,79 @@ type Ctx
     bool htfLow = false
     int htfTrend = 0
 
+// Setup: an evolving trade hypothesis with its evidence, plan and score (§7.7, §9, §10).
+// v1.0 setups are analytical: drawn and alerted, never executed. The DRAFT TradePlan
+// (entry / SL / targets / RR) is kept inside the setup until the P9 webhook needs it apart.
+type Setup
+    int id
+    int model
+    int dir
+    int state
+    int bornBar
+    int bornT
+    int stageBar
+    // liquidity component
+    int sweepEvId
+    int sweptLiqId
+    float sweepExt
+    bool sweepMajor = false
+    string sweepTag = ""
+    int sweepBar
+    bool contSweep = false
+    // shift component
+    int shiftEvId
+    int shiftBrkId
+    int shiftBar
+    int shiftT
+    int shiftLvl
+    int shiftKind
+    bool isMSS = false
+    float disp
+    // location: range built by the shift leg
+    float rLo
+    float rHi
+    int legBar
+    // POI
+    Zone poi
+    Zone poiAlt
+    bool combo = false
+    float entryTop
+    float entryBot
+    // plan (DRAFT TradePlan)
+    float entry
+    float sl
+    float slInit
+    float inv
+    float tp1
+    float tp2
+    float tp3
+    string tp1Tag = ""
+    string tp2Tag = ""
+    string tp3Tag = ""
+    int nTp = 0
+    float rrFinal
+    bool drawLiq = false
+    string drawTxt = ""
+    // score
+    float score = 0.0
+    int grade = 0
+    string factors = ""
+    string chain = ""
+    string chainMid = ""
+    string why = ""
+    bool kz = false
+    // lifecycle
+    int readyBar
+    int readyT
+    int trigBar
+    int trigT
+    int endBar
+    int endT
+    int tpHit = 0
+    bool be = false
+    float rReal = 0.0
+    string reason = ""
+
 // Display mode ceilings (§15.3, §19.2)
 type ModeCfg
     int structEvents
@@ -335,6 +433,11 @@ type ModeCfg
     int htfStructEvents
     int htfStructWin
     int keyCap
+    int gradeFloor = 1
+    int setupPast = 0
+    int poolSetBox = 8
+    int poolSetLine = 16
+    int poolSetLab = 16
 
 // What the render pass draws: a bar window, split into time segments. Each segment ranks
 // objects against its own anchor (close and ATR at the segment's last bar), so a wide or

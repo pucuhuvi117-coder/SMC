@@ -223,9 +223,6 @@ f_spreadPick(View v, array<int> xs, array<int> sg, int q, int slots) =>
                             out.push(k)
     out
 
-f_htfPrefix(int tf) =>
-    tf != TF_CHART ? "◆" + htfLabel + " " : ""
-
 // ── Zones (§13.8, §14.10, §15 M2/M3/M6)
 // Converted zones (BB / MB / IFVG) start where the parent broke, so they never overlap it.
 f_zoneLeftT(Zone z) =>

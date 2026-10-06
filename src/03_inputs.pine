@@ -1,6 +1,6 @@
 // ═══ 03 · INPUTS & EFFECTIVE CONFIG ═════════════════════════════════════════════
 // Settings panel per docs/05-ux-ui-spec.md §14.4. All inputs use display.none so the
-// status line stays clean (V-10). Groups for HTF, setups and webhook arrive with P5/P7/P9.
+// status line stays clean (V-10). The webhook group arrives with P9.
 G_PROF = "⚙️ 0 · PROFILE"
 G_VIS = "🎨 1 · VISUAL EXPERIENCE"
 G_STR = "🏗 2 · STRUCTURE"
@@ -10,6 +10,7 @@ G_FVG = "🟨 5 · FAIR VALUE GAPS"
 G_RNG = "🎯 6 · DEALING RANGE"
 G_SES = "⏰ 7 · SESSIONS"
 G_MTF = "🌐 8 · MULTI-TIMEFRAME"
+G_SET = "🧩 9 · SETUPS (analytical)"
 G_ADV = "🛠 11 · ADVANCED"
 
 // ── 0 · Profile
@@ -120,6 +121,31 @@ i_htfOB = input.bool(true, "HTF OB", inline = "hv", group = G_MTF, display = dis
 i_htfFVG = input.bool(false, "HTF FVG", inline = "hv", group = G_MTF, display = display.none)
 i_htfLiq = input.bool(true, "HTF liquidity", inline = "hv", group = G_MTF, display = display.none)
 
+// ── 9 · Setups (analytical: drawn and alerted, never executed)
+i_setups = input.bool(true, "Setup engine", tooltip = "Sweep Reversal and Continuation setups with Entry / SL / TP, confluence score and grade. Analytical only: no orders are placed.", group = G_SET, display = display.none)
+i_smRev = input.bool(true, "Sweep Reversal", inline = "sm", group = G_SET, display = display.none)
+i_smCont = input.bool(true, "Continuation", inline = "sm", tooltip = "Sweep Reversal: liquidity sweep → CHoCH/MSS against it → FVG/OB in discount (long) / premium (short). Continuation: BOS with the trend → FVG/OB in discount / premium.", group = G_SET, display = display.none)
+i_setPreset = input.enum(SetPreset.balanced, "Scoring preset", tooltip = "Balanced: READY from grade B. Conservative: READY from grade A, setups against the HTF bias or with an opposing HTF zone within 1R are rejected. Aggressive: READY from grade C, killzone and HTF POI count double, HTF-against penalty −1.0.", group = G_SET, display = display.none)
+i_reqHtf = input.bool(false, "Require HTF alignment", inline = "req", group = G_SET, display = display.none)
+i_reqKz = input.bool(false, "Require killzone", inline = "req", tooltip = "HTF alignment: only setups in the direction of the HTF bias. Killzone: the shift must happen in the London or NY killzone; READY setups expire when the killzone ends.", group = G_SET, display = display.none)
+i_minGrade = input.enum(GradeOpt.b, "Min grade to show", tooltip = "The display mode sets a floor too: Clean shows A and A+, Normal B and above, Analysis and Debug all grades.", group = G_SET, display = display.none)
+i_entryMode = input.enum(EntryMode.ce, "Entry", inline = "en", group = G_SET, display = display.none)
+i_slMode = input.enum(SlMode.auto, "SL", inline = "en", tooltip = "Entry: CE = middle of the POI, Zone edge = its proximal edge, OTE 0.705 = the 0.705 level of the range if inside the POI (else CE). SL Auto: beyond the sweep (Sweep Reversal) or beyond the protected swing (Continuation).", group = G_SET, display = display.none)
+i_slBufAtr = input.float(0.10, "SL buffer ×ATR", minval = 0.0, maxval = 1.0, step = 0.01, inline = "buf", group = G_SET, display = display.none)
+i_slBufTicks = input.int(2, "ticks", minval = 0, maxval = 100, inline = "buf", tooltip = "The larger of the two is used, plus the spread.", group = G_SET, display = display.none)
+i_tpMode = input.enum(TpMode.liq, "Targets", inline = "tp", group = G_SET, display = display.none)
+i_minRR = input.float(2.0, "Min RR", minval = 0.5, maxval = 10.0, step = 0.1, inline = "tp", tooltip = "Liquidity: TP1 = nearest opposite liquidity at least 1R away, TP2 = major liquidity or the range extreme, TP3 = HTF or key level; missing targets fall back to 1R / 2R / 3R. RR is measured to the last target.", group = G_SET, display = display.none)
+i_expiry = input.int(30, "Expiry (bars)", minval = 5, maxval = 500, inline = "ex", group = G_SET, display = display.none)
+i_spread = input.int(0, "Spread (ticks)", minval = 0, maxval = 100, inline = "ex", tooltip = "Expiry: how long a setup may stay FORMING or READY. Spread is added to the SL buffer (bid charts).", group = G_SET, display = display.none)
+i_nShift = input.int(20, "Shift window (bars)", minval = 3, maxval = 100, inline = "sh", group = G_SET, display = display.none)
+i_shiftDisp = input.float(1.0, "min leg ×ATR", minval = 0.0, maxval = 5.0, step = 0.1, inline = "sh", tooltip = "Sweep Reversal: the CHoCH/BOS against the sweep must come within this many bars, with a leg of at least this size starting at the sweep. Continuation: minimum leg of the BOS.", group = G_SET, display = display.none)
+i_maxSlAtr = input.float(3.0, "Max SL ×ATR", minval = 0.5, maxval = 10.0, step = 0.1, inline = "slr", group = G_SET, display = display.none)
+i_minSlTicks = input.int(5, "Min SL ticks", minval = 1, maxval = 100, inline = "slr", group = G_SET, display = display.none)
+i_beAfterTp1 = input.bool(true, "Move SL to entry after TP1", group = G_SET, display = display.none)
+i_showPlan = input.bool(true, "Show Entry/SL/TP", inline = "sp", group = G_SET, display = display.none)
+i_priceMarkers = input.bool(false, "Price-scale markers", inline = "sp", tooltip = "Entry, SL and TP1 of the focus setup as values on the price scale.", group = G_SET, display = display.none)
+i_alertGrade = input.enum(GradeOpt.a, "Alert min grade", tooltip = "Setup READY alerts fire only from this grade.", group = G_SET, display = display.none)
+
 // ── 11 · Advanced
 i_atrLen = input.int(14, "ATR length", minval = 5, maxval = 200, tooltip = "Volatility unit for every threshold expressed in ×ATR.", group = G_ADV, display = display.none)
 i_kBody = input.float(1.0, "Displacement body ×ATR", minval = 0.3, maxval = 3.0, step = 0.1, inline = "disp", group = G_ADV, display = display.none)
@@ -160,11 +186,11 @@ specNy = f_sesSpec("0700-1000", "1200-1500", i_nyS)
 // screen is covered. Pool sizes keep every mode within the 500-object limits.
 f_modeCfg(DisplayMode m) =>
     switch m
-        DisplayMode.clean => ModeCfg.new(structEvents = 1, internalEvents = 0, swingLabels = false, zonesPerSide = 1, majorPerSide = 1, minorPerSide = 0, sweptShow = 1, distMax = 3.0, theta = 0.55, ttl = 0, hist = 500, mitigated = false, pdCap = 1, gauge = false, sessions = 0, dashboard = false, labelLevel = 1, debug = false, structWin = 6, internalWin = 0, swingLabelWin = 0, sweepWin = 6, sessWin = 0, rangeWin = 1, poolZone = 24, poolWash = 4, poolLvl = 30, poolStr = 14, poolLab = 40, htfStructEvents = 1, htfStructWin = 3, keyCap = 2)
-        DisplayMode.normal => ModeCfg.new(structEvents = 3, internalEvents = 0, swingLabels = false, zonesPerSide = 2, majorPerSide = 2, minorPerSide = 1, sweptShow = 3, distMax = 6.0, theta = 0.40, ttl = 10, hist = 1500, mitigated = true, pdCap = 2, gauge = true, sessions = 4, dashboard = true, labelLevel = 2, debug = false, structWin = 36, internalWin = 0, swingLabelWin = 0, sweepWin = 30, sessWin = 60, rangeWin = 6, poolZone = 64, poolWash = 64, poolLvl = 100, poolStr = 56, poolLab = 190, htfStructEvents = 2, htfStructWin = 8, keyCap = 3)
-        DisplayMode.analysis => ModeCfg.new(structEvents = 15, internalEvents = 15, swingLabels = true, zonesPerSide = 6, majorPerSide = 6, minorPerSide = 4, sweptShow = 15, distMax = 12.0, theta = 0.25, ttl = 50, hist = 5000, mitigated = true, pdCap = 2, gauge = true, sessions = 20, dashboard = true, labelLevel = 3, debug = false, structWin = 80, internalWin = 60, swingLabelWin = 60, sweepWin = 60, sessWin = 80, rangeWin = 12, poolZone = 140, poolWash = 90, poolLvl = 150, poolStr = 160, poolLab = 400, htfStructEvents = 6, htfStructWin = 16, keyCap = 4)
-        DisplayMode.debug => ModeCfg.new(structEvents = 30, internalEvents = 30, swingLabels = true, zonesPerSide = 20, majorPerSide = 20, minorPerSide = 20, sweptShow = 30, distMax = 1000.0, theta = 0.0, ttl = 100000, hist = 100000, mitigated = true, pdCap = 3, gauge = true, sessions = 30, dashboard = true, labelLevel = 3, debug = true, structWin = 80, internalWin = 60, swingLabelWin = 60, sweepWin = 80, sessWin = 80, rangeWin = 12, poolZone = 180, poolWash = 90, poolLvl = 150, poolStr = 160, poolLab = 480, htfStructEvents = 10, htfStructWin = 20, keyCap = 10)
-        => ModeCfg.new(structEvents = 15, internalEvents = 15, swingLabels = true, zonesPerSide = 6, majorPerSide = 6, minorPerSide = 4, sweptShow = 15, distMax = 12.0, theta = 0.25, ttl = 50, hist = 5000, mitigated = true, pdCap = 3, gauge = true, sessions = 20, dashboard = true, labelLevel = 3, debug = false, structWin = 80, internalWin = 60, swingLabelWin = 60, sweepWin = 60, sessWin = 80, rangeWin = 12, poolZone = 140, poolWash = 90, poolLvl = 150, poolStr = 160, poolLab = 400, htfStructEvents = 6, htfStructWin = 16, keyCap = 4)
+        DisplayMode.clean => ModeCfg.new(structEvents = 1, internalEvents = 0, swingLabels = false, zonesPerSide = 1, majorPerSide = 1, minorPerSide = 0, sweptShow = 1, distMax = 3.0, theta = 0.55, ttl = 0, hist = 500, mitigated = false, pdCap = 1, gauge = false, sessions = 0, dashboard = false, labelLevel = 1, debug = false, structWin = 6, internalWin = 0, swingLabelWin = 0, sweepWin = 6, sessWin = 0, rangeWin = 1, poolZone = 24, poolWash = 4, poolLvl = 30, poolStr = 14, poolLab = 40, htfStructEvents = 1, htfStructWin = 3, keyCap = 2, gradeFloor = 2, setupPast = 0, poolSetBox = 4, poolSetLine = 8, poolSetLab = 8)
+        DisplayMode.normal => ModeCfg.new(structEvents = 3, internalEvents = 0, swingLabels = false, zonesPerSide = 2, majorPerSide = 2, minorPerSide = 1, sweptShow = 3, distMax = 6.0, theta = 0.40, ttl = 10, hist = 1500, mitigated = true, pdCap = 2, gauge = true, sessions = 4, dashboard = true, labelLevel = 2, debug = false, structWin = 36, internalWin = 0, swingLabelWin = 0, sweepWin = 30, sessWin = 60, rangeWin = 6, poolZone = 64, poolWash = 64, poolLvl = 100, poolStr = 56, poolLab = 190, htfStructEvents = 2, htfStructWin = 8, keyCap = 3, gradeFloor = 1, setupPast = 0, poolSetBox = 8, poolSetLine = 16, poolSetLab = 16)
+        DisplayMode.analysis => ModeCfg.new(structEvents = 15, internalEvents = 15, swingLabels = true, zonesPerSide = 6, majorPerSide = 6, minorPerSide = 4, sweptShow = 15, distMax = 12.0, theta = 0.25, ttl = 50, hist = 5000, mitigated = true, pdCap = 2, gauge = true, sessions = 20, dashboard = true, labelLevel = 3, debug = false, structWin = 80, internalWin = 60, swingLabelWin = 60, sweepWin = 60, sessWin = 80, rangeWin = 12, poolZone = 140, poolWash = 90, poolLvl = 150, poolStr = 160, poolLab = 400, htfStructEvents = 6, htfStructWin = 16, keyCap = 4, gradeFloor = 0, setupPast = 10, poolSetBox = 40, poolSetLine = 60, poolSetLab = 30)
+        DisplayMode.debug => ModeCfg.new(structEvents = 30, internalEvents = 30, swingLabels = true, zonesPerSide = 20, majorPerSide = 20, minorPerSide = 20, sweptShow = 30, distMax = 1000.0, theta = 0.0, ttl = 100000, hist = 100000, mitigated = true, pdCap = 3, gauge = true, sessions = 30, dashboard = true, labelLevel = 3, debug = true, structWin = 80, internalWin = 60, swingLabelWin = 60, sweepWin = 80, sessWin = 80, rangeWin = 12, poolZone = 180, poolWash = 90, poolLvl = 150, poolStr = 160, poolLab = 460, htfStructEvents = 10, htfStructWin = 20, keyCap = 10, gradeFloor = 0, setupPast = 10, poolSetBox = 40, poolSetLine = 60, poolSetLab = 30)
+        => ModeCfg.new(structEvents = 15, internalEvents = 15, swingLabels = true, zonesPerSide = 6, majorPerSide = 6, minorPerSide = 4, sweptShow = 15, distMax = 12.0, theta = 0.25, ttl = 50, hist = 5000, mitigated = true, pdCap = 3, gauge = true, sessions = 20, dashboard = true, labelLevel = 3, debug = false, structWin = 80, internalWin = 60, swingLabelWin = 60, sweepWin = 60, sessWin = 80, rangeWin = 12, poolZone = 140, poolWash = 90, poolLvl = 150, poolStr = 160, poolLab = 400, htfStructEvents = 6, htfStructWin = 16, keyCap = 4, gradeFloor = 0, setupPast = 10, poolSetBox = 40, poolSetLine = 60, poolSetLab = 30)
 
 var ModeCfg mc = f_modeCfg(i_mode)
 
@@ -198,6 +224,17 @@ nMajorSide = mc.debug ? mc.majorPerSide : math.min(i_levelsPerSide, mc.majorPerS
 nMinorSide = i_reduceMinorLiq ? math.min(1, mc.minorPerSide) : mc.minorPerSide
 histDepth = i_autoHide ? math.min(i_histDepth, mc.hist) : mc.hist
 labelLvl = math.min(verbLevel, mc.labelLevel)
+// Setups: READY threshold by preset (§9.6), display floor = mode floor and user choice (ADR-09)
+f_gradeOf(GradeOpt g) =>
+    switch g
+        GradeOpt.c => GR_C
+        GradeOpt.b => GR_B
+        GradeOpt.a => GR_A
+        => GR_AP
+setReadyGrade = i_setPreset == SetPreset.conservative ? GR_A : i_setPreset == SetPreset.aggressive ? GR_C : GR_B
+setShowGrade = mc.debug ? GR_C : math.max(mc.gradeFloor, f_gradeOf(i_minGrade))
+setAlertGrade = f_gradeOf(i_alertGrade)
+vPlan = i_setups and i_showPlan
 panelSz = switch i_panelSize
     PanelSize.small => size.small
     PanelSize.large => size.large
