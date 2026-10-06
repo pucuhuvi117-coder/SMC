@@ -121,9 +121,7 @@ f_dashboard(table tb, Ctx x, Core c, StructState si, Range r, bool liveView, Set
             else
                 int left = i_expiry - (bar_index - fs.stageBar)
                 string stg = f_sideName(fs.dir) + " — " + f_uiStage(fs.state) + " · " + (fs.model == SM_REV ? "Reversal" : "Continuation")
-                string tipS = f_modelName(fs.model) + " · " + fs.chainMid + (fs.state <= SS_READY ? "
-expires in " + str.tostring(math.max(0, left)) + " bars" : "") + (fs.state == SS_FORMING and fs.why != "" ? "
-waiting: " + f_reasonText(fs.why) : "")
+                string tipS = f_modelName(fs.model) + " · " + fs.chainMid + (fs.state <= SS_READY ? "\nexpires in " + str.tostring(math.max(0, left)) + " bars" : "") + (fs.state == SS_FORMING and fs.why != "" ? "\nwaiting: " + f_reasonText(fs.why) : "")
                 row := f_dashRow(tb, row, "SETUP", stg, f_setColor(fs), tipS, sz)
                 if fs.state >= SS_READY
                     color gc = fs.grade >= GR_A ? C_SIG : fs.grade == GR_B ? C_TEXT : C_NEUT

@@ -68,6 +68,24 @@ def strip_comment(line: str) -> str:
     return "".join(out)
 
 
+def has_open_quote(line: str) -> bool:
+    """True if a string literal is still open at the end of the line."""
+    quote = None
+    i = 0
+    while i < len(line):
+        ch = line[i]
+        if quote:
+            if ch == "\\":
+                i += 2
+                continue
+            if ch == quote:
+                quote = None
+        elif ch in ('"', "'"):
+            quote = ch
+        i += 1
+    return quote is not None
+
+
 def lint(name: str, text: str) -> list[str]:
     """Project rules from docs/02-architecture.md §20.8 and docs/09-master-checklist.md."""
     issues = []
@@ -83,6 +101,9 @@ def lint(name: str, text: str) -> list[str]:
         # The [1] offset may live inside the requested function; such lines must say so explicitly
         if "lookahead_on" in code and "[1]" not in code and "no-repaint:" not in raw:
             issues.append(f"{where}: lookahead_on without [1] offset or a `// no-repaint:` note (repaint, §4.7)")
+        # A string literal cannot span lines in Pine (caught in v0.4: a tooltip broken after `"`)
+        if has_open_quote(code):
+            issues.append(f"{where}: string literal is not closed on this line (use \\n for a line break)")
         stripped = code.rstrip()
         if stripped and not stripped.lstrip().startswith("//"):
             indent = len(code) - len(code.lstrip(" "))

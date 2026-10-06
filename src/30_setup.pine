@@ -105,8 +105,8 @@ f_pickPoi(Setup s, array<Zone> zs) =>
                                 cBot := math.max(a.bottom, o.bottom)
         // 2 · single zones: FVG in OTE → OB in OTE → closest to EQ; the runner-up is the alt POI
         if not combo
-            float p1 = -10.0
-            float p2 = -10.0
+            float p1 = -1.0e10
+            float p2 = -1.0e10
             for a in cand
                 bool inOte = a.top >= bLo and a.bottom <= bHi
                 float p = (inOte ? (a.kind == ZK_FVG ? 3.0 : 2.0) : 1.0) - math.abs((d == 1 ? a.top : a.bottom) - eq) / span

@@ -41,11 +41,14 @@ f_setupMsg(Event e, string what) =>
     for x in setups
         if x.id == e.ref
             s := x
-    // a setup that ended on this bar has already moved to the archive
-    if na(s) and setupArch.size() > 0
-        Setup y = setupArch.last()
-        if y.id == e.ref
-            s := y
+    // a setup that ended on this bar has already moved to the archive; several may have ended
+    // on one bar, so look through the newest entries rather than only the last one
+    int nArch = setupArch.size()
+    if na(s) and nArch > 0
+        for i = nArch - 1 to math.max(0, nArch - 12)
+            Setup y = setupArch.get(i)
+            if na(s) and y.id == e.ref
+                s := y
     string body = na(s) ? "" : " · " + f_modelName(s.model) + " · " + f_gradeName(s.grade) + " " + str.tostring(s.score, "0.0") + " · E " + f_px(s.entry) + " · SL " + f_px(s.slInit) + " · TP1 " + f_px(s.tp1) + " · RR " + str.tostring(s.rrFinal, "0.0") + " · " + s.chain
     "SMC Pro · " + syminfo.ticker + " " + timeframe.period + " · " + (e.dir == 1 ? "LONG " : "SHORT ") + what + body + (what == "INVALID" ? " · " + e.s1 : "")
 
