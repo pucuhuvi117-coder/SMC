@@ -5,7 +5,7 @@
 // Sweep, OB-touch and FVG-fill alerts also fire for HTF objects: those happen on chart bars,
 // and their events carry tf = HTF1 for logs and the P9 webhook.
 // Setup alerts also send a detailed alert() message; the batched JSON webhook arrives with P9.
-bool alertOk = barstate.isconfirmed and core.warm
+bool alertOk = barstate.isconfirmed and core.warm and core.barEvents.size() > 0
 bool aBosUp = alertOk and f_evFlag(core, EV_BOS, 1, LV_SWG, TF_CHART)
 bool aBosDn = alertOk and f_evFlag(core, EV_BOS, -1, LV_SWG, TF_CHART)
 bool aChochUp = alertOk and f_evFlag(core, EV_CHOCH, 1, LV_SWG, TF_CHART)

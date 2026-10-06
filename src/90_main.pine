@@ -53,12 +53,11 @@ if barstate.isconfirmed
         core.lastDispDnBar := bar_index
     // Sessions (feed session high/low key levels)
     if sesOk
-        f_sessStep(core, sAsia, inAsia, liqs, sessHist)
-        f_sessStep(core, sLon, inLon, liqs, sessHist)
-        f_sessStep(core, sNy, inNy, liqs, sessHist)
+        for q = 0 to 2
+            f_sessStep(core, q == 0 ? sAsia : q == 1 ? sLon : sNy, q == 0 ? inAsia : q == 1 ? inLon : inNy, liqs, sessHist)
     // Structure: internal, then swing
-    f_structStep(core, stI, phI, plI)
-    f_structStep(core, stS, phS, plS)
+    for q = 0 to 1
+        f_structStep(core, q == 0 ? stI : stS, q == 0 ? phI : phS, q == 0 ? plI : plS)
     Brk iUp = stI.newUp
     Brk iDn = stI.newDn
     if not na(iUp) and not na(stS.newUp)
@@ -107,17 +106,12 @@ if barstate.isconfirmed
         f_fvgNew(core, zones, 1)
     if fvgDn
         f_fvgNew(core, zones, -1)
-    if not na(stS.newUp)
-        f_obFromBreak(core, zones, stS.newUp, stS)
-    if not na(stS.newDn)
-        f_obFromBreak(core, zones, stS.newDn, stS)
-    if i_obInternal
-        if not na(iUp)
-            if not iUp.shadowed
-                f_obFromBreak(core, zones, iUp, stS)
-        if not na(iDn)
-            if not iDn.shadowed
-                f_obFromBreak(core, zones, iDn, stS)
+    // order: swing up, swing down, then internal up, internal down (internal only if enabled and not shadowed by a swing break)
+    for q = 0 to 3
+        Brk obB = q == 0 ? stS.newUp : q == 1 ? stS.newDn : q == 2 ? iUp : iDn
+        if not na(obB) and (q < 2 or i_obInternal)
+            if not obB.shadowed
+                f_obFromBreak(core, zones, obB, stS)
     // Context
     f_rangeStep(core, rng, stS, rangeArch)
     float pdNow = f_pdStep(core, rng)
@@ -125,6 +119,8 @@ if barstate.isconfirmed
     // Setups (P7): never during warm-up (AC-08)
     if i_setups and core.warm
         f_setupStep(core, setups, setupArch, stS, stI, liqs, zones, ctx, sLon.on or sNy.on)
+    if i_log
+        f_logEvents(core)
 
 // Price-scale markers (§14.9): entry, SL and TP1 of the focus setup once it has a plan
 var float pmE = na
