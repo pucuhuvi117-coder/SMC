@@ -6,10 +6,21 @@ file (docs/02-architecture.md §4.11, ADR-04). Sources live in src/ as ordered
 fragments; this script concatenates them, stamps the version and build date,
 runs project lint rules and, when available, a syntax check with pynescript.
 
+Two indicators are built from the same sources (ADR-13): `core` (SMC Visualizer Pro) and
+`setups` (SMC Pro · Setups). Code that belongs to one of them only is fenced in the modules:
+
+    //#if setups        (or //#if core)
+    ...
+    //#else             (optional)
+    ...
+    //#endif
+
+Flags come from build/targets.json; blocks do not nest.
+
 Usage:
-    python3 build/build.py                 # build the default target (indicator)
-    python3 build/build.py --check         # build + syntax check (needs pynescript)
-    python3 build/build.py --target NAME   # build another target from targets.json
+    python3 build/build.py                 # build every target
+    python3 build/build.py --check         # build + syntax check (needs pynescript, ~3 min per target)
+    python3 build/build.py --target NAME   # build one target from targets.json
 
 Environment:
     PINE_PARSER_PYTHON  Python interpreter that has `pynescript` installed
@@ -30,11 +41,11 @@ ROOT = Path(__file__).resolve().parent.parent
 SRC = ROOT / "src"
 TARGETS = ROOT / "build" / "targets.json"
 
-# Soft limits used for the size report. TradingView enforces limits on the
-# compiled script (tokens, variables, scopes) that cannot be computed exactly
-# offline; these thresholds give early warning (risk T-01, spike S-7).
-WARN_LINES = 6000
-WARN_TOKENS = 60000
+# Compile budget per target (risk T-01, ADR-13). Measured in TradingView: ~30k tokens
+# compile in about a minute, ~40k tokens hit "Pine compilation was timed out" (2 min).
+# Compile time grows faster than linearly with size, so each indicator stays well below.
+WARN_LINES = 4000
+WARN_TOKENS = 34000
 
 TOKEN_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_.]*|\d+\.?\d*|==|!=|<=|>=|:=|=>|[^\s\w]")
 
@@ -66,6 +77,42 @@ def strip_comment(line: str) -> str:
             out.append(ch)
         i += 1
     return "".join(out)
+
+
+DIRECTIVE_RE = re.compile(r"^\s*//#(if|else|endif)\b\s*(!?\w*)\s*$")
+
+
+def preprocess(name: str, text: str, flags: set[str]) -> tuple[str, list[str]]:
+    """Keep the lines of `//#if flag` blocks whose flag is set for the target; drop the directives."""
+    out, issues = [], []
+    state = None  # None outside a block, else [keep_if_branch, in_else]
+    for n, raw in enumerate(text.splitlines(), 1):
+        m = DIRECTIVE_RE.match(raw)
+        if m:
+            kind, arg = m.group(1), m.group(2)
+            if kind == "if":
+                if state is not None:
+                    issues.append(f"{name}:{n}: nested //#if is not supported")
+                neg = arg.startswith("!")
+                flag = arg.lstrip("!")
+                if not flag:
+                    issues.append(f"{name}:{n}: //#if needs a flag")
+                state = [(flag in flags) != neg, False]
+            elif kind == "else":
+                if state is None or state[1]:
+                    issues.append(f"{name}:{n}: //#else without //#if")
+                else:
+                    state[1] = True
+            else:
+                if state is None:
+                    issues.append(f"{name}:{n}: //#endif without //#if")
+                state = None
+            continue
+        if state is None or state[0] != state[1]:
+            out.append(raw)
+    if state is not None:
+        issues.append(f"{name}: //#if is not closed")
+    return "\n".join(out) + "\n", issues
 
 
 def has_open_quote(line: str) -> bool:
@@ -165,15 +212,17 @@ def lint(name: str, text: str) -> list[str]:
 
 def assemble(target: str) -> tuple[Path, str, list[str]]:
     cfg = json.loads(TARGETS.read_text(encoding="utf-8"))[target]
+    flags = set(cfg.get("flags", []))
     version = read_version()
     date = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%d")
     parts = []
     issues = []
     for mod in cfg["modules"]:
         path = SRC / mod
-        text = path.read_text(encoding="utf-8").rstrip() + "\n"
+        text, pp_issues = preprocess(mod, path.read_text(encoding="utf-8").rstrip() + "\n", flags)
+        issues += pp_issues
         issues += lint(mod, text)
-        parts.append(text)
+        parts.append(text.rstrip() + "\n")
     body = "\n".join(parts)
     body = body.replace("{{VERSION}}", version).replace("{{DATE}}", date)
     issues += lint_shadowing(body)
@@ -198,30 +247,37 @@ def syntax_check(path: Path) -> tuple[bool, str]:
     return False, tail or "pynescript failed"
 
 
-def main() -> int:
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--target", default="indicator")
-    ap.add_argument("--check", action="store_true", help="run pynescript syntax check")
-    args = ap.parse_args()
-
-    out, body, issues = assemble(args.target)
+def build_target(target: str, check: bool) -> bool:
+    out, body, issues = assemble(target)
     lines = body.count("\n")
     tokens = sum(len(TOKEN_RE.findall(strip_comment(l))) for l in body.splitlines())
-    print(f"built {out.relative_to(ROOT)}  v{read_version()}  lines={lines}  ~tokens={tokens}")
+    print(f"[{target}] built {out.relative_to(ROOT)}  v{read_version()}  lines={lines}  ~tokens={tokens}")
     if lines > WARN_LINES or tokens > WARN_TOKENS:
-        print(f"WARNING: size above soft limit (lines>{WARN_LINES} or tokens>{WARN_TOKENS}) — see risk T-01")
+        print(f"[{target}] WARNING: above the compile budget (lines>{WARN_LINES} or tokens>{WARN_TOKENS}): TradingView may time out (risk T-01, ADR-13)")
 
     ok = True
     for msg in issues:
-        print(f"LINT {msg}")
+        print(f"[{target}] LINT {msg}")
     if issues:
         ok = False
 
-    if args.check:
+    if check:
         passed, msg = syntax_check(out)
-        print(msg)
+        print(f"[{target}] {msg}")
         ok = ok and passed
+    return ok
 
+
+def main() -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--target", default="all", help="target name from targets.json, or all")
+    ap.add_argument("--check", action="store_true", help="run pynescript syntax check")
+    args = ap.parse_args()
+
+    names = list(json.loads(TARGETS.read_text(encoding="utf-8"))) if args.target == "all" else [args.target]
+    ok = True
+    for name in names:
+        ok = build_target(name, args.check) and ok
     return 0 if ok else 1
 
 

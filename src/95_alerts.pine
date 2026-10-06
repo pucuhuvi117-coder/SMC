@@ -5,7 +5,10 @@
 // Sweep, OB-touch and FVG-fill alerts also fire for HTF objects: those happen on chart bars,
 // and their events carry tf = HTF1 for logs and the P9 webhook.
 // Setup alerts also send a detailed alert() message; the batched JSON webhook arrives with P9.
+// SMC Visualizer Pro carries the structure / liquidity / zone conditions, SMC Pro · Setups the
+// setup conditions (ADR-13).
 bool alertOk = barstate.isconfirmed and core.warm and core.barEvents.size() > 0
+//#if core
 bool aBosUp = alertOk and f_evFlag(core, EV_BOS, 1, LV_SWG, TF_CHART)
 bool aBosDn = alertOk and f_evFlag(core, EV_BOS, -1, LV_SWG, TF_CHART)
 bool aChochUp = alertOk and f_evFlag(core, EV_CHOCH, 1, LV_SWG, TF_CHART)
@@ -20,6 +23,7 @@ bool aSession = alertOk and f_evFlag(core, EV_SESSION_START, 0, na)
 bool aPdEnter = alertOk and f_evFlag(core, EV_PD_ENTER, 0, na)
 bool aOteEnter = alertOk and f_evFlag(core, EV_OTE_ENTER, 0, na)
 
+//#else
 // Setups: READY / TRIGGERED / INVALID from the alert grade on (grade is v3 of these events)
 f_setupEv(Core c, int typ, int minGrade) =>
     Event hit = na
@@ -59,6 +63,9 @@ if aSetTrig
 if aSetInv
     alert(f_setupMsg(evInv, "INVALID"), alert.freq_once_per_bar_close)
 
+//#endif
+
+//#if core
 alertcondition(aBosUp, "BOS ↑ (swing)", "SMC Pro · {{ticker}} {{interval}} · BOS ↑ · close {{close}}")
 alertcondition(aBosDn, "BOS ↓ (swing)", "SMC Pro · {{ticker}} {{interval}} · BOS ↓ · close {{close}}")
 alertcondition(aChochUp, "CHoCH ↑ (swing)", "SMC Pro · {{ticker}} {{interval}} · CHoCH ↑ · close {{close}}")
@@ -72,6 +79,8 @@ alertcondition(aPdEnter, "Premium / discount change", "SMC Pro · {{ticker}} {{i
 alertcondition(aHtfBias, "HTF bias change", "SMC Pro · {{ticker}} {{interval}} · higher-timeframe bias changed · close {{close}}")
 alertcondition(aHtfBrk, "HTF BOS / CHoCH", "SMC Pro · {{ticker}} {{interval}} · higher-timeframe structure break · close {{close}}")
 alertcondition(aOteEnter, "OTE entered", "SMC Pro · {{ticker}} {{interval}} · price entered the OTE band · close {{close}}")
+//#else
 alertcondition(aSetReady, "Setup READY", "SMC Pro · {{ticker}} {{interval}} · setup READY (grade ≥ alert min grade) · close {{close}}")
 alertcondition(aSetTrig, "Setup TRIGGERED", "SMC Pro · {{ticker}} {{interval}} · setup entry reached · close {{close}}")
 alertcondition(aSetInv, "Setup INVALID", "SMC Pro · {{ticker}} {{interval}} · setup invalidated before entry · close {{close}}")
+//#endif

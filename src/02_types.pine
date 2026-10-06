@@ -326,6 +326,7 @@ type Ctx
     bool htfLow = false
     int htfTrend = 0
 
+//#if setups
 // Setup: an evolving trade hypothesis with its evidence, plan and score (§7.7, §9, §10).
 // v1.0 setups are analytical: drawn and alerted, never executed. The DRAFT TradePlan
 // (entry / SL / targets / RR) is kept inside the setup until the P9 webhook needs it apart.
@@ -398,6 +399,7 @@ type Setup
     bool be = false
     float rReal = 0.0
     string reason = ""
+//#endif
 
 // Display mode ceilings (§15.3, §19.2)
 type ModeCfg

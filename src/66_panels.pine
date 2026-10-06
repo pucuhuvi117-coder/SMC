@@ -1,6 +1,8 @@
-// ═══ 66 · PANELS: CONTEXT RIBBON, DASHBOARD, DEBUG TABLE ════════════════════════
-// Ribbon answers "what is happening" in one line (§14.6); Dashboard gives the answers
-// with details in tooltips (§14.5); Debug shows budgets and data health (§19.1).
+// ═══ 66 · PANELS ═════════════════════════════════════════════════════════════════
+// SMC Visualizer Pro: Context Ribbon answers "what is happening" in one line (§14.6); Dashboard
+// gives the answers with details in tooltips (§14.5); Debug shows budgets and data health (§19.1).
+// SMC Pro · Setups: one compact Setup panel (§14.5 SETUP / QUALITY / PLAN / INVALID rows).
+// Both show the settings signature cfg (ADR-13): equal numbers = the same engine settings.
 
 f_pos(string s) =>
     switch s
@@ -12,6 +14,7 @@ f_pos(string s) =>
         "Bottom Center" => position.bottom_center
         => position.top_right
 
+//#if core
 f_structText(Event e) =>
     na(e) ? "—" : (e.typ == EV_BOS ? "BOS " : e.v3 == 1 ? "MSS " : "CHoCH ") + f_arrow(e.dir)
 
@@ -33,10 +36,12 @@ f_pdText(Ctx x, bool longForm) =>
 f_pdColor(Ctx x) =>
     na(x.pd) ? C_NEUT : x.pdZone == 1 ? C_BEAR : x.pdZone == -1 ? C_BULL : C_NEUT
 
+//#endif
 f_statusText(Core c, bool liveView) =>
     not c.warm ? "WARMING UP" : nonStdChart ? "⚠ NON-STANDARD CHART" : not liveView ? "◀ HISTORY VIEW" : ""
 
-// Context Ribbon: HTF │ STR │ SESSION │ PD │ LIQ │ SETUP │ status
+//#if core
+// Context Ribbon: HTF │ STR │ SESSION │ PD │ LIQ │ status
 f_htfText(Ctx x) =>
     htfBadCfg ? "⚠ HTF ≤ TF" : not x.htfOk ? "HTF OFF" : x.htfLow ? "HTF " + htfLabel + " ⚠" : "HTF " + htfLabel + (x.htfTrend == 1 ? " ▲ BULL" : x.htfTrend == -1 ? " ▼ BEAR" : " —")
 
@@ -46,18 +51,7 @@ f_htfColor(Ctx x) =>
 f_htfTip(Ctx x) =>
     htfBadCfg ? "The manual higher timeframe must be above the chart timeframe; the HTF Feed is off" : not x.htfOk ? "Higher timeframe is off" : x.htfLow ? "Fewer than " + str.tostring(i_minHtfBars) + " confirmed " + htfLabel + " bars: the HTF bias is treated as unknown (A.16)" : "Higher-timeframe swing structure from confirmed " + htfLabel + " bars"
 
-// Setup segment / rows (§14.5, §14.6)
-f_setRibbonText(Setup s) =>
-    na(s) ? "SETUP —" : f_sideName(s.dir) + " " + f_uiStage(s.state) + (s.state >= SS_READY ? " " + f_gradeName(s.grade) : "")
-
-f_setColor(Setup s) =>
-    na(s) ? C_NEUT : s.state >= SS_READY ? C_SIG : color.new(C_SIG, 35)
-
-f_qualityBar(float sc) =>
-    int k = int(math.round(sc))
-    str.repeat("▮", k) + str.repeat("▯", 10 - k)
-
-f_ribbon(table tb, Ctx x, Core c, bool liveView, Setup fs) =>
+f_ribbon(table tb, Ctx x, Core c, bool liveView) =>
     if not na(tb)
         string sz = panelSz
         table.cell(tb, 0, 0, f_htfText(x), text_color = f_htfColor(x), text_size = sz, tooltip = f_htfTip(x))
@@ -75,21 +69,22 @@ f_ribbon(table tb, Ctx x, Core c, bool liveView, Setup fs) =>
                 int side = swept ? -le.dir : le.dir
                 s3 := (side == 1 ? "BSL" : "SSL") + (swept ? " ✕ " : " TAKEN ") + str.tostring(bar_index - le.bar) + "b"
         table.cell(tb, 4, 0, s3, text_color = s3 == "LIQ —" ? C_NEUT : C_LIQ, text_size = sz, tooltip = na(le) ? "No recent liquidity event" : le.s1 + " · " + f_px(le.price) + " · " + f_timeStr(le.t))
-        table.cell(tb, 5, 0, f_setRibbonText(fs), text_color = f_setColor(fs), text_size = sz, tooltip = na(fs) ? "No setup: watching liquidity" : f_setTip(fs))
         string s4 = f_statusText(c, liveView)
         if s4 == ""
-            table.clear(tb, 6, 0)
+            table.clear(tb, 5, 0)
         else
-            table.cell(tb, 6, 0, s4, text_color = C_WARN, text_size = sz, tooltip = not liveView ? "The chart shows history for the visible range. Ribbon and Dashboard always describe the latest bar." : "Signals and alerts are suppressed during warm-up (first " + str.tostring(warmBars) + " bars).")
+            table.cell(tb, 5, 0, s4, text_color = C_WARN, text_size = sz, tooltip = not liveView ? "The chart shows history for the visible range. Ribbon and Dashboard always describe the latest bar." : "Signals and alerts are suppressed during warm-up (first " + str.tostring(warmBars) + " bars).")
     true
 
+//#endif
 f_dashRow(table tb, int row, string k, string v, color vc, string tip, string sz) =>
     table.cell(tb, 0, row, k, text_color = color.new(C_TEXT, 45), text_size = sz, text_halign = text.align_left)
     table.cell(tb, 1, row, v, text_color = vc, text_size = sz, text_halign = text.align_left, tooltip = tip)
     row + 1
 
+//#if core
 // Dashboard: answers instead of statistics (§14.5)
-f_dashboard(table tb, Ctx x, Core c, StructState si, Range r, bool liveView, Setup fs) =>
+f_dashboard(table tb, Ctx x, Core c, StructState si, Range r, bool liveView) =>
     if not na(tb)
         bool exp = i_dashSize == "Expanded"
         string sz = panelSz
@@ -110,25 +105,8 @@ f_dashboard(table tb, Ctx x, Core c, StructState si, Range r, bool liveView, Set
         Event le = c.lastLiq
         string lq = na(le) ? "—" : f_liqText(le) + " · " + str.tostring(bar_index - le.bar) + " bars"
         row := f_dashRow(tb, row, "LIQUIDITY", lq, na(le) ? C_NEUT : C_LIQ, na(le) ? "No sweep yet" : le.s1 + " · " + f_px(le.price) + " · " + f_timeStr(le.t), sz)
-        // SETUP / QUALITY (one "watching" row when there is no setup)
         Liq nb = x.nextBsl
         Liq ns = x.nextSsl
-        if i_setups
-            if na(fs)
-                Liq w = na(nb) ? ns : na(ns) ? nb : nb.price - close <= close - ns.price ? nb : ns
-                string wt = na(w) ? "— watching" : "— watching " + (w.side == 1 ? "BSL " : "SSL ") + f_px(w.price)
-                row := f_dashRow(tb, row, "SETUP", wt, C_NEUT, "No setup. A sweep of the nearest liquidity followed by a shift, or a BOS with the trend, starts one.", sz)
-            else
-                int left = i_expiry - (bar_index - fs.stageBar)
-                string stg = f_sideName(fs.dir) + " — " + f_uiStage(fs.state) + " · " + (fs.model == SM_REV ? "Reversal" : "Continuation")
-                string tipS = f_modelName(fs.model) + " · " + fs.chainMid + (fs.state <= SS_READY ? "\nexpires in " + str.tostring(math.max(0, left)) + " bars" : "") + (fs.state == SS_FORMING and fs.why != "" ? "\nwaiting: " + f_reasonText(fs.why) : "")
-                row := f_dashRow(tb, row, "SETUP", stg, f_setColor(fs), tipS, sz)
-                if fs.state >= SS_READY
-                    color gc = fs.grade >= GR_A ? C_SIG : fs.grade == GR_B ? C_TEXT : C_NEUT
-                    row := f_dashRow(tb, row, "QUALITY", str.tostring(fs.score, "0.0") + " / 10 · " + f_gradeName(fs.grade) + "  " + f_qualityBar(fs.score), gc, fs.factors + "Score = completeness of the setup, not a win probability", sz)
-                    if exp
-                        row := f_dashRow(tb, row, "PLAN", "E " + f_px(fs.entry) + " · SL " + f_px(fs.slInit) + " · TP1 " + f_px(fs.tp1), C_SIG, f_setPlanText(fs), sz)
-                        row := f_dashRow(tb, row, "INVALID", f_px(fs.inv) + " · close " + (fs.dir == 1 ? "below" : "above"), C_BEAR, "Before the entry the setup is cancelled by a close beyond this level, an opposite swing CHoCH or a broken POI", sz)
         string nbT = na(nb) ? "—" : nb.tag + " " + f_px(nb.price) + " (+" + str.tostring((nb.price - close) / vu, "0.0") + " ATR)"
         string nsT = na(ns) ? "—" : ns.tag + " " + f_px(ns.price) + " (−" + str.tostring((close - ns.price) / vu, "0.0") + " ATR)"
         row := f_dashRow(tb, row, "TARGET ↑", nbT, na(nb) ? C_NEUT : C_LIQ, "Nearest major buy-side liquidity above price", sz)
@@ -136,7 +114,7 @@ f_dashboard(table tb, Ctx x, Core c, StructState si, Range r, bool liveView, Set
         if exp
             string inT = x.inTrend == 1 ? "BULLISH" : x.inTrend == -1 ? "BEARISH" : "—"
             row := f_dashRow(tb, row, "INTERNAL", inT, f_dirColor(x.inTrend), "Internal structure trend", sz)
-            row := f_dashRow(tb, row, "MODE", str.tostring(i_mode) + " · v" + BUILD, C_NEUT, "Display mode and build", sz)
+            row := f_dashRow(tb, row, "MODE", str.tostring(i_mode) + " · v" + BUILD + " · cfg " + str.tostring(cfgSig), C_NEUT, "Display mode, build and the settings signature cfg: SMC Pro · Setups must show the same cfg number, otherwise its setups are built on different structure, liquidity or zone settings", sz)
         string stt = f_statusText(c, liveView)
         if stt != ""
             row := f_dashRow(tb, row, "STATUS", stt, C_WARN, "Signals and alerts are suppressed during warm-up", sz)
@@ -155,7 +133,7 @@ f_dashboard(table tb, Ctx x, Core c, StructState si, Range r, bool liveView, Set
     true
 
 // Debug table (§19.1): budgets, registries, data health
-f_debugTable(table tb, View v, Core c, array<Zone> zs, array<Zone> za, array<Liq> lv, array<Liq> la, BoxPool pz, BoxPool pw, BoxPool prb, LinePool pm, LinePool pl, LinePool ps, LinePool prl, LabelPool pb, array<Setup> ss, array<Setup> sa, BoxPool psb, LinePool psl, LabelPool pslb) =>
+f_debugTable(table tb, View v, Core c, array<Zone> zs, array<Zone> za, array<Liq> lv, array<Liq> la, BoxPool pz, BoxPool pw, BoxPool prb, LinePool pm, LinePool pl, LinePool ps, LinePool prl, LabelPool pb) =>
     if not na(tb)
         string sz = size.tiny
         int zLive = 0
@@ -164,12 +142,12 @@ f_debugTable(table tb, View v, Core c, array<Zone> zs, array<Zone> za, array<Liq
         int lLive = 0
         for x in lv
             lLive += x.state == LS_ACTIVE or x.state == LS_PENDING ? 1 : 0
-        int boxUsed = pz.used + pw.used + prb.used + psb.used
-        int boxCap = pz.items.size() + pw.items.size() + prb.items.size() + psb.items.size()
-        int lineUsed = pm.used + pl.used + ps.used + prl.used + psl.used
-        int lineCap = pm.items.size() + pl.items.size() + ps.items.size() + prl.items.size() + psl.items.size()
+        int boxUsed = pz.used + pw.used + prb.used
+        int boxCap = pz.items.size() + pw.items.size() + prb.items.size()
+        int lineUsed = pm.used + pl.used + ps.used + prl.used
+        int lineCap = pm.items.size() + pl.items.size() + ps.items.size() + prl.items.size()
         int row = 0
-        row := f_dashRow(tb, row, "BUILD", "v" + BUILD + " · " + str.tostring(i_mode), C_TEXT, "", sz)
+        row := f_dashRow(tb, row, "BUILD", "v" + BUILD + " · " + str.tostring(i_mode) + " · cfg " + str.tostring(cfgSig), C_TEXT, "cfg: settings signature, equal in both indicators when their engine settings match", sz)
         row := f_dashRow(tb, row, "BARS", str.tostring(bar_index + 1) + (c.warm ? " · warm" : " · warming up"), c.warm ? C_TEXT : C_WARN, "Warm-up: " + str.tostring(warmBars) + " bars", sz)
         row := f_dashRow(tb, row, "VIEW", (v.vp ? "visible " : "recent ") + str.tostring(v.iL) + "–" + str.tostring(v.iR) + " · " + str.tostring(v.segs) + " seg" + (v.live ? "" : " · history"), C_TEXT, "Bar window drawn and number of time segments", sz)
         string zFrom = za.size() > 0 ? " · from bar " + str.tostring(za.get(0).endBar) : ""
@@ -179,14 +157,48 @@ f_debugTable(table tb, View v, Core c, array<Zone> zs, array<Zone> za, array<Liq
         row := f_dashRow(tb, row, "EVENTS", str.tostring(c.barEvents.size()) + " bar · " + str.tostring(c.history.size()) + " hist", C_TEXT, "Event bus: current bar / history ring", sz)
         row := f_dashRow(tb, row, "BOXES", str.tostring(boxUsed) + " / " + str.tostring(boxCap), C_TEXT, "Drawn / pool size (platform limit 500)", sz)
         row := f_dashRow(tb, row, "LINES", str.tostring(lineUsed) + " / " + str.tostring(lineCap), C_TEXT, "Drawn / pool size (platform limit 500)", sz)
-        row := f_dashRow(tb, row, "LABELS", str.tostring(pb.used + pslb.used) + " / " + str.tostring(pb.items.size() + pslb.items.size()), C_TEXT, "Drawn / pool size (platform limit 500)", sz)
-        int nAct = 0
-        for s in ss
-            nAct += f_setActive(s) ? 1 : 0
-        row := f_dashRow(tb, row, "SETUPS", str.tostring(ss.size()) + " live (" + str.tostring(nAct) + " active) · arch " + str.tostring(sa.size()), C_TEXT, "Setup registry: live cap " + str.tostring(SETUP_CAP) + ", archive cap " + str.tostring(SETUP_ARCH_CAP), sz)
+        row := f_dashRow(tb, row, "LABELS", str.tostring(pb.used) + " / " + str.tostring(pb.items.size()), C_TEXT, "Drawn / pool size (platform limit 500)", sz)
         row := f_dashRow(tb, row, "VOLUME", hasVolume ? "yes" : "none (filters off)", hasVolume ? C_TEXT : C_WARN, "", sz)
         row := f_dashRow(tb, row, "CHART", nonStdChart ? "non-standard" : "standard", nonStdChart ? C_WARN : C_TEXT, "", sz)
         row := f_dashRow(tb, row, "LENGTHS", "swing " + str.tostring(swLen) + " · int " + str.tostring(inLen), C_TEXT, "", sz)
         row := f_dashRow(tb, row, "SESSIONS", sesOk ? sesTz : "off (TF > 1H)", C_TEXT, specAsia + " · " + specLon + " · " + specNy, sz)
         row := f_dashRow(tb, row, "HTF", htfOk ? htfLabel + " (" + htfTf + ") · " + str.tostring(hLastBars) + " bars" : htfBadCfg ? "⚠ not above chart TF" : "off", htfOk and not htfLowHist ? C_TEXT : C_WARN, "Higher timeframe and confirmed HTF bars. HTF objects age in HTF bars; distance limit ×" + str.tostring(htfDistMult, "0.0"), sz)
     true
+//#else
+// ── Setup panel (SMC Pro · Setups): the focus setup in four rows, then status and cfg
+f_setColor(Setup s) =>
+    na(s) ? C_NEUT : s.state >= SS_READY ? C_SIG : color.new(C_SIG, 35)
+
+f_qualityBar(float sc) =>
+    int k = int(math.round(sc))
+    str.repeat("▮", k) + str.repeat("▯", 10 - k)
+
+f_setupPanel(table tb, Ctx x, Core c, bool liveView, Setup fs) =>
+    if not na(tb)
+        string sz = panelSz
+        int row = 0
+        Liq nb = x.nextBsl
+        Liq ns = x.nextSsl
+        if i_setups
+            if na(fs)
+                Liq w = na(nb) ? ns : na(ns) ? nb : nb.price - close <= close - ns.price ? nb : ns
+                string wt = na(w) ? "— watching" : "— watching " + (w.side == 1 ? "BSL " : "SSL ") + f_px(w.price)
+                row := f_dashRow(tb, row, "SETUP", wt, C_NEUT, "No setup. A sweep of the nearest liquidity followed by a shift, or a BOS with the trend, starts one.", sz)
+            else
+                int left = i_expiry - (bar_index - fs.stageBar)
+                string stg = f_sideName(fs.dir) + " — " + f_uiStage(fs.state) + " · " + (fs.model == SM_REV ? "Reversal" : "Continuation")
+                string tipS = f_modelName(fs.model) + " · " + fs.chainMid + (fs.state <= SS_READY ? "\nexpires in " + str.tostring(math.max(0, left)) + " bars" : "") + (fs.state == SS_FORMING and fs.why != "" ? "\nwaiting: " + f_reasonText(fs.why) : "")
+                row := f_dashRow(tb, row, "SETUP", stg, f_setColor(fs), tipS, sz)
+                if fs.state >= SS_READY
+                    color gc = fs.grade >= GR_A ? C_SIG : fs.grade == GR_B ? C_TEXT : C_NEUT
+                    row := f_dashRow(tb, row, "QUALITY", str.tostring(fs.score, "0.0") + " / 10 · " + f_gradeName(fs.grade) + "  " + f_qualityBar(fs.score), gc, fs.factors + "Score = completeness of the setup, not a win probability", sz)
+                    row := f_dashRow(tb, row, "PLAN", "E " + f_px(fs.entry) + " · SL " + f_px(fs.slInit) + " · TP1 " + f_px(fs.tp1), C_SIG, f_setPlanText(fs), sz)
+                    row := f_dashRow(tb, row, "INVALID", f_px(fs.inv) + " · close " + (fs.dir == 1 ? "below" : "above"), C_BEAR, "Before the entry the setup is cancelled by a close beyond this level, an opposite swing CHoCH or a broken POI", sz)
+        string stt = f_statusText(c, liveView)
+        if stt != ""
+            row := f_dashRow(tb, row, "STATUS", stt, C_WARN, "Setups and alerts are suppressed during warm-up; the panel always describes the latest bar", sz)
+        row := f_dashRow(tb, row, "CFG", str.tostring(cfgSig) + " · v" + BUILD, C_NEUT, "Settings signature: must equal the cfg number of SMC Visualizer Pro (Dashboard Expanded → MODE row). Different numbers mean the two indicators run the engines with different settings, and the setups do not match the structure on the chart.", sz)
+        if row <= SET_PANEL_ROWS - 1
+            table.clear(tb, 0, row, 1, SET_PANEL_ROWS - 1)
+    true
+//#endif
