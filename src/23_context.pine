@@ -67,14 +67,17 @@ f_pdStep(Core c, Range r) =>
         r.inOte := ote
     pd
 
-// MarketContext snapshot (A.16, A.17). HTF bias joins with the HTF Feed (P5).
-f_ctxBuild(Ctx x, StructState sw, StructState si, Range r, float pd, array<Liq> lv, Sess sa, Sess sl, Sess sn) =>
+// MarketContext snapshot (A.16, A.17)
+f_ctxBuild(Ctx x, StructState sw, StructState si, Range r, float pd, array<Liq> lv, Sess sa, Sess sl, Sess sn, bool hOk, int hTr) =>
     x.swTrend := sw.trend
     x.inTrend := si.trend
+    x.htfOk := hOk
+    x.htfTrend := hOk ? hTr : 0
     bool chop = sw.lastBrkKind == BK_CHOCH and sw.prevBrkKind == BK_CHOCH and sw.lastBrkDir != sw.prevBrkDir and not na(sw.prevBrkBar) and sw.lastBrkBar - sw.prevBrkBar <= 6 * sw.len
     bool stale = not na(sw.lastBrkBar) and bar_index - sw.lastBrkBar >= 8 * sw.len and not na(pd) and pd >= 0 and pd <= 1
     x.ranging := chop or stale
-    x.market := x.ranging ? MK_RANGE : sw.trend
+    // A.16: ranging → RANGING; HTF unknown → chart trend; HTF agrees → that side; otherwise MIXED
+    x.market := x.ranging ? MK_RANGE : x.htfTrend == 0 ? sw.trend : sw.trend == 0 ? x.htfTrend : x.htfTrend == sw.trend ? sw.trend : MK_MIXED
     x.pd := pd
     x.pdZone := r.pdZone
     x.inOte := r.inOte

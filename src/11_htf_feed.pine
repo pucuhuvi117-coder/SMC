@@ -1,0 +1,272 @@
+// ═══ 11 · HTF FEED ══════════════════════════════════════════════════════════════
+// Higher-timeframe structure, pivots, order blocks and fair value gaps (docs §4.7, P5).
+//
+// Detection runs inside request.security on the HTF series, so it sees the full HTF history
+// (deep bias even on low chart timeframes, risk P-06). Every value is returned with a [1]
+// offset and lookahead_on: the chart only ever sees the last CONFIRMED HTF bar, identically
+// on history and in realtime (no repaint, AC-25).
+//
+// Deviation from ADR-03 (recorded in CHANGELOG): detection here is a compact re-statement of
+// A.2/A.4/A.7/A.10 written with fixed-length lookbacks only, because the chart engines rely on
+// dynamic history offsets that the HTF context cannot size. Lifecycle (touch, mitigation,
+// conversion, sweeps) is NOT duplicated: HTF objects are ingested into the shared registries
+// and run through the same chart-side engines.
+
+// Auto mapping (docs §4.7): ≤1m→15m, ≤5m→1H, ≤1H→4H, ≤4H→D, D→W, W→M, M→none
+f_autoHtf() =>
+    int s = timeframe.in_seconds()
+    s <= 60 ? "15" : s <= 300 ? "60" : s <= 3600 ? "240" : s <= 14400 ? "D" : s <= 86400 ? "W" : s <= 604800 ? "M" : ""
+
+f_tfLabel(int sec) =>
+    sec < 3600 ? str.tostring(math.round(sec / 60)) + "m" : sec < 86400 ? str.tostring(math.round(sec / 3600)) + "H" : sec < 604800 ? "D" : sec < 2419200 ? "W" : "M"
+
+string htfTf = i_htfMode == HtfMode.off ? "" : i_htfMode == HtfMode.manual ? i_htfTf : f_autoHtf()
+string htfReq = htfTf == "" ? timeframe.period : htfTf
+int chartSec = timeframe.in_seconds()
+int htfSec = timeframe.in_seconds(htfReq)
+bool htfOk = htfTf != "" and htfSec > chartSec
+string htfLabel = f_tfLabel(htfSec)
+// HTF objects live longer and farther from price than chart objects
+int htfAgeMult = htfOk ? math.max(1, math.min(10, int(htfSec / chartSec))) : 1
+
+// Order block geometry from a candle, same rules as A.7 step 4–5 (zone mode, size filter)
+f_obGeom(int dir, float o, float h, float l, float c, float atr) =>
+    float top = math.max(o, c)
+    float bot = math.min(o, c)
+    if i_obZone == ObZone.full
+        top := h
+        bot := l
+    else if i_obZone == ObZone.bodyWick
+        top := dir == 1 ? math.max(o, c) : h
+        bot := dir == 1 ? l : math.min(o, c)
+    if top - bot > obMax * atr and i_obZone != ObZone.body
+        top := math.max(o, c)
+        bot := math.min(o, c)
+    float sz = top - bot
+    bool ok = not na(atr) and sz > 0 and sz >= obMin * atr and sz <= obMax * atr
+    [top, bot, ok]
+
+// Evaluated on every HTF bar inside request.security. Returns the previous (confirmed) HTF
+// bar's state: trend, last break, last pivots, last order block, last fair value gap.
+f_htfState(int len) =>
+    float atr = ta.atr(i_atrLen)
+    float ph = ta.pivothigh(high, len, len)
+    float pl = ta.pivotlow(low, len, len)
+    float winLow = ta.lowest(low, len + 1)
+    float winHigh = ta.highest(high, len + 1)
+    int pivT = time[len]
+    float bodyH = math.abs(close - open)
+    bool ratioOk = bodyH / math.max(high - low, syminfo.mintick) >= i_minBodyRatio
+    bool dUp = close > open and not na(atr) and bodyH >= i_kBody * atr and ratioOk
+    bool dDn = close < open and not na(atr) and bodyH >= i_kBody * atr and ratioOk
+    bool isBear = close < open
+    bool isBull = close > open
+    // structure
+    var int trend = 0
+    var float refH = na
+    var int refHT = na
+    var bool refHDone = true
+    var float refL = na
+    var int refLT = na
+    var bool refLDone = true
+    var int brkSeq = 0
+    var int brkDir = 0
+    var int brkKind = 0
+    var float brkPx = na
+    var int brkT = na
+    var int brkSwT = na
+    var float phP = na
+    var int phT = na
+    var float plP = na
+    var int plT = na
+    // last opposite candles seen so far
+    var float lbO = na
+    var float lbH = na
+    var float lbL = na
+    var float lbC = na
+    var int lbT = na
+    var float luO = na
+    var float luH = na
+    var float luL = na
+    var float luC = na
+    var int luT = na
+    // OB candidates: last opposite candle of the leg before its first displacement bar
+    var float upOrig = na
+    var bool upImp = false
+    var float cuO = na
+    var float cuH = na
+    var float cuL = na
+    var float cuC = na
+    var int cuT = na
+    var float dnOrig = na
+    var bool dnImp = false
+    var float cdO = na
+    var float cdH = na
+    var float cdL = na
+    var float cdC = na
+    var int cdT = na
+    // outputs: last order block and last fair value gap
+    var int obSeq = 0
+    var int obDir = 0
+    var float obTop = na
+    var float obBot = na
+    var int obT = na
+    var int fvgSeq = 0
+    var int fvgDir = 0
+    var float fvgTop = na
+    var float fvgBot = na
+    var int fvgT = na
+    // 1 · leg tracking (bullish leg = since the reference high; bearish mirror)
+    if not na(upOrig)
+        if low < upOrig
+            upOrig := low
+            upImp := false
+            if isBear
+                cuO := open
+                cuH := high
+                cuL := low
+                cuC := close
+                cuT := time
+            else
+                cuO := lbO
+                cuH := lbH
+                cuL := lbL
+                cuC := lbC
+                cuT := lbT
+        else if not upImp
+            if dUp
+                upImp := true
+            else if isBear
+                cuO := open
+                cuH := high
+                cuL := low
+                cuC := close
+                cuT := time
+    if not na(dnOrig)
+        if high > dnOrig
+            dnOrig := high
+            dnImp := false
+            if isBull
+                cdO := open
+                cdH := high
+                cdL := low
+                cdC := close
+                cdT := time
+            else
+                cdO := luO
+                cdH := luH
+                cdL := luL
+                cdC := luC
+                cdT := luT
+        else if not dnImp
+            if dDn
+                dnImp := true
+            else if isBull
+                cdO := open
+                cdH := high
+                cdL := low
+                cdC := close
+                cdT := time
+    // 2 · confirmed pivots become the new references; the leg restarts from the pivot window
+    if not na(ph)
+        phP := ph
+        phT := pivT
+        refH := ph
+        refHT := pivT
+        refHDone := false
+        upOrig := winLow
+        upImp := false
+        cuO := lbO
+        cuH := lbH
+        cuL := lbL
+        cuC := lbC
+        cuT := lbT
+    if not na(pl)
+        plP := pl
+        plT := pivT
+        refL := pl
+        refLT := pivT
+        refLDone := false
+        dnOrig := winHigh
+        dnImp := false
+        cdO := luO
+        cdH := luH
+        cdL := luL
+        cdC := luC
+        cdT := luT
+    // 3 · breaks (A.4) and the order block of the breaking leg (A.7)
+    float srcUp = i_brk == BreakSrc.wick ? high : close
+    float srcDn = i_brk == BreakSrc.wick ? low : close
+    if not refHDone and not na(refH) and srcUp > refH
+        brkKind := trend == -1 ? BK_CHOCH : BK_BOS
+        brkDir := 1
+        brkPx := refH
+        brkT := time
+        brkSwT := refHT
+        brkSeq += 1
+        trend := 1
+        refHDone := true
+        if not na(cuT)
+            [gTop, gBot, gOk] = f_obGeom(1, cuO, cuH, cuL, cuC, atr)
+            if gOk
+                obSeq += 1
+                obDir := 1
+                obTop := gTop
+                obBot := gBot
+                obT := cuT
+    if not refLDone and not na(refL) and srcDn < refL
+        brkKind := trend == 1 ? BK_CHOCH : BK_BOS
+        brkDir := -1
+        brkPx := refL
+        brkT := time
+        brkSwT := refLT
+        brkSeq += 1
+        trend := -1
+        refLDone := true
+        if not na(cdT)
+            [gTop, gBot, gOk] = f_obGeom(-1, cdO, cdH, cdL, cdC, atr)
+            if gOk
+                obSeq += 1
+                obDir := -1
+                obTop := gTop
+                obBot := gBot
+                obT := cdT
+    // 4 · fair value gaps (A.10) on the HTF candles
+    if bar_index >= 2 and not na(atr)
+        if low > high[2] and (not i_fvgMidDir or close[1] > open[1]) and low - high[2] >= i_fvgMin * atr
+            fvgSeq += 1
+            fvgDir := 1
+            fvgTop := low
+            fvgBot := high[2]
+            fvgT := time[2]
+        else if high < low[2] and (not i_fvgMidDir or close[1] < open[1]) and low[2] - high >= i_fvgMin * atr
+            fvgSeq += 1
+            fvgDir := -1
+            fvgTop := low[2]
+            fvgBot := high
+            fvgT := time[2]
+    // 5 · remember the last opposite candles (after they were used above)
+    if isBear
+        lbO := open
+        lbH := high
+        lbL := low
+        lbC := close
+        lbT := time
+    if isBull
+        luO := open
+        luH := high
+        luL := low
+        luC := close
+        luT := time
+    [trend[1], brkSeq[1], brkDir[1], brkKind[1], brkPx[1], brkT[1], brkSwT[1], phP[1], phT[1], plP[1], plT[1], obSeq[1], obDir[1], obTop[1], obBot[1], obT[1], fvgSeq[1], fvgDir[1], fvgTop[1], fvgBot[1], fvgT[1]]
+
+// Confirmed HTF state on every chart bar. no-repaint: [1] is applied inside f_htfState.
+[hTrend, hBrkSeq, hBrkDir, hBrkKind, hBrkPx, hBrkT, hBrkSwT, hPhP, hPhT, hPlP, hPlT, hObSeq, hObDir, hObTop, hObBot, hObT, hFvgSeq, hFvgDir, hFvgTop, hFvgBot, hFvgT] = request.security(syminfo.tickerid, htfReq, f_htfState(i_htfLen), lookahead = barmerge.lookahead_on) // no-repaint: [1] inside
+
+// Change detection: each HTF object is ingested once, on the first chart bar after its HTF bar closed
+bool htfNewBias = htfOk and hTrend != nz(hTrend[1])
+bool htfNewBrk = htfOk and hBrkSeq > 0 and hBrkSeq != nz(hBrkSeq[1])
+bool htfNewPh = htfOk and not na(hPhT) and hPhT != nz(hPhT[1])
+bool htfNewPl = htfOk and not na(hPlT) and hPlT != nz(hPlT[1])
+bool htfNewOb = htfOk and hObSeq > 0 and hObSeq != nz(hObSeq[1])
+bool htfNewFvg = htfOk and hFvgSeq > 0 and hFvgSeq != nz(hFvgSeq[1])

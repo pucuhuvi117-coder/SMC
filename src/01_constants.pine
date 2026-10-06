@@ -3,6 +3,7 @@ BUILD = "{{VERSION}}"
 
 // Timeframe slots (docs §8.2). v0.1 computes the chart TF only; HTF arrives with the HTF Feed (P5).
 TF_CHART = 0
+TF_HTF1 = 1
 
 // Structure levels and break kinds (Appendix A.4)
 LV_INT = 0
@@ -34,6 +35,7 @@ EV_PD_ENTER = 31
 EV_OTE_ENTER = 32
 EV_SESSION_START = 33
 EV_SESSION_END = 34
+EV_HTF_BIAS = 35
 EV_SYS_WARM = 90
 EV_SYS_WARN = 91
 
@@ -74,6 +76,7 @@ MK_NONE = 0
 MK_BULL = 1
 MK_BEAR = -1
 MK_RANGE = 2
+MK_MIXED = 3
 
 // Fixed detector parameters (Appendix A.19)
 OB_NPRE = 3

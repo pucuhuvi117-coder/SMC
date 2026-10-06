@@ -37,15 +37,19 @@ f_statusText(Core c, bool liveView) =>
     not c.warm ? "WARMING UP" : nonStdChart ? "⚠ NON-STANDARD CHART" : not liveView ? "◀ HISTORY VIEW" : ""
 
 // Context Ribbon: STR │ SESSION │ PD │ LIQ │ status
+f_htfText(Ctx x) =>
+    not x.htfOk ? "HTF OFF" : "HTF " + htfLabel + (x.htfTrend == 1 ? " ▲ BULL" : x.htfTrend == -1 ? " ▼ BEAR" : " —")
+
 f_ribbon(table tb, Ctx x, Core c, bool liveView) =>
     if not na(tb)
-        string sz = size.small
+        string sz = panelSz
+        table.cell(tb, 0, 0, f_htfText(x), text_color = x.htfOk ? f_dirColor(x.htfTrend) : C_NEUT, text_size = sz, tooltip = x.htfOk ? "Higher-timeframe swing structure from confirmed " + htfLabel + " bars" : "Higher timeframe is off or not above the chart timeframe")
         string s0 = x.ranging ? "STR ◆ RANGE" : x.swTrend == 1 ? "STR ▲ BULL" : x.swTrend == -1 ? "STR ▼ BEAR" : "STR —"
         color c0 = x.ranging ? C_NEUT : f_dirColor(x.swTrend)
-        table.cell(tb, 0, 0, s0, text_color = c0, text_size = sz, tooltip = "Swing structure on the chart timeframe" + (x.ranging ? " · regime: ranging" : ""))
+        table.cell(tb, 1, 0, s0, text_color = c0, text_size = sz, tooltip = "Swing structure on the chart timeframe" + (x.ranging ? " · regime: ranging" : ""))
         string s1 = x.sessCode == "" ? "NO KZ" : x.sessCode + (na(x.minsLeft) ? "" : " " + str.tostring(x.minsLeft) + "m")
-        table.cell(tb, 1, 0, s1, text_color = x.sessCode == "" ? C_NEUT : C_TEXT, text_size = sz, tooltip = "Active session or killzone (" + sesTz + "), minutes left")
-        table.cell(tb, 2, 0, na(x.pd) ? "PD —" : f_pdText(x, false), text_color = f_pdColor(x), text_size = sz, tooltip = "Location in the dealing range: 0% = range low, 100% = range high")
+        table.cell(tb, 2, 0, s1, text_color = x.sessCode == "" ? C_NEUT : f_sesColor(x.sessCode), text_size = sz, tooltip = "Active session or killzone (" + sesTz + "), minutes left")
+        table.cell(tb, 3, 0, na(x.pd) ? "PD —" : f_pdText(x, false), text_color = f_pdColor(x), text_size = sz, tooltip = "Location in the dealing range: 0% = range low, 100% = range high")
         Event le = c.lastLiq
         string s3 = "LIQ —"
         if not na(le)
@@ -53,12 +57,12 @@ f_ribbon(table tb, Ctx x, Core c, bool liveView) =>
                 bool swept = le.typ == EV_LIQ_SWEPT
                 int side = swept ? -le.dir : le.dir
                 s3 := (side == 1 ? "BSL" : "SSL") + (swept ? " ✕ " : " TAKEN ") + str.tostring(bar_index - le.bar) + "b"
-        table.cell(tb, 3, 0, s3, text_color = s3 == "LIQ —" ? C_NEUT : C_LIQ, text_size = sz, tooltip = na(le) ? "No recent liquidity event" : le.s1 + " · " + f_px(le.price) + " · " + f_timeStr(le.t))
+        table.cell(tb, 4, 0, s3, text_color = s3 == "LIQ —" ? C_NEUT : C_LIQ, text_size = sz, tooltip = na(le) ? "No recent liquidity event" : le.s1 + " · " + f_px(le.price) + " · " + f_timeStr(le.t))
         string s4 = f_statusText(c, liveView)
         if s4 == ""
-            table.clear(tb, 4, 0)
+            table.clear(tb, 5, 0)
         else
-            table.cell(tb, 4, 0, s4, text_color = C_WARN, text_size = sz, tooltip = not liveView ? "The chart shows history for the visible range. Ribbon and Dashboard always describe the latest bar." : "Signals and alerts are suppressed during warm-up (first " + str.tostring(warmBars) + " bars).")
+            table.cell(tb, 5, 0, s4, text_color = C_WARN, text_size = sz, tooltip = not liveView ? "The chart shows history for the visible range. Ribbon and Dashboard always describe the latest bar." : "Signals and alerts are suppressed during warm-up (first " + str.tostring(warmBars) + " bars).")
     true
 
 f_dashRow(table tb, int row, string k, string v, color vc, string tip, string sz) =>
@@ -70,15 +74,19 @@ f_dashRow(table tb, int row, string k, string v, color vc, string tip, string sz
 f_dashboard(table tb, Ctx x, Core c, StructState si, Range r, bool liveView) =>
     if not na(tb)
         bool exp = i_dashSize == "Expanded"
-        string sz = exp ? size.small : size.tiny
+        string sz = panelSz
         int row = 0
-        string mk = x.market == MK_RANGE ? "RANGING" : x.market == MK_BULL ? "BULLISH" : x.market == MK_BEAR ? "BEARISH" : "UNDEFINED"
-        row := f_dashRow(tb, row, "MARKET", mk, x.market == MK_RANGE ? C_NEUT : f_dirColor(x.market), "Swing structure and regime on the chart timeframe. HTF bias joins with the HTF Feed (v0.2).", sz)
+        string mk = x.market == MK_RANGE ? "RANGING" : x.market == MK_MIXED ? "MIXED" : x.market == MK_BULL ? "BULLISH" : x.market == MK_BEAR ? "BEARISH" : "UNDEFINED"
+        color mkc = x.market == MK_RANGE or x.market == MK_MIXED ? C_WARN : f_dirColor(x.market)
+        row := f_dashRow(tb, row, "MARKET", mk, x.market == MK_RANGE ? C_NEUT : mkc, "Ranging regime → RANGING. HTF and chart structure agree → that side; disagree → MIXED; HTF unknown → chart structure (A.16).", sz)
+        string ht = not x.htfOk ? "OFF" : htfLabel + (x.htfTrend == 1 ? " BULLISH" : x.htfTrend == -1 ? " BEARISH" : " —")
+        Event lh = c.lastHtfStruct
+        row := f_dashRow(tb, row, "HTF", ht + (na(lh) ? "" : " · " + f_structText(lh)), x.htfOk ? f_dirColor(x.htfTrend) : C_NEUT, na(lh) ? "Confirmed " + htfLabel + " bars only" : "Last HTF break at " + f_px(lh.price) + " · " + f_timeStr(lh.t), sz)
         Event ls = c.lastStruct
         string st = na(ls) ? "—" : f_structText(ls) + " · " + str.tostring(bar_index - ls.bar) + " bars"
         row := f_dashRow(tb, row, "STRUCTURE", st, na(ls) ? C_NEUT : f_dirColor(ls.dir), na(ls) ? "No swing break yet" : "Broken level " + f_px(ls.price) + " · leg " + str.tostring(ls.v2, "0.0") + " ATR · " + f_timeStr(ls.t), sz)
         string ses = x.sessCode == "" ? "—" : x.sessCode + (na(x.minsLeft) ? "" : " · " + str.tostring(x.minsLeft) + "m")
-        row := f_dashRow(tb, row, "SESSION", ses, x.sessCode == "" ? C_NEUT : C_TEXT, "Session timezone: " + sesTz, sz)
+        row := f_dashRow(tb, row, "SESSION", ses, x.sessCode == "" ? C_NEUT : f_sesColor(x.sessCode), "Session timezone: " + sesTz, sz)
         string rngTip = r.state > 0 ? "Dealing range " + f_px(r.lo) + " – " + f_px(r.hi) + (r.state == 1 ? " (developing)" : " (established)") : "No dealing range yet"
         row := f_dashRow(tb, row, "LOCATION", f_pdText(x, true), f_pdColor(x), rngTip, sz)
         Event le = c.lastLiq
@@ -139,4 +147,5 @@ f_debugTable(table tb, View v, Core c, array<Zone> zs, array<Zone> za, array<Liq
         row := f_dashRow(tb, row, "CHART", nonStdChart ? "non-standard" : "standard", nonStdChart ? C_WARN : C_TEXT, "", sz)
         row := f_dashRow(tb, row, "LENGTHS", "swing " + str.tostring(swLen) + " · int " + str.tostring(inLen), C_TEXT, "", sz)
         row := f_dashRow(tb, row, "SESSIONS", sesOk ? sesTz : "off (TF > 1H)", C_TEXT, specAsia + " · " + specLon + " · " + specNy, sz)
+        row := f_dashRow(tb, row, "HTF", htfOk ? htfLabel + " (" + htfTf + ") · x" + str.tostring(htfAgeMult) : "off", htfOk ? C_TEXT : C_WARN, "Higher timeframe used by the HTF Feed and lifetime multiplier of HTF objects", sz)
     true

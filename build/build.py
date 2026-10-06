@@ -80,8 +80,9 @@ def lint(name: str, text: str) -> list[str]:
             issues.append(f"{where}: varip is forbidden in logic (ADR-10)")
         if re.search(r"\btimenow\b", code):
             issues.append(f"{where}: timenow is forbidden in logic (§20.8)")
-        if "lookahead_on" in code and "[1]" not in code:
-            issues.append(f"{where}: lookahead_on without [1] offset (repaint, §4.7)")
+        # The [1] offset may live inside the requested function; such lines must say so explicitly
+        if "lookahead_on" in code and "[1]" not in code and "no-repaint:" not in raw:
+            issues.append(f"{where}: lookahead_on without [1] offset or a `// no-repaint:` note (repaint, §4.7)")
         stripped = code.rstrip()
         if stripped and not stripped.lstrip().startswith("//"):
             indent = len(code) - len(code.lstrip(" "))

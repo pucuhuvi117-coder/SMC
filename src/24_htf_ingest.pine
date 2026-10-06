@@ -1,0 +1,37 @@
+// ═══ 24 · HTF INGESTION ═════════════════════════════════════════════════════════
+// Confirmed HTF objects enter the shared registries with tf = TF_HTF1. From here on they
+// use the same chart-side lifecycle as chart objects: sweeps of HTF levels and touches of
+// HTF zones are detected on chart bars (ADR-03: one lifecycle, docs §4.7).
+
+// HTF pivot → major liquidity level (never clustered with chart levels)
+f_liqAddHtf(Core c, array<Liq> lv, int side, float price, int t0) =>
+    Liq nl = Liq.new(id = f_nextId(c), side = side, kind = LK_SWING, tf = TF_HTF1, price = price, bar = bar_index, t = t0, born = bar_index, lastBar = bar_index, touches = 1, major = true, state = LS_ACTIVE, lvl = LV_SWG, tag = side == 1 ? "BSL" : "SSL")
+    lv.push(nl)
+    f_emit(c, EV_LIQ_NEW, side, price, nl.id, na, 2, LK_SWING, na, na, "HTF " + nl.tag, TF_HTF1)
+    nl
+
+// HTF order block or fair value gap → zone. Skipped if already closed through on the chart.
+f_zoneAddHtf(Core c, array<Zone> zs, int kind, int dir, float top, float bot, int t0) =>
+    bool ok = not na(top) and not na(bot) and top > bot and not na(t0)
+    if ok
+        ok := dir == 1 ? close >= bot : close <= top
+    if ok
+        for z in zs
+            if z.tf == TF_HTF1 and z.kind == kind and z.dir == dir and z.t == t0
+                ok := false
+                break
+    if ok
+        Zone z = Zone.new(id = f_nextId(c), kind = kind, dir = dir, state = ZS_FRESH, top = top, bottom = bot, bar = bar_index, t = t0, born = bar_index, bornT = time, unfilled = kind == ZK_FVG ? (dir == 1 ? top : bot) : na, strength = 0.8, disp = 0.0, lvl = LV_SWG, tf = TF_HTF1)
+        zs.push(z)
+        f_emit(c, EV_ZONE_NEW, dir, (top + bot) / 2, z.id, na, 2, kind, top, bot, "HTF " + f_kindTag(kind), TF_HTF1)
+    ok
+
+// HTF structure break → kept for rendering and emitted on the bus with tf = HTF1
+f_htfBreak(Core c, array<Brk> hb, int dir, int kind, float px, int swT, int brkT) =>
+    Brk b = Brk.new(id = f_nextId(c), kind = kind, dir = dir, lvl = LV_SWG, price = px, swingT = swT, bar = bar_index, t = brkT, disp = na, tf = TF_HTF1)
+    hb.push(b)
+    if hb.size() > BRK_CAP
+        hb.shift()
+    Event e = f_emit(c, kind == BK_BOS ? EV_BOS : EV_CHOCH, dir, px, b.id, na, 1, LV_SWG, na, na, htfLabel, TF_HTF1)
+    b.evId := e.id
+    b

@@ -217,8 +217,9 @@ f_zoneStep(Core c, array<Zone> zs, array<Zone> arch) =>
                         f_obLife(c, zs, z)
                 if z.state < ZS_FILLED
                     float dist = close > z.top ? close - z.top : close < z.bottom ? z.bottom - close : 0.0
-                    int maxAge = z.kind == ZK_FVG or z.kind == ZK_IFVG ? FVG_MAX_AGE : OB_MAX_AGE
-                    if bar_index - z.born > maxAge or dist > ZONE_MAX_DIST * vu
+                    bool htf = z.tf != TF_CHART
+                    int maxAge = (z.kind == ZK_FVG or z.kind == ZK_IFVG ? FVG_MAX_AGE : OB_MAX_AGE) * (htf ? htfAgeMult : 1)
+                    if bar_index - z.born > maxAge or dist > ZONE_MAX_DIST * vu * (htf ? 3 : 1)
                         z.state := ZS_EXPIRED
                         z.endBar := bar_index
                         z.endT := time

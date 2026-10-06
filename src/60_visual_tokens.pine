@@ -1,8 +1,8 @@
 // ═══ 60 · VISUAL TOKENS ═════════════════════════════════════════════════════════
 // Design system tokens (docs/04-visual-design-system.md §13.3–13.7). Renderers use only
 // these values: hue = meaning, form = entity type, transparency = state × relevance.
-// v0.2: transparency scale retuned after the first visual test (zones and sessions were
-// too faint) and made adjustable with the Visibility setting.
+// v0.2–0.3: transparency scale retuned after visual tests on dark and blue backgrounds
+// (zones and sessions were too faint) and made adjustable with the Visibility setting.
 
 // Theme (§13.4): luminance of the chart background, or manual override
 float bgLum = 0.2126 * color.r(chart.bg_color) + 0.7152 * color.g(chart.bg_color) + 0.0722 * color.b(chart.bg_color)
@@ -33,19 +33,19 @@ f_tok(int base) =>
 
 // Line transparency (§13.5)
 OP_SOLID = 0
-OP_STRONG = f_tok(10)
-OP_MEDIUM = f_tok(30)
-OP_SOFT = f_tok(50)
-OP_FAINT = f_tok(65)
+OP_STRONG = f_tok(5)
+OP_MEDIUM = f_tok(25)
+OP_SOFT = f_tok(45)
+OP_FAINT = f_tok(60)
 
 // Fill transparency (§13.5)
-F_FOCUS = f_tok(65)
-F_STRONG = f_tok(70)
-F_BASE = f_tok(76)
-F_LIGHT = f_tok(80)
-F_FAINT = f_tok(86)
-F_WASH = f_tok(92)
-F_GHOST = f_tok(95)
+F_FOCUS = f_tok(60)
+F_STRONG = f_tok(66)
+F_BASE = f_tok(72)
+F_LIGHT = f_tok(77)
+F_FAINT = f_tok(84)
+F_WASH = f_tok(90)
+F_GHOST = f_tok(94)
 F_PANEL = 10
 
 // Relevance modulation (§16.4): less important objects fade a little, never to invisible
@@ -55,6 +55,11 @@ f_tr(int base, float r) =>
 f_dirColor(int d) =>
     d > 0 ? C_BULL : d < 0 ? C_BEAR : C_NEUT
 
-// Session colors come from the settings (fill = the chosen color and opacity)
+// Session hues: theme-adaptive light tints on dark charts (they stand out on navy/blue
+// backgrounds too), deeper tones on light charts; or the user's own colors
+color C_SES_ASIA = i_sesCustom ? i_sesColAsia : isDark ? #C5A3FF : #7E57C2
+color C_SES_LON = i_sesCustom ? i_sesColLon : isDark ? #7FDBFF : #0277BD
+color C_SES_NY = i_sesCustom ? i_sesColNy : isDark ? #FFC46B : #EF6C00
+
 f_sesColor(string code) =>
-    code == "ASIA" ? i_sesColAsia : code == "LON KZ" ? i_sesColLon : i_sesColNy
+    code == "ASIA" ? C_SES_ASIA : code == "LON KZ" ? C_SES_LON : C_SES_NY

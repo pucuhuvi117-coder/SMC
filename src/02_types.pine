@@ -68,6 +68,16 @@ enum Visibility
     standard = "Standard"
     bold = "Bold"
 
+enum PanelSize
+    small = "Small"
+    normal = "Normal"
+    large = "Large"
+
+enum HtfMode
+    auto = "Auto"
+    manual = "Manual"
+    off = "Off"
+
 enum HistView
     visible = "Visible range"
     recent = "Recent only"
@@ -102,6 +112,7 @@ type Core
     int lastFvgUpBar
     int lastFvgDnBar
     Event lastStruct
+    Event lastHtfStruct
     Event lastLiq
     bool warm = false
 
@@ -138,6 +149,7 @@ type Brk
     bool initial = false
     bool shadowed = false
     int evId
+    int tf = 0
 
 // Structure automaton for one level (internal or swing) on one TF (§7.1)
 type StructState
@@ -282,6 +294,8 @@ type Ctx
     int minsLeft
     Liq nextBsl
     Liq nextSsl
+    bool htfOk = false
+    int htfTrend = 0
 
 // Display mode ceilings (§15.3, §19.2)
 type ModeCfg
@@ -314,6 +328,9 @@ type ModeCfg
     int poolLvl
     int poolStr
     int poolLab
+    int htfStructEvents
+    int htfStructWin
+    int keyCap
 
 // What the render pass draws: a bar window, split into time segments. Each segment ranks
 // objects against its own anchor (close and ATR at the segment's last bar), so a wide or

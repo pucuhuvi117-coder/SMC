@@ -1,12 +1,15 @@
 // ═══ 95 · ALERTS ════════════════════════════════════════════════════════════════
 // Static alertcondition() set (docs §12.7). Conditions are read from the event bus of the
 // confirmed bar — the alert engine never recomputes detector logic (A-03). No alerts
-// during warm-up (AC-08). The batched JSON webhook alert() arrives with P9.
+// during warm-up (AC-08). Chart-TF structure alerts ignore HTF events (separate conditions).
+// The batched JSON webhook alert() arrives with P9.
 bool alertOk = barstate.isconfirmed and core.warm
-bool aBosUp = alertOk and f_evFlag(core, EV_BOS, 1, LV_SWG)
-bool aBosDn = alertOk and f_evFlag(core, EV_BOS, -1, LV_SWG)
-bool aChochUp = alertOk and f_evFlag(core, EV_CHOCH, 1, LV_SWG)
-bool aChochDn = alertOk and f_evFlag(core, EV_CHOCH, -1, LV_SWG)
+bool aBosUp = alertOk and f_evFlag(core, EV_BOS, 1, LV_SWG, TF_CHART)
+bool aBosDn = alertOk and f_evFlag(core, EV_BOS, -1, LV_SWG, TF_CHART)
+bool aChochUp = alertOk and f_evFlag(core, EV_CHOCH, 1, LV_SWG, TF_CHART)
+bool aChochDn = alertOk and f_evFlag(core, EV_CHOCH, -1, LV_SWG, TF_CHART)
+bool aHtfBias = alertOk and f_evFlag(core, EV_HTF_BIAS, 0, na)
+bool aHtfBrk = alertOk and (f_evFlag(core, EV_BOS, 0, LV_SWG, TF_HTF1) or f_evFlag(core, EV_CHOCH, 0, LV_SWG, TF_HTF1))
 bool aSweepUp = alertOk and f_evFlag(core, EV_LIQ_SWEPT, 1, na)
 bool aSweepDn = alertOk and f_evFlag(core, EV_LIQ_SWEPT, -1, na)
 bool aObTouch = alertOk and f_evFlag(core, EV_ZONE_TOUCHED, 0, ZK_OB)
@@ -25,4 +28,6 @@ alertcondition(aObTouch, "Order block touch", "SMC Pro · {{ticker}} {{interval}
 alertcondition(aFvgFill, "FVG filled", "SMC Pro · {{ticker}} {{interval}} · fair value gap filled · close {{close}}")
 alertcondition(aSession, "Session / killzone start", "SMC Pro · {{ticker}} {{interval}} · session or killzone started")
 alertcondition(aPdEnter, "Premium / discount change", "SMC Pro · {{ticker}} {{interval}} · price changed premium/discount zone · close {{close}}")
+alertcondition(aHtfBias, "HTF bias change", "SMC Pro · {{ticker}} {{interval}} · higher-timeframe bias changed · close {{close}}")
+alertcondition(aHtfBrk, "HTF BOS / CHoCH", "SMC Pro · {{ticker}} {{interval}} · higher-timeframe structure break · close {{close}}")
 alertcondition(aOteEnter, "OTE entered", "SMC Pro · {{ticker}} {{interval}} · price entered the OTE band · close {{close}}")

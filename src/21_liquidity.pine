@@ -10,7 +10,7 @@ f_liqAddSwing(Core c, array<Liq> lv, Swing sw) =>
     if n > 0
         for i = n - 1 to 0
             Liq x = lv.get(i)
-            if x.side == sw.side and x.kind == LK_SWING and x.state == LS_ACTIVE and math.abs(x.price - sw.price) <= tol and sw.bar - x.lastBar <= i_eqMaxBars
+            if x.side == sw.side and x.kind == LK_SWING and x.tf == TF_CHART and x.state == LS_ACTIVE and math.abs(x.price - sw.price) <= tol and sw.bar - x.lastBar <= i_eqMaxBars
                 x.touches := x.touches + 1
                 x.price := sw.side == 1 ? math.max(x.price, sw.price) : math.min(x.price, sw.price)
                 x.lastBar := sw.bar
@@ -92,8 +92,9 @@ f_liqStep(Core c, array<Liq> lv, array<Liq> arch, int chochIntDir) =>
                         else if bar_index - x.pendSince >= i_reclaimBars
                             f_liqTaken(c, x, pen)
                 if x.state == LS_ACTIVE or x.state == LS_PENDING
-                    x.major := x.kind != LK_SWING or x.touches >= 2 or bar_index - x.bar >= i_oldAge
-                    if math.abs(close - x.price) > LIQ_MAX_DIST * vu or bar_index - x.bar > LIQ_MAX_AGE
+                    bool htf = x.tf != TF_CHART
+                    x.major := htf or x.kind != LK_SWING or x.touches >= 2 or bar_index - x.bar >= i_oldAge
+                    if math.abs(close - x.price) > LIQ_MAX_DIST * vu * (htf ? 3 : 1) or bar_index - x.bar > LIQ_MAX_AGE * (htf ? htfAgeMult : 1)
                         x.state := LS_EXPIRED
                         x.endBar := bar_index
                         x.endT := time

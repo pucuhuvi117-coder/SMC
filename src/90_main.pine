@@ -16,6 +16,7 @@ var Sess sAsia = Sess.new("Asia", "ASIA", "AH", "AL", specAsia)
 var Sess sLon = Sess.new("London killzone", "LON KZ", "LOH", "LOL", specLon)
 var Sess sNy = Sess.new("New York AM killzone", "NY KZ", "NYH", "NYL", specNy)
 var array<SessBox> sessHist = array.new<SessBox>()
+var array<Brk> htfBreaks = array.new<Brk>()
 var Ctx ctx = Ctx.new()
 var float confClose = na
 // Per-bar close and ATR, so a scrolled-back view can rank objects at any past bar
@@ -79,6 +80,20 @@ if barstate.isconfirmed
     if keyWeekOk and newWeek
         f_liqAddKey(core, liqs, LK_PWH, 1, pwH, pwT, "PWH")
         f_liqAddKey(core, liqs, LK_PWL, -1, pwL, pwT, "PWL")
+    // HTF Feed (§4.7): ingest confirmed HTF objects once; they then share the chart lifecycle
+    if htfOk
+        if htfNewBias
+            f_emit(core, EV_HTF_BIAS, hTrend, close, na, na, 1, na, na, na, htfLabel, TF_HTF1)
+        if htfNewBrk
+            f_htfBreak(core, htfBreaks, hBrkDir, hBrkKind, hBrkPx, hBrkSwT, hBrkT)
+        if htfNewPh
+            f_liqAddHtf(core, liqs, 1, hPhP, hPhT)
+        if htfNewPl
+            f_liqAddHtf(core, liqs, -1, hPlP, hPlT)
+        if htfNewOb
+            f_zoneAddHtf(core, zones, ZK_OB, hObDir, hObTop, hObBot, hObT)
+        if htfNewFvg
+            f_zoneAddHtf(core, zones, ZK_FVG, hFvgDir, hFvgTop, hFvgBot, hFvgT)
     // Zones: lifecycle of live zones (finished ones go to the archive), then births on this bar
     f_zoneStep(core, zones, zoneArch)
     if fvgUp
@@ -99,7 +114,7 @@ if barstate.isconfirmed
     // Context
     f_rangeStep(core, rng, stS, rangeArch)
     float pdNow = f_pdStep(core, rng)
-    f_ctxBuild(ctx, stS, stI, rng, pdNow, liqs, sAsia, sLon, sNy)
+    f_ctxBuild(ctx, stS, stI, rng, pdNow, liqs, sAsia, sLon, sNy, htfOk, hTrend)
 
 // ── Visible range (§15 AC-M16): bar indices of the leftmost and rightmost visible bars.
 // Using these built-ins makes the script recalculate when the chart is scrolled or zoomed.
@@ -132,7 +147,7 @@ if barstate.isfirst
     f_fillLabelPool(pLab, mc.poolLab)
 
 // ── Panels
-var table tRibbon = vRibbon ? table.new(f_pos(i_ribbonPos), 5, 1, bgcolor = color.new(C_PANEL, F_PANEL), frame_color = C_PBORDER, frame_width = 1, border_color = C_PBORDER, border_width = 1) : na
+var table tRibbon = vRibbon ? table.new(f_pos(i_ribbonPos), 6, 1, bgcolor = color.new(C_PANEL, F_PANEL), frame_color = C_PBORDER, frame_width = 1, border_color = C_PBORDER, border_width = 1) : na
 var table tDash = vDash ? table.new(f_pos(i_dashPos), 2, 16, bgcolor = color.new(C_PANEL, F_PANEL), frame_color = C_PBORDER, frame_width = 1, border_width = 0) : na
 var table tDebug = mc.debug and i_debugTable ? table.new(position.middle_left, 2, 16, bgcolor = color.new(C_PANEL, F_PANEL), frame_color = C_PBORDER, frame_width = 1, border_width = 0) : na
 
@@ -150,17 +165,19 @@ if barstate.islast
     pStr.used := 0
     pLab.used := 0
     array<Tag> tags = array.new<Tag>()
-    f_renderZones(view, pZone, pMid, zones, zoneArch, rightT)
+    f_renderZones(view, pZone, pMid, zones, zoneArch, rightT, histClose, histAtr, histBase)
     f_renderLevels(view, pLvl, tags, liqs, liqArch, rightT)
+    if htfOk and i_htfStruct
+        f_renderBreaks(view, pStr, pLab, htfBreaks, view.vp ? mc.htfStructWin : mc.htfStructEvents, false)
     if vSwingStruct
-        f_renderStruct(view, pStr, pLab, stS, view.vp ? mc.structWin : mc.structEvents, false)
+        f_renderBreaks(view, pStr, pLab, stS.breaks, view.vp ? mc.structWin : mc.structEvents, false)
     f_renderSwept(view, pLvl, pLab, liqs, liqArch)
     f_renderRange(view, pRngBox, pRngLine, pLab, tags, rng, rangeArch, close, rightT)
     if view.live
         f_drawTags(pLab, tags, rightT + barMs)
     f_renderSessions(view, pWash, pLab, sessHist, sAsia, sLon, sNy)
     if vInternal
-        f_renderStruct(view, pStr, pLab, stI, view.vp ? mc.internalWin : mc.internalEvents, true)
+        f_renderBreaks(view, pStr, pLab, stI.breaks, view.vp ? mc.internalWin : mc.internalEvents, true)
     if vSwingLabels
         f_renderSwings(view, pLab, stS, view.vp ? mc.swingLabelWin : 30)
     f_finishBoxes(pWash)
