@@ -1,7 +1,8 @@
 // ═══ 26 · DEBUG SELF-CHECKS ═════════════════════════════════════════════════════
 // P11: invariants of the engines, checked on confirmed bars in Debug mode only (no cost otherwise).
 // A violation is written to Pine Logs as `ASSERT|time|what` and counted; the count is shown in the
-// Debug table (SMC Visualizer Pro) and in the STATS row (SMC Pro · Setups). Read-only.
+// Debug table (SMC Visualizer Pro) and in the STATS row (SMC Pro · Setups). Read-only. Engine checks
+// run in SMC Visualizer Pro only: the engines are the same code in both indicators (ADR-13).
 
 var array<int> assertN = array.new<int>(1, 0)
 
@@ -11,6 +12,7 @@ f_assert(bool ok, string what) =>
         log.error("ASSERT|" + f_timeStr(time) + "|" + what)
     ok
 
+//#if core
 f_engineChecks(Core c, array<Zone> zs, array<Liq> lv, StructState sw, StructState si) =>
     for z in zs
         if z.state < ZS_FILLED
@@ -22,8 +24,17 @@ f_engineChecks(Core c, array<Zone> zs, array<Liq> lv, StructState sw, StructStat
         if x.state == LS_PENDING
             f_assert(not na(x.ext) and not na(x.pendSince), "level #" + str.tostring(x.id) + " pending without extreme")
     f_assert(math.abs(sw.trend) <= 1 and math.abs(si.trend) <= 1, "structure trend out of range")
+    // one break per pivot (A.4): a new break never repeats the pivot of an earlier one
+    for st in array.from(sw, si)
+        int nb = st.breaks.size()
+        for b in array.from(st.newUp, st.newDn)
+            if not na(b) and nb > 1
+                for i = math.max(0, nb - 60) to nb - 1
+                    Brk o = st.breaks.get(i)
+                    f_assert(o.id == b.id or o.dir != b.dir or o.swingBar != b.swingBar, "pivot at bar " + str.tostring(b.swingBar) + " broken twice")
     int n = c.barEvents.size()
     if n > 1
         for i = 1 to n - 1
             f_assert(c.barEvents.get(i).id > c.barEvents.get(i - 1).id, "event ids not increasing")
     true
+//#endif

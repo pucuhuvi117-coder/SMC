@@ -1,6 +1,6 @@
 //@version=6
 // ═══════════════════════════════════════════════════════════════════════════════
-//  SMC Pro · Setups · build 0.8.3 · 2026-10-07
+//  SMC Pro · Setups · build 0.8.4 · 2026-10-07
 //  Companion of SMC Visualizer Pro: same engines and settings, plus the setup engine (ADR-13).
 //  Generated from /src by build/build.py. Do not edit dist/ by hand.
 //  Architecture: docs/02-architecture.md · Detectors: docs/appendix-a-detection-spec.md
@@ -8,7 +8,7 @@
 indicator("SMC Pro · Setups", shorttitle = "SMC Setups", overlay = true, max_boxes_count = 100, max_lines_count = 250, max_labels_count = 150)
 
 // ═══ 01 · CONSTANTS ═════════════════════════════════════════════════════════════
-BUILD = "0.8.3"
+BUILD = "0.8.4"
 
 // Timeframe slots (docs §8.2). v0.1 computes the chart TF only; HTF arrives with the HTF Feed (P5).
 TF_CHART = 0
@@ -424,6 +424,8 @@ type Range
     float lo
     int hiBar
     int loBar
+    int hiT
+    int loT
     int t0
     int b0
     int pdZone = 0
@@ -770,6 +772,8 @@ oteHi = math.max(i_oteLo, i_oteHi)
 obMin = math.min(i_obMin, i_obMax)
 obMax = math.max(i_obMin, i_obMax)
 sesTz = i_sesPreset == SesPreset.originalUtc ? "UTC" : i_tz
+// Settings the resolver had to correct; the panels show them as ⚠ CONFIG (AC-38)
+cfgWarn = (i_preset == StructPreset.manual and i_inLen >= i_swLen ? "internal length must be below swing length: using " + str.tostring(inLen) + "\n" : "") + (i_oteLo > i_oteHi ? "OTE band reversed: using " + str.tostring(oteLo) + " – " + str.tostring(oteHi) + "\n" : "") + (i_obMin > i_obMax ? "OB size min above max: swapped\n" : "")
 
 f_sesSpec(string ict, string utc, string custom) =>
     string s = i_sesPreset == SesPreset.ictNy ? ict : i_sesPreset == SesPreset.originalUtc ? utc : custom
@@ -2035,8 +2039,10 @@ f_rangeStep(Core c, Range r, StructState sw, array<RangeSnap> arch) =>
         r.state := 1
         r.lo := bu.legExt0
         r.loBar := bu.origBar
+        r.loT := bu.origT
         r.hi := bu.legExt1
         r.hiBar := bar_index
+        r.hiT := time
         r.t0 := bu.origT
         r.b0 := bu.origBar
         r.inOte := false
@@ -2047,8 +2053,10 @@ f_rangeStep(Core c, Range r, StructState sw, array<RangeSnap> arch) =>
         r.state := 1
         r.hi := bd.legExt0
         r.hiBar := bd.origBar
+        r.hiT := bd.origT
         r.lo := bd.legExt1
         r.loBar := bar_index
+        r.loT := time
         r.t0 := bd.origT
         r.b0 := bd.origBar
         r.inOte := false
@@ -2057,9 +2065,11 @@ f_rangeStep(Core c, Range r, StructState sw, array<RangeSnap> arch) =>
         if high > r.hi and r.dir == 1
             r.hi := high
             r.hiBar := bar_index
+            r.hiT := time
         if low < r.lo and r.dir == -1
             r.lo := low
             r.loBar := bar_index
+            r.loT := time
         if r.state == 1
             Swing nh = sw.newHigh
             Swing nl = sw.newLow
@@ -2173,7 +2183,8 @@ f_htfBreak(Core c, array<Brk> hb, int dir, int kind, float px, int swT, int brkT
 // ═══ 26 · DEBUG SELF-CHECKS ═════════════════════════════════════════════════════
 // P11: invariants of the engines, checked on confirmed bars in Debug mode only (no cost otherwise).
 // A violation is written to Pine Logs as `ASSERT|time|what` and counted; the count is shown in the
-// Debug table (SMC Visualizer Pro) and in the STATS row (SMC Pro · Setups). Read-only.
+// Debug table (SMC Visualizer Pro) and in the STATS row (SMC Pro · Setups). Read-only. Engine checks
+// run in SMC Visualizer Pro only: the engines are the same code in both indicators (ADR-13).
 
 var array<int> assertN = array.new<int>(1, 0)
 
@@ -2182,23 +2193,6 @@ f_assert(bool ok, string what) =>
         assertN.set(0, assertN.get(0) + 1)
         log.error("ASSERT|" + f_timeStr(time) + "|" + what)
     ok
-
-f_engineChecks(Core c, array<Zone> zs, array<Liq> lv, StructState sw, StructState si) =>
-    for z in zs
-        if z.state < ZS_FILLED
-            string id = f_kindTag(z.kind) + " #" + str.tostring(z.id) + " "
-            f_assert(z.top > z.bottom, id + "top not above bottom")
-            f_assert(z.born <= bar_index, id + "born in the future")
-            f_assert(z.kind != ZK_FVG or na(z.unfilled) or (z.unfilled >= z.bottom - syminfo.mintick and z.unfilled <= z.top + syminfo.mintick), id + "unfilled edge outside the gap")
-    for x in lv
-        if x.state == LS_PENDING
-            f_assert(not na(x.ext) and not na(x.pendSince), "level #" + str.tostring(x.id) + " pending without extreme")
-    f_assert(math.abs(sw.trend) <= 1 and math.abs(si.trend) <= 1, "structure trend out of range")
-    int n = c.barEvents.size()
-    if n > 1
-        for i = 1 to n - 1
-            f_assert(c.barEvents.get(i).id > c.barEvents.get(i - 1).id, "event ids not increasing")
-    true
 
 // ═══ 30 · SETUP ENGINE ══════════════════════════════════════════════════════════
 // Setup automaton (§7.7) for the models SWEEP_REVERSAL and CONTINUATION (A.18), POI selection
@@ -3162,11 +3156,16 @@ f_fillLabelPool(LabelPool p, int n) =>
             p.items.push(label.new(int(na), float(na), "", xloc = xloc.bar_time, color = color(na), textcolor = color(na), style = label.style_none))
     p.items.size()
 
+// Objects not drawn in the current render pass because their pool was full (Debug table DROPPED)
+var array<int> drawMiss = array.new<int>(1, 0)
+
 method takeBox(BoxPool this) =>
     box b = na
     if this.used < this.items.size()
         b := this.items.get(this.used)
         this.used := this.used + 1
+    else
+        drawMiss.set(0, drawMiss.get(0) + 1)
     b
 
 method takeLine(LinePool this) =>
@@ -3174,6 +3173,8 @@ method takeLine(LinePool this) =>
     if this.used < this.items.size()
         ln := this.items.get(this.used)
         this.used := this.used + 1
+    else
+        drawMiss.set(0, drawMiss.get(0) + 1)
     ln
 
 method takeLabel(LabelPool this) =>
@@ -3181,6 +3182,8 @@ method takeLabel(LabelPool this) =>
     if this.used < this.items.size()
         lb := this.items.get(this.used)
         this.used := this.used + 1
+    else
+        drawMiss.set(0, drawMiss.get(0) + 1)
     lb
 
 f_finishBoxes(BoxPool p) =>
@@ -3531,7 +3534,10 @@ f_pos(string s) =>
         => position.top_right
 
 f_statusText(Core c) =>
-    not c.warm ? "WARMING UP" : nonStdChart ? "⚠ NON-STANDARD CHART" : ""
+    not c.warm ? "WARMING UP" : nonStdChart ? "⚠ NON-STANDARD CHART" : cfgWarn != "" ? "⚠ CONFIG" : ""
+
+f_statusTip(Core c) =>
+    not c.warm ? "Signals and alerts are suppressed during warm-up (first " + str.tostring(warmBars) + " bars)." : nonStdChart ? "Renko, Kagi, Point & Figure, Range or Heikin Ashi: structure is built on synthetic prices" : "Settings corrected:\n" + cfgWarn
 
 f_dashRow(table tb, int row, string k, string v, color vc, string tip, string sz) =>
     table.cell(tb, 0, row, k, text_color = color.new(C_TEXT, 45), text_size = sz, text_halign = text.align_left)
@@ -3575,7 +3581,7 @@ f_setupPanel(table tb, Ctx x, Core c, Setup fs, Setup ins) =>
                     row := f_dashRow(tb, row, "INVALID", f_px(fs.inv) + " · close " + (fs.dir == 1 ? "below" : "above"), C_BEAR, "Before the entry the setup is cancelled by a close beyond this level, an opposite swing CHoCH or a broken POI", sz)
         string stt = f_statusText(c)
         if stt != ""
-            row := f_dashRow(tb, row, "STATUS", stt, C_WARN, "Setups and alerts are suppressed during warm-up; the panel always describes the latest bar", sz)
+            row := f_dashRow(tb, row, "STATUS", stt, C_WARN, f_statusTip(c), sz)
         // Inspect: the setup at the chosen time, or why there was none (§17.3)
         if i_inspect
             string it = f_timeStr(i_inspectT)
@@ -3742,9 +3748,9 @@ if cf
     // Setups (P7): never during warm-up (AC-08)
     if i_setups and core.warm
         f_setupStep(core, setups, setupArch, stS, stI, liqs, zones, ctx, sLon.on or sNy.on)
-    // Debug self-checks (P11): engines, and in SMC Pro · Setups the live setups
+    // Debug self-checks (P11): the engines in SMC Visualizer Pro (they run identically in both
+    // indicators, ADR-13), the live setups and trade counters in SMC Pro · Setups
     if mc.debug
-        f_engineChecks(core, zones, liqs, stS, stI)
         f_setupChecks(setups)
     if i_log
         f_logEvents(core)
@@ -3782,6 +3788,7 @@ var table tSetup = i_setups and i_setPanel ? table.new(f_pos(i_setPanelPos), 2, 
 if barstate.islastconfirmedhistory or (barstate.isrealtime and barstate.isconfirmed)
     float px = na(confClose) ? close : confClose
     View view = f_buildView(histClose, histAtr, histBase, px)
+    drawMiss.set(0, 0)
     pSetBox.used := 0
     pSetLine.used := 0
     pSetLab.used := 0
@@ -3817,6 +3824,8 @@ Event evInv = alertOk and i_setups ? f_setupEv(core, EV_SETUP_INVALID, setAlertG
 bool aSetReady = not na(evReady)
 bool aSetTrig = not na(evTrig)
 bool aSetInv = not na(evInv)
+bool aSetReadyL = aSetReady and evReady.dir == 1
+bool aSetReadyS = aSetReady and evReady.dir == -1
 
 // One message per bar close for the alert "Any alert() function call" (§12.7, ADR-08): text or the
 // JSON webhook envelope (50_webhook). Alerts fire only in realtime, so the message is built there;
@@ -3835,5 +3844,7 @@ if barstate.isconfirmed and core.warm and (barstate.isrealtime or whLog)
 
 
 alertcondition(aSetReady, "Setup READY", "SMC Pro · {{ticker}} {{interval}} · setup READY (grade ≥ alert min grade) · close {{close}}")
+alertcondition(aSetReadyL, "Setup READY LONG", "SMC Pro · {{ticker}} {{interval}} · LONG setup READY (grade ≥ alert min grade) · close {{close}}")
+alertcondition(aSetReadyS, "Setup READY SHORT", "SMC Pro · {{ticker}} {{interval}} · SHORT setup READY (grade ≥ alert min grade) · close {{close}}")
 alertcondition(aSetTrig, "Setup TRIGGERED", "SMC Pro · {{ticker}} {{interval}} · setup entry reached · close {{close}}")
 alertcondition(aSetInv, "Setup INVALID", "SMC Pro · {{ticker}} {{interval}} · setup invalidated before entry · close {{close}}")

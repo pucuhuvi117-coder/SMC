@@ -38,7 +38,10 @@ f_pdColor(Ctx x) =>
 
 //#endif
 f_statusText(Core c) =>
-    not c.warm ? "WARMING UP" : nonStdChart ? "⚠ NON-STANDARD CHART" : ""
+    not c.warm ? "WARMING UP" : nonStdChart ? "⚠ NON-STANDARD CHART" : cfgWarn != "" ? "⚠ CONFIG" : ""
+
+f_statusTip(Core c) =>
+    not c.warm ? "Signals and alerts are suppressed during warm-up (first " + str.tostring(warmBars) + " bars)." : nonStdChart ? "Renko, Kagi, Point & Figure, Range or Heikin Ashi: structure is built on synthetic prices" : "Settings corrected:\n" + cfgWarn
 
 //#if core
 // Context Ribbon: HTF │ STR │ SESSION │ PD │ LIQ │ status
@@ -73,7 +76,7 @@ f_ribbon(table tb, Ctx x, Core c) =>
         if s4 == ""
             table.clear(tb, 5, 0)
         else
-            table.cell(tb, 5, 0, s4, text_color = C_WARN, text_size = sz, tooltip = nonStdChart ? "Renko, Kagi, Point & Figure, Range or Heikin Ashi: structure is built on synthetic prices" : "Signals and alerts are suppressed during warm-up (first " + str.tostring(warmBars) + " bars).")
+            table.cell(tb, 5, 0, s4, text_color = C_WARN, text_size = sz, tooltip = f_statusTip(c))
     true
 
 //#endif
@@ -117,7 +120,7 @@ f_dashboard(table tb, Ctx x, Core c, StructState si, Range r) =>
             row := f_dashRow(tb, row, "MODE", str.tostring(i_mode) + " · v" + BUILD, C_NEUT, "Display mode and build", sz)
         string stt = f_statusText(c)
         if stt != ""
-            row := f_dashRow(tb, row, "STATUS", stt, C_WARN, "Signals and alerts are suppressed during warm-up", sz)
+            row := f_dashRow(tb, row, "STATUS", stt, C_WARN, f_statusTip(c), sz)
         row := f_dashRow(tb, row, "CFG", str.tostring(cfgSig), C_NEUT, "Settings signature of the engines: SMC Pro · Setups must show the same cfg number in its panel, otherwise its setups are built on different structure, liquidity or zone settings", sz)
         if mc.labelLevel >= 3 and exp
             int nh = c.history.size()
@@ -161,6 +164,8 @@ f_debugTable(table tb, View v, Core c, array<Zone> zs, array<Zone> za, array<Liq
         row := f_dashRow(tb, row, "LABELS", str.tostring(pb.used) + " / " + str.tostring(pb.items.size()), C_TEXT, "Drawn / pool size (platform limit 500)", sz)
         int na1 = assertN.get(0)
         row := f_dashRow(tb, row, "ASSERTS", str.tostring(na1), na1 > 0 ? C_WARN : C_TEXT, "Self-check violations since the first bar (Debug mode); details in Pine Logs as ASSERT|…", sz)
+        int nd = drawMiss.get(0)
+        row := f_dashRow(tb, row, "DROPPED", str.tostring(nd), nd > 0 ? C_WARN : C_TEXT, "Objects the last render pass could not draw because their pool was full (budget, §4.10)", sz)
         row := f_dashRow(tb, row, "VOLUME", hasVolume ? "yes" : "none (filters off)", hasVolume ? C_TEXT : C_WARN, "", sz)
         row := f_dashRow(tb, row, "CHART", nonStdChart ? "non-standard" : "standard", nonStdChart ? C_WARN : C_TEXT, "", sz)
         row := f_dashRow(tb, row, "LENGTHS", "swing " + str.tostring(swLen) + " · int " + str.tostring(inLen), C_TEXT, "", sz)
@@ -205,7 +210,7 @@ f_setupPanel(table tb, Ctx x, Core c, Setup fs, Setup ins) =>
                     row := f_dashRow(tb, row, "INVALID", f_px(fs.inv) + " · close " + (fs.dir == 1 ? "below" : "above"), C_BEAR, "Before the entry the setup is cancelled by a close beyond this level, an opposite swing CHoCH or a broken POI", sz)
         string stt = f_statusText(c)
         if stt != ""
-            row := f_dashRow(tb, row, "STATUS", stt, C_WARN, "Setups and alerts are suppressed during warm-up; the panel always describes the latest bar", sz)
+            row := f_dashRow(tb, row, "STATUS", stt, C_WARN, f_statusTip(c), sz)
         // Inspect: the setup at the chosen time, or why there was none (§17.3)
         if i_inspect
             string it = f_timeStr(i_inspectT)

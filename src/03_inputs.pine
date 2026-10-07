@@ -115,6 +115,7 @@ i_oteLo = input.float(0.62, "OTE band", minval = 0.5, maxval = 0.95, step = 0.00
 i_oteHi = input.float(0.79, "–", minval = 0.5, maxval = 0.95, step = 0.005, inline = "ote", tooltip = "Retracement band of the dealing range; 0.705 is drawn as the sweet spot.", group = G_RNG, display = display.none)
 //#if core
 i_pdView = input.enum(PdView.eqOte, "PD view", tooltip = "Off / Equilibrium only / Equilibrium + OTE band / full premium-discount wash.", group = G_RNG, display = display.none)
+i_strongWeak = input.bool(true, "Strong / weak high & low", tooltip = "Labels the extremes of the dealing range: the protected one (Strong) holds the structure, the unprotected one (Weak) is the liquidity the leg is expected to run. Normal mode and above.", group = G_RNG, display = display.none)
 //#endif
 
 // ── 7 · Sessions
@@ -221,6 +222,8 @@ oteHi = math.max(i_oteLo, i_oteHi)
 obMin = math.min(i_obMin, i_obMax)
 obMax = math.max(i_obMin, i_obMax)
 sesTz = i_sesPreset == SesPreset.originalUtc ? "UTC" : i_tz
+// Settings the resolver had to correct; the panels show them as ⚠ CONFIG (AC-38)
+cfgWarn = (i_preset == StructPreset.manual and i_inLen >= i_swLen ? "internal length must be below swing length: using " + str.tostring(inLen) + "\n" : "") + (i_oteLo > i_oteHi ? "OTE band reversed: using " + str.tostring(oteLo) + " – " + str.tostring(oteHi) + "\n" : "") + (i_obMin > i_obMax ? "OB size min above max: swapped\n" : "")
 
 f_sesSpec(string ict, string utc, string custom) =>
     string s = i_sesPreset == SesPreset.ictNy ? ict : i_sesPreset == SesPreset.originalUtc ? utc : custom
@@ -322,6 +325,7 @@ vFVG = i_showFVG
 vMitigated = i_showMitigated and mc.mitigated
 vPd = math.min(pdLevelUser, mc.pdCap)
 vGauge = i_showGauge and mc.gauge
+vStrongWeak = i_strongWeak and mc.labelLevel >= 2
 vSessN = i_sesView == SesView.off ? 0 : mc.sessions
 vRibbon = i_showRibbon
 vHistory = i_histView == HistView.visible

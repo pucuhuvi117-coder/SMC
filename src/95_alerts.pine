@@ -38,6 +38,8 @@ Event evInv = alertOk and i_setups ? f_setupEv(core, EV_SETUP_INVALID, setAlertG
 bool aSetReady = not na(evReady)
 bool aSetTrig = not na(evTrig)
 bool aSetInv = not na(evInv)
+bool aSetReadyL = aSetReady and evReady.dir == 1
+bool aSetReadyS = aSetReady and evReady.dir == -1
 
 // One message per bar close for the alert "Any alert() function call" (§12.7, ADR-08): text or the
 // JSON webhook envelope (50_webhook). Alerts fire only in realtime, so the message is built there;
@@ -72,6 +74,8 @@ alertcondition(aHtfBrk, "HTF BOS / CHoCH", "SMC Pro · {{ticker}} {{interval}} �
 alertcondition(aOteEnter, "OTE entered", "SMC Pro · {{ticker}} {{interval}} · price entered the OTE band · close {{close}}")
 //#else
 alertcondition(aSetReady, "Setup READY", "SMC Pro · {{ticker}} {{interval}} · setup READY (grade ≥ alert min grade) · close {{close}}")
+alertcondition(aSetReadyL, "Setup READY LONG", "SMC Pro · {{ticker}} {{interval}} · LONG setup READY (grade ≥ alert min grade) · close {{close}}")
+alertcondition(aSetReadyS, "Setup READY SHORT", "SMC Pro · {{ticker}} {{interval}} · SHORT setup READY (grade ≥ alert min grade) · close {{close}}")
 alertcondition(aSetTrig, "Setup TRIGGERED", "SMC Pro · {{ticker}} {{interval}} · setup entry reached · close {{close}}")
 alertcondition(aSetInv, "Setup INVALID", "SMC Pro · {{ticker}} {{interval}} · setup invalidated before entry · close {{close}}")
 //#endif

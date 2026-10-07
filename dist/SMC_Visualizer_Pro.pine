@@ -1,6 +1,6 @@
 //@version=6
 // ═══════════════════════════════════════════════════════════════════════════════
-//  SMC Visualizer Pro · build 0.8.3 · 2026-10-07
+//  SMC Visualizer Pro · build 0.8.4 · 2026-10-07
 //  Structure, liquidity, zones and context. Setups live in the companion "SMC Pro · Setups" (ADR-13).
 //  Generated from /src by build/build.py. Do not edit dist/ by hand.
 //  Architecture: docs/02-architecture.md · Detectors: docs/appendix-a-detection-spec.md
@@ -8,7 +8,7 @@
 indicator("SMC Visualizer Pro", shorttitle = "SMC Pro", overlay = true, max_boxes_count = 500, max_lines_count = 500, max_labels_count = 500)
 
 // ═══ 01 · CONSTANTS ═════════════════════════════════════════════════════════════
-BUILD = "0.8.3"
+BUILD = "0.8.4"
 
 // Timeframe slots (docs §8.2). v0.1 computes the chart TF only; HTF arrives with the HTF Feed (P5).
 TF_CHART = 0
@@ -424,6 +424,8 @@ type Range
     float lo
     int hiBar
     int loBar
+    int hiT
+    int loT
     int t0
     int b0
     int pdZone = 0
@@ -652,6 +654,7 @@ i_shrink = input.bool(true, "Shrink on fill", inline = "fv", tooltip = "FVG: fai
 i_oteLo = input.float(0.62, "OTE band", minval = 0.5, maxval = 0.95, step = 0.005, inline = "ote", group = G_RNG, display = display.none)
 i_oteHi = input.float(0.79, "–", minval = 0.5, maxval = 0.95, step = 0.005, inline = "ote", tooltip = "Retracement band of the dealing range; 0.705 is drawn as the sweet spot.", group = G_RNG, display = display.none)
 i_pdView = input.enum(PdView.eqOte, "PD view", tooltip = "Off / Equilibrium only / Equilibrium + OTE band / full premium-discount wash.", group = G_RNG, display = display.none)
+i_strongWeak = input.bool(true, "Strong / weak high & low", tooltip = "Labels the extremes of the dealing range: the protected one (Strong) holds the structure, the unprotected one (Weak) is the liquidity the leg is expected to run. Normal mode and above.", group = G_RNG, display = display.none)
 
 // ── 7 · Sessions
 i_tz = input.string("America/New_York", "Session timezone", tooltip = "IANA timezone. Daylight saving time is handled automatically.", group = G_SES, display = display.none)
@@ -707,6 +710,8 @@ oteHi = math.max(i_oteLo, i_oteHi)
 obMin = math.min(i_obMin, i_obMax)
 obMax = math.max(i_obMin, i_obMax)
 sesTz = i_sesPreset == SesPreset.originalUtc ? "UTC" : i_tz
+// Settings the resolver had to correct; the panels show them as ⚠ CONFIG (AC-38)
+cfgWarn = (i_preset == StructPreset.manual and i_inLen >= i_swLen ? "internal length must be below swing length: using " + str.tostring(inLen) + "\n" : "") + (i_oteLo > i_oteHi ? "OTE band reversed: using " + str.tostring(oteLo) + " – " + str.tostring(oteHi) + "\n" : "") + (i_obMin > i_obMax ? "OB size min above max: swapped\n" : "")
 
 f_sesSpec(string ict, string utc, string custom) =>
     string s = i_sesPreset == SesPreset.ictNy ? ict : i_sesPreset == SesPreset.originalUtc ? utc : custom
@@ -799,6 +804,7 @@ vFVG = i_showFVG
 vMitigated = i_showMitigated and mc.mitigated
 vPd = math.min(pdLevelUser, mc.pdCap)
 vGauge = i_showGauge and mc.gauge
+vStrongWeak = i_strongWeak and mc.labelLevel >= 2
 vSessN = i_sesView == SesView.off ? 0 : mc.sessions
 vRibbon = i_showRibbon
 vHistory = i_histView == HistView.visible
@@ -1991,8 +1997,10 @@ f_rangeStep(Core c, Range r, StructState sw, array<RangeSnap> arch) =>
         r.state := 1
         r.lo := bu.legExt0
         r.loBar := bu.origBar
+        r.loT := bu.origT
         r.hi := bu.legExt1
         r.hiBar := bar_index
+        r.hiT := time
         r.t0 := bu.origT
         r.b0 := bu.origBar
         r.inOte := false
@@ -2003,8 +2011,10 @@ f_rangeStep(Core c, Range r, StructState sw, array<RangeSnap> arch) =>
         r.state := 1
         r.hi := bd.legExt0
         r.hiBar := bd.origBar
+        r.hiT := bd.origT
         r.lo := bd.legExt1
         r.loBar := bar_index
+        r.loT := time
         r.t0 := bd.origT
         r.b0 := bd.origBar
         r.inOte := false
@@ -2013,9 +2023,11 @@ f_rangeStep(Core c, Range r, StructState sw, array<RangeSnap> arch) =>
         if high > r.hi and r.dir == 1
             r.hi := high
             r.hiBar := bar_index
+            r.hiT := time
         if low < r.lo and r.dir == -1
             r.lo := low
             r.loBar := bar_index
+            r.loT := time
         if r.state == 1
             Swing nh = sw.newHigh
             Swing nl = sw.newLow
@@ -2129,7 +2141,8 @@ f_htfBreak(Core c, array<Brk> hb, int dir, int kind, float px, int swT, int brkT
 // ═══ 26 · DEBUG SELF-CHECKS ═════════════════════════════════════════════════════
 // P11: invariants of the engines, checked on confirmed bars in Debug mode only (no cost otherwise).
 // A violation is written to Pine Logs as `ASSERT|time|what` and counted; the count is shown in the
-// Debug table (SMC Visualizer Pro) and in the STATS row (SMC Pro · Setups). Read-only.
+// Debug table (SMC Visualizer Pro) and in the STATS row (SMC Pro · Setups). Read-only. Engine checks
+// run in SMC Visualizer Pro only: the engines are the same code in both indicators (ADR-13).
 
 var array<int> assertN = array.new<int>(1, 0)
 
@@ -2150,6 +2163,14 @@ f_engineChecks(Core c, array<Zone> zs, array<Liq> lv, StructState sw, StructStat
         if x.state == LS_PENDING
             f_assert(not na(x.ext) and not na(x.pendSince), "level #" + str.tostring(x.id) + " pending without extreme")
     f_assert(math.abs(sw.trend) <= 1 and math.abs(si.trend) <= 1, "structure trend out of range")
+    // one break per pivot (A.4): a new break never repeats the pivot of an earlier one
+    for st in array.from(sw, si)
+        int nb = st.breaks.size()
+        for b in array.from(st.newUp, st.newDn)
+            if not na(b) and nb > 1
+                for i = math.max(0, nb - 60) to nb - 1
+                    Brk o = st.breaks.get(i)
+                    f_assert(o.id == b.id or o.dir != b.dir or o.swingBar != b.swingBar, "pivot at bar " + str.tostring(b.swingBar) + " broken twice")
     int n = c.barEvents.size()
     if n > 1
         for i = 1 to n - 1
@@ -2296,11 +2317,16 @@ f_fillLabelPool(LabelPool p, int n) =>
             p.items.push(label.new(int(na), float(na), "", xloc = xloc.bar_time, color = color(na), textcolor = color(na), style = label.style_none))
     p.items.size()
 
+// Objects not drawn in the current render pass because their pool was full (Debug table DROPPED)
+var array<int> drawMiss = array.new<int>(1, 0)
+
 method takeBox(BoxPool this) =>
     box b = na
     if this.used < this.items.size()
         b := this.items.get(this.used)
         this.used := this.used + 1
+    else
+        drawMiss.set(0, drawMiss.get(0) + 1)
     b
 
 method takeLine(LinePool this) =>
@@ -2308,6 +2334,8 @@ method takeLine(LinePool this) =>
     if this.used < this.items.size()
         ln := this.items.get(this.used)
         this.used := this.used + 1
+    else
+        drawMiss.set(0, drawMiss.get(0) + 1)
     ln
 
 method takeLabel(LabelPool this) =>
@@ -2315,6 +2343,8 @@ method takeLabel(LabelPool this) =>
     if this.used < this.items.size()
         lb := this.items.get(this.used)
         this.used := this.used + 1
+    else
+        drawMiss.set(0, drawMiss.get(0) + 1)
     lb
 
 f_finishBoxes(BoxPool p) =>
@@ -2971,6 +3001,12 @@ f_renderRange(View v, BoxPool prb, LinePool prl, LabelPool pb, array<Tag> tags, 
                 RangeSnap s = cand.get(k)
                 float eq = (s.hi + s.lo) / 2
                 f_line(prl, s.t0, eq, s.t1, eq, color.new(C_NEUT, OP_SOFT), line.style_dotted, 1)
+    // Strong / weak extremes (A.5): the protected one holds the structure, the other is the
+    // liquidity the leg is expected to run
+    if curOk and vStrongWeak and labelLvl > 0
+        bool bull = r.dir == 1
+        f_label(pb, r.hiT, r.hi, bull ? "Weak High" : "Strong High", color.new(bull ? C_NEUT : C_BEAR, OP_MEDIUM), label.style_label_down, size.tiny, (bull ? "Unprotected high: the bullish leg is expected to run the liquidity above it" : "Protected high of the bearish leg: losing it ends the bearish structure") + "\n" + f_px(r.hi), yloc.price)
+        f_label(pb, r.loT, r.lo, bull ? "Strong Low" : "Weak Low", color.new(bull ? C_BULL : C_NEUT, OP_MEDIUM), label.style_label_up, size.tiny, (bull ? "Protected low of the bullish leg: losing it ends the bullish structure" : "Unprotected low: the bearish leg is expected to run the liquidity below it") + "\n" + f_px(r.lo), yloc.price)
     if curOk and vGauge
         float span = r.hi - r.lo
         float eq = (r.hi + r.lo) / 2
@@ -3065,7 +3101,10 @@ f_pdColor(Ctx x) =>
     na(x.pd) ? C_NEUT : x.pdZone == 1 ? C_BEAR : x.pdZone == -1 ? C_BULL : C_NEUT
 
 f_statusText(Core c) =>
-    not c.warm ? "WARMING UP" : nonStdChart ? "⚠ NON-STANDARD CHART" : ""
+    not c.warm ? "WARMING UP" : nonStdChart ? "⚠ NON-STANDARD CHART" : cfgWarn != "" ? "⚠ CONFIG" : ""
+
+f_statusTip(Core c) =>
+    not c.warm ? "Signals and alerts are suppressed during warm-up (first " + str.tostring(warmBars) + " bars)." : nonStdChart ? "Renko, Kagi, Point & Figure, Range or Heikin Ashi: structure is built on synthetic prices" : "Settings corrected:\n" + cfgWarn
 
 // Context Ribbon: HTF │ STR │ SESSION │ PD │ LIQ │ status
 f_htfText(Ctx x) =>
@@ -3099,7 +3138,7 @@ f_ribbon(table tb, Ctx x, Core c) =>
         if s4 == ""
             table.clear(tb, 5, 0)
         else
-            table.cell(tb, 5, 0, s4, text_color = C_WARN, text_size = sz, tooltip = nonStdChart ? "Renko, Kagi, Point & Figure, Range or Heikin Ashi: structure is built on synthetic prices" : "Signals and alerts are suppressed during warm-up (first " + str.tostring(warmBars) + " bars).")
+            table.cell(tb, 5, 0, s4, text_color = C_WARN, text_size = sz, tooltip = f_statusTip(c))
     true
 
 f_dashRow(table tb, int row, string k, string v, color vc, string tip, string sz) =>
@@ -3141,7 +3180,7 @@ f_dashboard(table tb, Ctx x, Core c, StructState si, Range r) =>
             row := f_dashRow(tb, row, "MODE", str.tostring(i_mode) + " · v" + BUILD, C_NEUT, "Display mode and build", sz)
         string stt = f_statusText(c)
         if stt != ""
-            row := f_dashRow(tb, row, "STATUS", stt, C_WARN, "Signals and alerts are suppressed during warm-up", sz)
+            row := f_dashRow(tb, row, "STATUS", stt, C_WARN, f_statusTip(c), sz)
         row := f_dashRow(tb, row, "CFG", str.tostring(cfgSig), C_NEUT, "Settings signature of the engines: SMC Pro · Setups must show the same cfg number in its panel, otherwise its setups are built on different structure, liquidity or zone settings", sz)
         if mc.labelLevel >= 3 and exp
             int nh = c.history.size()
@@ -3185,6 +3224,8 @@ f_debugTable(table tb, View v, Core c, array<Zone> zs, array<Zone> za, array<Liq
         row := f_dashRow(tb, row, "LABELS", str.tostring(pb.used) + " / " + str.tostring(pb.items.size()), C_TEXT, "Drawn / pool size (platform limit 500)", sz)
         int na1 = assertN.get(0)
         row := f_dashRow(tb, row, "ASSERTS", str.tostring(na1), na1 > 0 ? C_WARN : C_TEXT, "Self-check violations since the first bar (Debug mode); details in Pine Logs as ASSERT|…", sz)
+        int nd = drawMiss.get(0)
+        row := f_dashRow(tb, row, "DROPPED", str.tostring(nd), nd > 0 ? C_WARN : C_TEXT, "Objects the last render pass could not draw because their pool was full (budget, §4.10)", sz)
         row := f_dashRow(tb, row, "VOLUME", hasVolume ? "yes" : "none (filters off)", hasVolume ? C_TEXT : C_WARN, "", sz)
         row := f_dashRow(tb, row, "CHART", nonStdChart ? "non-standard" : "standard", nonStdChart ? C_WARN : C_TEXT, "", sz)
         row := f_dashRow(tb, row, "LENGTHS", "swing " + str.tostring(swLen) + " · int " + str.tostring(inLen), C_TEXT, "", sz)
@@ -3313,7 +3354,8 @@ if cf
     f_rangeStep(core, rng, stS, rangeArch)
     float pdNow = f_pdStep(core, rng)
     f_ctxBuild(ctx, stS, stI, rng, pdNow, liqs, sAsia, sLon, sNy, htfOk, htfLowHist, hBias)
-    // Debug self-checks (P11): engines, and in SMC Pro · Setups the live setups
+    // Debug self-checks (P11): the engines in SMC Visualizer Pro (they run identically in both
+    // indicators, ADR-13), the live setups and trade counters in SMC Pro · Setups
     if mc.debug
         f_engineChecks(core, zones, liqs, stS, stI)
     if i_log
@@ -3356,6 +3398,7 @@ var table tDebug = mc.debug and i_debugTable ? table.new(position.middle_left, 2
 if barstate.islastconfirmedhistory or (barstate.isrealtime and barstate.isconfirmed)
     float px = na(confClose) ? close : confClose
     View view = f_buildView(histClose, histAtr, histBase, px)
+    drawMiss.set(0, 0)
     int rightT = time + i_rightExt * barMs
     pWash.used := 0
     pRngBox.used := 0

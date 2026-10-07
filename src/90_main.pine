@@ -128,10 +128,12 @@ if cf
     if i_setups and core.warm
         f_setupStep(core, setups, setupArch, stS, stI, liqs, zones, ctx, sLon.on or sNy.on)
     //#endif
-    // Debug self-checks (P11): engines, and in SMC Pro · Setups the live setups
+    // Debug self-checks (P11): the engines in SMC Visualizer Pro (they run identically in both
+    // indicators, ADR-13), the live setups and trade counters in SMC Pro · Setups
     if mc.debug
+        //#if core
         f_engineChecks(core, zones, liqs, stS, stI)
-        //#if setups
+        //#else
         f_setupChecks(setups)
         //#endif
     if i_log
@@ -204,6 +206,7 @@ var table tSetup = i_setups and i_setPanel ? table.new(f_pos(i_setPanelPos), 2, 
 if barstate.islastconfirmedhistory or (barstate.isrealtime and barstate.isconfirmed)
     float px = na(confClose) ? close : confClose
     View view = f_buildView(histClose, histAtr, histBase, px)
+    drawMiss.set(0, 0)
     //#if core
     int rightT = time + i_rightExt * barMs
     pWash.used := 0

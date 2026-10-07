@@ -480,6 +480,12 @@ f_renderRange(View v, BoxPool prb, LinePool prl, LabelPool pb, array<Tag> tags, 
                 RangeSnap s = cand.get(k)
                 float eq = (s.hi + s.lo) / 2
                 f_line(prl, s.t0, eq, s.t1, eq, color.new(C_NEUT, OP_SOFT), line.style_dotted, 1)
+    // Strong / weak extremes (A.5): the protected one holds the structure, the other is the
+    // liquidity the leg is expected to run
+    if curOk and vStrongWeak and labelLvl > 0
+        bool bull = r.dir == 1
+        f_label(pb, r.hiT, r.hi, bull ? "Weak High" : "Strong High", color.new(bull ? C_NEUT : C_BEAR, OP_MEDIUM), label.style_label_down, size.tiny, (bull ? "Unprotected high: the bullish leg is expected to run the liquidity above it" : "Protected high of the bearish leg: losing it ends the bearish structure") + "\n" + f_px(r.hi), yloc.price)
+        f_label(pb, r.loT, r.lo, bull ? "Strong Low" : "Weak Low", color.new(bull ? C_BULL : C_NEUT, OP_MEDIUM), label.style_label_up, size.tiny, (bull ? "Protected low of the bullish leg: losing it ends the bullish structure" : "Unprotected low: the bearish leg is expected to run the liquidity below it") + "\n" + f_px(r.lo), yloc.price)
     if curOk and vGauge
         float span = r.hi - r.lo
         float eq = (r.hi + r.lo) / 2

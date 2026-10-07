@@ -1,5 +1,14 @@
 # Проверка сборки в TradingView
 
+## v0.8.4 — Strong / Weak, ⚠ CONFIG
+
+| # | Проверка | Ожидание |
+|---|---|---|
+| 1 | SMC Visualizer Pro, Normal | На текущем диапазоне две метки: в бычьем — `Strong Low` внизу и `Weak High` вверху, в медвежьем — `Strong High` и `Weak Low`. Флажок «Strong / weak high & low» (группа 6) их убирает; в Clean их нет |
+| 2 | Structure preset = Manual, internal = 12 при swing = 10 | В Ribbon и панели Setup — `⚠ CONFIG`, в подсказке: `internal length must be below swing length: using 9` |
+| 3 | SMC Pro · Setups → создать алерт | В списке условий есть «Setup READY LONG» и «Setup READY SHORT» |
+| 4 | Debug-таблица (режим Debug) | Строки ASSERTS и DROPPED; ASSERTS = 0 |
+
 ## v0.8.3 — статистика сделок
 
 | # | Проверка | Ожидание |

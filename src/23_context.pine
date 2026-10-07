@@ -16,8 +16,10 @@ f_rangeStep(Core c, Range r, StructState sw, array<RangeSnap> arch) =>
         r.state := 1
         r.lo := bu.legExt0
         r.loBar := bu.origBar
+        r.loT := bu.origT
         r.hi := bu.legExt1
         r.hiBar := bar_index
+        r.hiT := time
         r.t0 := bu.origT
         r.b0 := bu.origBar
         r.inOte := false
@@ -28,8 +30,10 @@ f_rangeStep(Core c, Range r, StructState sw, array<RangeSnap> arch) =>
         r.state := 1
         r.hi := bd.legExt0
         r.hiBar := bd.origBar
+        r.hiT := bd.origT
         r.lo := bd.legExt1
         r.loBar := bar_index
+        r.loT := time
         r.t0 := bd.origT
         r.b0 := bd.origBar
         r.inOte := false
@@ -38,9 +42,11 @@ f_rangeStep(Core c, Range r, StructState sw, array<RangeSnap> arch) =>
         if high > r.hi and r.dir == 1
             r.hi := high
             r.hiBar := bar_index
+            r.hiT := time
         if low < r.lo and r.dir == -1
             r.lo := low
             r.loBar := bar_index
+            r.loT := time
         if r.state == 1
             Swing nh = sw.newHigh
             Swing nl = sw.newLow

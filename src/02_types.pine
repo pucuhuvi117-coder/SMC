@@ -271,6 +271,8 @@ type Range
     float lo
     int hiBar
     int loBar
+    int hiT
+    int loT
     int t0
     int b0
     int pdZone = 0

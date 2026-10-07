@@ -1,6 +1,6 @@
 # Руководство пользователя
 
-**SMC Visualizer Pro** и **SMC Pro · Setups** для TradingView, версия 0.8.2.
+**SMC Visualizer Pro** и **SMC Pro · Setups** для TradingView, версия 0.8.4.
 
 Индикаторы аналитические: показывают структуру рынка и сетапы, но **ордера не выставляют**. Оценка сетапа показывает, насколько полно он собран, а не вероятность выигрыша.
 
@@ -134,6 +134,7 @@
 - **EQ** — середина текущего dealing range (`EQ~` — диапазон ещё формируется).
 - Полоса **OTE** — зона оптимального входа (по умолчанию 0.62–0.79 от ноги).
 - Выше EQ — Premium (там ищут шорты), ниже — Discount (лонги).
+- **Strong / Weak High / Low** (с Normal, флажок в группе 6): у бычьего диапазона минимум — `Strong Low` (защищённый: его потеря ломает бычью структуру), максимум — `Weak High` (незащищённый: ликвидность над ним — вероятная цель). У медвежьего — наоборот: `Strong High` и `Weak Low`.
 - **Шкала справа от цены** (Range Gauge): диапазон, EQ, OTE и тег `◀ 63%` — где сейчас цена в диапазоне.
 
 ### 4.6 Сессии
@@ -154,7 +155,7 @@
 | Сессия | Активная killzone / сессия (`ASIA`, `LON KZ`, `NY KZ`) и сколько минут осталось; `NO KZ` — вне них |
 | PD | Положение в диапазоне: PREM / EQ / DISC и процент, `· OTE` — цена в OTE |
 | LIQ | Последнее событие ликвидности за 20 баров: `✕` — свип, `TAKEN` — пробой, `3b` — сколько баров назад |
-| Статус | `WARMING UP` (первые бары, сигналы и алерты подавлены) или `⚠ NON-STANDARD CHART` (Heikin Ashi, Renko и т. п.) |
+| Статус | `WARMING UP` (первые бары, сигналы и алерты подавлены), `⚠ NON-STANDARD CHART` (Heikin Ashi, Renko и т. п.) или `⚠ CONFIG` — настройки противоречат друг другу и исправлены автоматически (что именно — в подсказке) |
 
 ### 5.2 Dashboard
 **Compact**: MARKET, HTF, STRUCTURE, SESSION, LOCATION, LIQUIDITY, TARGET ↑ / ↓ (ближайшая крупная ликвидность сверху / снизу и расстояние в ATR), CFG. **Expanded** добавляет INTERNAL (тренд внутренней структуры) и MODE, а в Analysis / Debug — **хронологию**: 8 последних swing-сломов и свипов с датой (события старшего ТФ — с префиксом `◆ТФ`). Подсказки (навести курсор на значение) объясняют каждую строку.
@@ -162,7 +163,7 @@
 MARKET: `BULLISH` / `BEARISH`, если HTF и структура графика согласны; `MIXED` — не согласны; `RANGING` — режим диапазона.
 
 ### 5.3 Debug-таблица (режим Debug)
-BUILD (версия, режим, cfg), BARS, VIEW (окно и сегменты), ZONES / LEVELS (живые / всего / архив), EVENTS, BOXES / LINES / LABELS (занято / размер пула, лимит платформы 500), **ASSERTS** (нарушения самопроверок), VOLUME, CHART, LENGTHS, SESSIONS, HTF.
+BUILD (версия, режим, cfg), BARS, VIEW (окно и сегменты), ZONES / LEVELS (живые / всего / архив), EVENTS, BOXES / LINES / LABELS (занято / размер пула, лимит платформы 500), **ASSERTS** (нарушения самопроверок), **DROPPED** (сколько объектов не поместилось в пулы при последней отрисовке), VOLUME, CHART, LENGTHS, SESSIONS, HTF.
 
 ## 6. Сетапы (SMC Pro · Setups)
 
@@ -286,7 +287,7 @@ Continuation  16 · 44% won · +0.12R
 Алерт → Condition: **SMC Visualizer Pro** → одно из событий: BOS ↑ / ↓ (swing), CHoCH ↑ / ↓ (swing), Sweep ↑ (SSL swept) / ↓ (BSL swept), Order block touch, FVG filled, Session / killzone start, Premium / discount change, HTF bias change, HTF BOS / CHoCH, OTE entered.
 
 ### 7.2 SMC Pro · Setups
-- Отдельные условия: **Setup READY** (грейд ≥ «Alert min grade»), **Setup TRIGGERED**, **Setup INVALID**.
+- Отдельные условия: **Setup READY** (грейд ≥ «Alert min grade»), **Setup READY LONG** и **Setup READY SHORT** (только одна сторона), **Setup TRIGGERED**, **Setup INVALID**.
 - Или один алерт **«Any alert() function call»**: одно сообщение на закрытие бара со всеми событиями, прошедшими фильтры (группа **🔔 10 · ALERTS & WEBHOOK**):
   - **Alert message**: Text — одна читаемая строка; JSON (webhook) — конверт `smcvp.event` v1 с планом сделки.
   - **Events**: Setups (переходы сетапов от READY, грейд ≥ Alert min grade); Setups + key events (плюс swing BOS / CHoCH, крупные свипы, смена HTF bias); All events (всё до «min tier», 1 — самое важное).
@@ -300,7 +301,7 @@ Continuation  16 · 44% won · +0.12R
 ### 7.3 Готовые алерты
 | Задача | Индикатор → условие | Настройки |
 |---|---|---|
-| Узнать, что сетап готов | SMC Pro · Setups → **Setup READY** | Once Per Bar Close. Порог — «Alert min grade» (по умолчанию A) |
+| Узнать, что сетап готов | SMC Pro · Setups → **Setup READY** (или READY LONG / READY SHORT) | Once Per Bar Close. Порог — «Alert min grade» (по умолчанию A) |
 | Узнать о входе и отмене | SMC Pro · Setups → **Setup TRIGGERED** и **Setup INVALID** | Once Per Bar Close |
 | Весь ход сетапов одним алертом (Telegram, бот) | SMC Pro · Setups → **Any alert() function call** | Alert message = Text, Events = Setups |
 | Шлюз автоматизации | SMC Pro · Setups → **Any alert() function call**, Webhook URL | Alert message = JSON, Events = Setups + key events, Snapshot every N bars = 10–20, Sender id |
@@ -348,7 +349,9 @@ Continuation  16 · 44% won · +0.12R
 | `⚠ HTF ≤ TF` | Ручной HTF не выше ТФ графика | Higher timeframe = Auto или ТФ выше текущего |
 | `VOLUME none` в Debug | У инструмента нет объёма | Фильтры по объёму отключены автоматически |
 | Слева нет разметки | Окно истории | Увеличить «depth (bars)» (или режим Analysis) |
-| `ASSERTS` > 0 / `⚠N asserts` | Нарушена самопроверка | Pine Logs → строки `ASSERT|…`, прислать их |
+| `ASSERTS` > 0 / `⚠N asserts` | Нарушена самопроверка (движки проверяет SMC Visualizer Pro, сетапы — SMC Pro · Setups) | Pine Logs → строки `ASSERT|…`, прислать их |
+| `⚠ CONFIG` | Противоречивые настройки (например, internal ≥ swing в Manual, перевёрнутая полоса OTE) | Подсказка статуса называет, что исправлено; поправьте настройку |
+| `DROPPED` > 0 в Debug | Объектов больше, чем пул режима | В Debug это ожидаемо; в других режимах — прислать скриншот Debug-таблицы |
 | INSPECT: `no setup` | В выбранный момент сетапа не было | Подсказка строки объясняет, какие попытки были и почему отпали |
 
 ## 11. Как прислать данные для подстройки
