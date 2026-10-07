@@ -174,7 +174,7 @@ f_qualityBar(float sc) =>
     int k = int(math.round(sc))
     str.repeat("▮", k) + str.repeat("▯", 10 - k)
 
-f_setupPanel(table tb, Ctx x, Core c, bool liveView, Setup fs) =>
+f_setupPanel(table tb, Ctx x, Core c, bool liveView, Setup fs, Setup ins) =>
     if not na(tb)
         string sz = panelSz
         int row = 0
@@ -198,6 +198,23 @@ f_setupPanel(table tb, Ctx x, Core c, bool liveView, Setup fs) =>
         string stt = f_statusText(c, liveView)
         if stt != ""
             row := f_dashRow(tb, row, "STATUS", stt, C_WARN, "Setups and alerts are suppressed during warm-up; the panel always describes the latest bar", sz)
+        // Inspect: the setup at the chosen time, or why there was none (§17.3)
+        if i_inspect
+            string it = f_timeStr(i_inspectT)
+            if not na(ins)
+                string ih = f_sideName(ins.dir) + " " + f_stateCode(ins.state) + " · " + f_modelName(ins.model) + (na(ins.readyBar) ? "" : " · " + f_gradeName(ins.grade) + " " + str.tostring(ins.score, "0.0"))
+                row := f_dashRow(tb, row, "INSPECT", ih, C_SIG, it + "\n" + f_setTip(ins), sz)
+            else
+                string why = ""
+                int nw = 0
+                int na0 = attT0.size()
+                if na0 > 0
+                    for i = na0 - 1 to 0
+                        if attT0.get(i) <= i_inspectT and i_inspectT <= attT1.get(i) and nw < 4
+                            why := why + attTxt.get(i) + "\n"
+                            nw += 1
+                string w1 = nw > 0 ? str.split(why, "\n").first() : "no sweep or BOS opened a setup"
+                row := f_dashRow(tb, row, "INSPECT", "no setup · " + w1, C_NEUT, it + "\n" + (nw > 0 ? "Attempts that ended without a trade:\n" + why : "No liquidity sweep with a shift, and no BOS with the trend, was open at this time.") + (na0 >= ATT_CAP ? "\nOnly the last " + str.tostring(ATT_CAP) + " attempts are kept." : ""), sz)
         // history: READY count, outcomes, and the most frequent reason a setup ended without a trade
         string topK = ""
         int topV = 0

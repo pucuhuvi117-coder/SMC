@@ -159,17 +159,36 @@ f_setDoneTtl(Setup s) =>
 f_setShownDone(Setup s) =>
     not na(s.readyBar) ? s.grade >= setShowGrade : setShowGrade == GR_C
 
-f_renderSetups(View v, BoxPool pb, LinePool pl, LabelPool plb, array<Setup> ss, array<Setup> arch) =>
+// Inspect (§17.3): the setup alive at time t — live or archived; a planned one wins over a forming one,
+// then the newer one
+f_inspectSetup(array<Setup> ss, array<Setup> arch, int t) =>
+    Setup best = na
+    for k = 0 to 1
+        array<Setup> src = k == 0 ? ss : arch
+        for s in src
+            int t1 = s.state >= SS_WIN ? s.endT : time
+            if s.bornT <= t and t <= t1 and not na(s.poi)
+                if na(best) or (not na(s.readyBar) and na(best.readyBar)) or (not na(s.readyBar) == not na(best.readyBar) and s.bornT > best.bornT)
+                    best := s
+    best
+
+f_renderSetups(View v, BoxPool pb, LinePool pl, LabelPool plb, array<Setup> ss, array<Setup> arch, Setup ins) =>
     int shown = 0
     // Setup Path: the current setups from Normal on; recent and past ones too in Analysis / Debug / Custom
     bool pathOn = i_showPath and i_mode != DisplayMode.clean
     bool pathAll = pathOn and (i_mode != DisplayMode.normal)
     if i_setups
         array<int> drawn = array.new<int>()
+        // the inspected setup first, in full with its path, whatever the display filters say
+        if not na(ins)
+            f_drawPath(pl, plb, ins, false)
+            f_drawSetup(pb, pl, plb, ins, false)
+            drawn.push(ins.id)
+            shown += 1
         if v.live
             for d in array.from(1, -1)
                 Setup fs = f_focusSetup(ss, d)
-                if not na(fs)
+                if not na(fs) and not drawn.includes(fs.id)
                     if pathOn
                         f_drawPath(pl, plb, fs, false)
                     f_drawSetup(pb, pl, plb, fs, false)

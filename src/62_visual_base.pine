@@ -114,6 +114,7 @@ f_label(LabelPool p, int x, float y, string txt, color tc, string st, string sz,
         label.set_textalign(lb, text.align_left)
     not na(lb)
 
+//#if core
 // ── Right-edge tags with Smart Labels merging (§14.7). The merge distance grows with the
 // visible price span, so tags never print on top of each other when zoomed out.
 f_drawTags(LabelPool p, array<Tag> tags, int x, float sep) =>
@@ -142,6 +143,7 @@ f_drawTags(LabelPool p, array<Tag> tags, int x, float sep) =>
         if not na(curP)
             f_label(p, x, curP, curT, curC, label.style_label_left, size.tiny, curTip, yloc.price)
     n
+//#endif
 
 // ── View: history window (last histDepth bars) split into time segments (§15)
 f_histAt(array<float> a, int base, int idx, float dflt) =>
@@ -176,6 +178,7 @@ f_buildView(array<float> hc, array<float> ha, int hb, float pxLive) =>
         v.winHi := hi
     v
 
+//#if core
 // Segment that contains a bar index (the last segment for anything at or beyond the right edge)
 f_segOf(View v, int idx) =>
     int s = v.segs - 1
@@ -184,13 +187,17 @@ f_segOf(View v, int idx) =>
             s := k
             break
     s
+//#endif
 
+//#if core
 // Per-segment share of a window cap, so objects cover the whole screen instead of piling
 // up near the right edge (user feedback v0.2: "the chart is empty on the left"). Rounded
 // down, so the shares never add up to more than the cap and the pools behind it.
 f_quota(View v, int cap) =>
     cap <= 0 ? 0 : math.max(1, int(cap / v.segs))
+//#endif
 
+//#if core
 // Even spread inside segments (v0.3): candidates arrive in priority order. Pass 1 takes at most
 // one object per time slot, pass 2 fills each segment's quota in priority order. Returns the
 // indices of the picked candidates; index 0 is always picked first when anything is.
@@ -215,3 +222,4 @@ f_spreadPick(View v, array<int> xs, array<int> sg, int q, int slots) =>
                             cnt.set(s, cnt.get(s) + 1)
                             out.push(k)
     out
+//#endif

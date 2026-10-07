@@ -235,10 +235,11 @@ if barstate.islastconfirmedhistory or (barstate.isrealtime and barstate.isconfir
     pSetBox.used := 0
     pSetLine.used := 0
     pSetLab.used := 0
-    f_renderSetups(view, pSetBox, pSetLine, pSetLab, setups, setupArch)
+    Setup ins = i_setups and i_inspect ? f_inspectSetup(setups, setupArch, i_inspectT) : na
+    f_renderSetups(view, pSetBox, pSetLine, pSetLab, setups, setupArch, ins)
     f_finishBoxes(pSetBox)
     f_finishLines(pSetLine)
     f_finishLabels(pSetLab)
     Setup focus = i_setups ? f_focusSetup(setups, 0) : na
-    f_setupPanel(tSetup, ctx, core, view.live, focus)
+    f_setupPanel(tSetup, ctx, core, view.live, focus, ins)
     //#endif

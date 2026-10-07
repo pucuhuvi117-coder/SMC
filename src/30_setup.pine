@@ -11,6 +11,12 @@ var map<string, int> setStats = map.new<string, int>()
 f_statAdd(string k) =>
     setStats.put(k, nz(setStats.get(k)) + 1)
 
+// Ring of the last ATT_CAP attempts that ended without a trade (with or without a POI), for Inspect
+// ("why was there no setup here", §17.3): start and end time, and a one-line reason
+var array<int> attT0 = array.new<int>()
+var array<int> attT1 = array.new<int>()
+var array<string> attTxt = array.new<string>()
+
 f_modelName(int m) =>
     m == SM_REV ? "Sweep Reversal" : "Continuation"
 
@@ -49,6 +55,13 @@ f_setEmit(Core c, Setup s, int typ, float price, float v1 = na, float v2 = na, f
 // (a POI was chosen) report it on the bus.
 f_setEnd(Core c, Setup s, int st, string why) =>
     f_statAdd(why == "" ? "UNKNOWN" : str.split(why, " ").first())
+    attT0.push(s.bornT)
+    attT1.push(time)
+    attTxt.push(f_sideName(s.dir) + " " + f_modelName(s.model) + ": " + str.lower(str.replace_all(why, "_", " ")))
+    if attT0.size() > ATT_CAP
+        attT0.shift()
+        attT1.shift()
+        attTxt.shift()
     s.state := st
     s.reason := why
     s.endBar := bar_index

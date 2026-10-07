@@ -1,6 +1,6 @@
 //@version=6
 // ═══════════════════════════════════════════════════════════════════════════════
-//  SMC Visualizer Pro · build 0.6.0 · 2026-10-07
+//  SMC Visualizer Pro · build 0.7.0 · 2026-10-07
 //  Structure, liquidity, zones and context. Setups live in the companion "SMC Pro · Setups" (ADR-13).
 //  Generated from /src by build/build.py. Do not edit dist/ by hand.
 //  Architecture: docs/02-architecture.md · Detectors: docs/appendix-a-detection-spec.md
@@ -8,7 +8,7 @@
 indicator("SMC Visualizer Pro", shorttitle = "SMC Pro", overlay = true, max_boxes_count = 500, max_lines_count = 500, max_labels_count = 500)
 
 // ═══ 01 · CONSTANTS ═════════════════════════════════════════════════════════════
-BUILD = "0.6.0"
+BUILD = "0.7.0"
 
 // Timeframe slots (docs §8.2). v0.1 computes the chart TF only; HTF arrives with the HTF Feed (P5).
 TF_CHART = 0
@@ -118,7 +118,8 @@ GR_AP = 3
 SETUP_CAP = 12
 SETUP_ARCH_CAP = 80
 DASH_ROWS = 22
-SET_PANEL_ROWS = 7
+SET_PANEL_ROWS = 8
+ATT_CAP = 400
 
 // Fixed detector parameters (Appendix A.19)
 OB_NPRE = 3

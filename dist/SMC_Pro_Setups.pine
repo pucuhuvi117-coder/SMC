@@ -1,6 +1,6 @@
 //@version=6
 // ═══════════════════════════════════════════════════════════════════════════════
-//  SMC Pro · Setups · build 0.6.0 · 2026-10-07
+//  SMC Pro · Setups · build 0.7.0 · 2026-10-07
 //  Companion of SMC Visualizer Pro: same engines and settings, plus the setup engine (ADR-13).
 //  Generated from /src by build/build.py. Do not edit dist/ by hand.
 //  Architecture: docs/02-architecture.md · Detectors: docs/appendix-a-detection-spec.md
@@ -8,7 +8,7 @@
 indicator("SMC Pro · Setups", shorttitle = "SMC Setups", overlay = true, max_boxes_count = 100, max_lines_count = 250, max_labels_count = 150)
 
 // ═══ 01 · CONSTANTS ═════════════════════════════════════════════════════════════
-BUILD = "0.6.0"
+BUILD = "0.7.0"
 
 // Timeframe slots (docs §8.2). v0.1 computes the chart TF only; HTF arrives with the HTF Feed (P5).
 TF_CHART = 0
@@ -118,7 +118,8 @@ GR_AP = 3
 SETUP_CAP = 12
 SETUP_ARCH_CAP = 80
 DASH_ROWS = 22
-SET_PANEL_ROWS = 7
+SET_PANEL_ROWS = 8
+ATT_CAP = 400
 
 // Fixed detector parameters (Appendix A.19)
 OB_NPRE = 3
@@ -759,6 +760,8 @@ i_showPlan = input.bool(true, "Show Entry/SL/TP", inline = "sp", group = G_SET, 
 i_priceMarkers = input.bool(false, "Price-scale markers", inline = "sp", tooltip = "Entry, SL and TP1 of the focus setup as values on the price scale.", group = G_SET, display = display.none)
 i_alertGrade = input.enum(GradeOpt.a, "Alert min grade", tooltip = "Setup READY alerts fire only from this grade.", group = G_SET, display = display.none)
 i_showPath = input.bool(true, "Setup Path", tooltip = "① sweep → ② CHoCH / BOS → ③ POI → ④ entry, marked on the very sweep, break and zone that SMC Visualizer Pro draws (same cfg). Normal: the current setups; Analysis / Debug: also recent and past ones. Off in Clean.", group = G_SET, display = display.none)
+i_inspect = input.bool(false, "Inspect", inline = "insp", group = G_SET, display = display.none)
+i_inspectT = input.time(timestamp("01 Jan 2026 00:00 +0000"), "", inline = "insp", tooltip = "Pick a moment: the setup that was live there is drawn in full with its path and explained in the panel (INSPECT row), even if its grade is below the display filter. Without a setup, the row tells why: the attempts that ended there and their reasons, or that there was no sweep / BOS.", group = G_SET, display = display.none)
 i_setPanel = input.bool(true, "Setup panel", inline = "spn", group = G_SET, display = display.none)
 i_alertFmt = input.enum(AlertFmt.plain, "Alert message", tooltip = "For one alert \"Any alert() function call\": one message per bar close with every event that passes the filters below. Text: one readable line. JSON: envelope smcvp.event v1 for a webhook (docs §12). Re-create the alert after changing settings.", group = G_ALR, display = display.none)
 i_whScope = input.enum(WhScope.setups, "Events", inline = "whs", group = G_ALR, display = display.none)
@@ -945,18 +948,6 @@ f_kindTag(int k) =>
         ZK_IFVG => "IFVG"
         => "ZONE"
 
-f_zoneStateName(int s) =>
-    switch s
-        ZS_FRESH => "FRESH"
-        ZS_TOUCHED => "TOUCHED"
-        ZS_MITIGATED => "MITIGATED"
-        ZS_PARTIAL => "PARTIAL"
-        ZS_CE => "CE"
-        ZS_FILLED => "FILLED"
-        ZS_CONVERTED => "CONVERTED"
-        ZS_INVALID => "INVALID"
-        ZS_EXPIRED => "EXPIRED"
-        => "?"
 
 f_arrow(int d) =>
     d > 0 ? "↑" : d < 0 ? "↓" : "·"
@@ -2217,6 +2208,12 @@ var map<string, int> setStats = map.new<string, int>()
 f_statAdd(string k) =>
     setStats.put(k, nz(setStats.get(k)) + 1)
 
+// Ring of the last ATT_CAP attempts that ended without a trade (with or without a POI), for Inspect
+// ("why was there no setup here", §17.3): start and end time, and a one-line reason
+var array<int> attT0 = array.new<int>()
+var array<int> attT1 = array.new<int>()
+var array<string> attTxt = array.new<string>()
+
 f_modelName(int m) =>
     m == SM_REV ? "Sweep Reversal" : "Continuation"
 
@@ -2255,6 +2252,13 @@ f_setEmit(Core c, Setup s, int typ, float price, float v1 = na, float v2 = na, f
 // (a POI was chosen) report it on the bus.
 f_setEnd(Core c, Setup s, int st, string why) =>
     f_statAdd(why == "" ? "UNKNOWN" : str.split(why, " ").first())
+    attT0.push(s.bornT)
+    attT1.push(time)
+    attTxt.push(f_sideName(s.dir) + " " + f_modelName(s.model) + ": " + str.lower(str.replace_all(why, "_", " ")))
+    if attT0.size() > ATT_CAP
+        attT0.shift()
+        attT1.shift()
+        attTxt.shift()
     s.state := st
     s.reason := why
     s.endBar := bar_index
@@ -3075,21 +3079,13 @@ F_WASH = f_tok(90)
 F_GHOST = f_tok(94)
 F_PANEL = 10
 
-// Relevance modulation (§16.4): less important objects fade a little, never to invisible
-f_tr(int base, float r) =>
-    math.max(0, math.min(94, base + math.round((1.0 - r) * 6.0)))
 
-f_dirColor(int d) =>
-    d > 0 ? C_BULL : d < 0 ? C_BEAR : C_NEUT
 
 // Session hues: theme-adaptive light tints on dark charts (they stand out on navy/blue
 // backgrounds too), deeper tones on light charts; or the user's own colors
 color C_SES_ASIA = i_sesCustom ? i_sesColAsia : isDark ? #C5A3FF : #7E57C2
 color C_SES_LON = i_sesCustom ? i_sesColLon : isDark ? #7FDBFF : #0277BD
 color C_SES_NY = i_sesCustom ? i_sesColNy : isDark ? #FFC46B : #EF6C00
-
-f_sesColor(string code) =>
-    code == "ASIA" ? C_SES_ASIA : code == "LON KZ" ? C_SES_LON : C_SES_NY
 
 // ═══ 62 · VISUAL BASE: POOLS, PRIMITIVES, TAGS, VIEW ═══════════════════════════════
 // Shared by both indicators (ADR-13): object pools created once and reused (§4.9), primitive
@@ -3207,34 +3203,6 @@ f_label(LabelPool p, int x, float y, string txt, color tc, string st, string sz,
         label.set_textalign(lb, text.align_left)
     not na(lb)
 
-// ── Right-edge tags with Smart Labels merging (§14.7). The merge distance grows with the
-// visible price span, so tags never print on top of each other when zoomed out.
-f_drawTags(LabelPool p, array<Tag> tags, int x, float sep) =>
-    int n = tags.size()
-    if n > 0
-        array<float> ps = array.new<float>()
-        for tg in tags
-            ps.push(tg.price)
-        array<int> idx = ps.sort_indices(order.ascending)
-        float curP = na
-        string curT = ""
-        string curTip = ""
-        color curC = na
-        for k = 0 to n - 1
-            Tag tg = tags.get(idx.get(k))
-            if i_smartLabels and not na(curP) and tg.price - curP < sep
-                curT := curT + " · " + tg.txt
-                curTip := curTip + "\n" + tg.tip
-            else
-                if not na(curP)
-                    f_label(p, x, curP, curT, curC, label.style_label_left, size.tiny, curTip, yloc.price)
-                curP := tg.price
-                curT := tg.txt
-                curTip := tg.tip
-                curC := tg.col
-        if not na(curP)
-            f_label(p, x, curP, curT, curC, label.style_label_left, size.tiny, curTip, yloc.price)
-    n
 
 // ── View: history window (last histDepth bars) split into time segments (§15)
 f_histAt(array<float> a, int base, int idx, float dflt) =>
@@ -3268,46 +3236,6 @@ f_buildView(array<float> hc, array<float> ha, int hb, float pxLive) =>
         v.winLo := lo
         v.winHi := hi
     v
-
-// Segment that contains a bar index (the last segment for anything at or beyond the right edge)
-f_segOf(View v, int idx) =>
-    int s = v.segs - 1
-    for k = 0 to v.segs - 1
-        if idx <= v.segEnd.get(k)
-            s := k
-            break
-    s
-
-// Per-segment share of a window cap, so objects cover the whole screen instead of piling
-// up near the right edge (user feedback v0.2: "the chart is empty on the left"). Rounded
-// down, so the shares never add up to more than the cap and the pools behind it.
-f_quota(View v, int cap) =>
-    cap <= 0 ? 0 : math.max(1, int(cap / v.segs))
-
-// Even spread inside segments (v0.3): candidates arrive in priority order. Pass 1 takes at most
-// one object per time slot, pass 2 fills each segment's quota in priority order. Returns the
-// indices of the picked candidates; index 0 is always picked first when anything is.
-f_spreadPick(View v, array<int> xs, array<int> sg, int q, int slots) =>
-    array<int> out = array.new<int>()
-    int m = xs.size()
-    if m > 0 and q > 0
-        int ns = math.max(1, slots)
-        int w = math.max(1, v.iR - v.iL + 1)
-        array<int> cnt = array.new<int>(v.segs, 0)
-        array<bool> slotUsed = array.new<bool>(ns, false)
-        array<bool> took = array.new<bool>(m, false)
-        for pass = 0 to 1
-            for k = 0 to m - 1
-                if not took.get(k)
-                    int s = sg.get(k)
-                    if cnt.get(s) < q
-                        int sl = math.max(0, math.min(ns - 1, int((xs.get(k) - v.iL) * ns / w)))
-                        if pass == 1 or not slotUsed.get(sl)
-                            took.set(k, true)
-                            slotUsed.set(sl, true)
-                            cnt.set(s, cnt.get(s) + 1)
-                            out.push(k)
-    out
 
 // ═══ 63 · SETUP COMPOSER ════════════════════════════════════════════════════════
 // Setup composition (§14.8, §14.9) in the convention of TradingView's Long/Short Position
@@ -3470,17 +3398,36 @@ f_setDoneTtl(Setup s) =>
 f_setShownDone(Setup s) =>
     not na(s.readyBar) ? s.grade >= setShowGrade : setShowGrade == GR_C
 
-f_renderSetups(View v, BoxPool pb, LinePool pl, LabelPool plb, array<Setup> ss, array<Setup> arch) =>
+// Inspect (§17.3): the setup alive at time t — live or archived; a planned one wins over a forming one,
+// then the newer one
+f_inspectSetup(array<Setup> ss, array<Setup> arch, int t) =>
+    Setup best = na
+    for k = 0 to 1
+        array<Setup> src = k == 0 ? ss : arch
+        for s in src
+            int t1 = s.state >= SS_WIN ? s.endT : time
+            if s.bornT <= t and t <= t1 and not na(s.poi)
+                if na(best) or (not na(s.readyBar) and na(best.readyBar)) or (not na(s.readyBar) == not na(best.readyBar) and s.bornT > best.bornT)
+                    best := s
+    best
+
+f_renderSetups(View v, BoxPool pb, LinePool pl, LabelPool plb, array<Setup> ss, array<Setup> arch, Setup ins) =>
     int shown = 0
     // Setup Path: the current setups from Normal on; recent and past ones too in Analysis / Debug / Custom
     bool pathOn = i_showPath and i_mode != DisplayMode.clean
     bool pathAll = pathOn and (i_mode != DisplayMode.normal)
     if i_setups
         array<int> drawn = array.new<int>()
+        // the inspected setup first, in full with its path, whatever the display filters say
+        if not na(ins)
+            f_drawPath(pl, plb, ins, false)
+            f_drawSetup(pb, pl, plb, ins, false)
+            drawn.push(ins.id)
+            shown += 1
         if v.live
             for d in array.from(1, -1)
                 Setup fs = f_focusSetup(ss, d)
-                if not na(fs)
+                if not na(fs) and not drawn.includes(fs.id)
                     if pathOn
                         f_drawPath(pl, plb, fs, false)
                     f_drawSetup(pb, pl, plb, fs, false)
@@ -3542,7 +3489,7 @@ f_qualityBar(float sc) =>
     int k = int(math.round(sc))
     str.repeat("▮", k) + str.repeat("▯", 10 - k)
 
-f_setupPanel(table tb, Ctx x, Core c, bool liveView, Setup fs) =>
+f_setupPanel(table tb, Ctx x, Core c, bool liveView, Setup fs, Setup ins) =>
     if not na(tb)
         string sz = panelSz
         int row = 0
@@ -3566,6 +3513,23 @@ f_setupPanel(table tb, Ctx x, Core c, bool liveView, Setup fs) =>
         string stt = f_statusText(c, liveView)
         if stt != ""
             row := f_dashRow(tb, row, "STATUS", stt, C_WARN, "Setups and alerts are suppressed during warm-up; the panel always describes the latest bar", sz)
+        // Inspect: the setup at the chosen time, or why there was none (§17.3)
+        if i_inspect
+            string it = f_timeStr(i_inspectT)
+            if not na(ins)
+                string ih = f_sideName(ins.dir) + " " + f_stateCode(ins.state) + " · " + f_modelName(ins.model) + (na(ins.readyBar) ? "" : " · " + f_gradeName(ins.grade) + " " + str.tostring(ins.score, "0.0"))
+                row := f_dashRow(tb, row, "INSPECT", ih, C_SIG, it + "\n" + f_setTip(ins), sz)
+            else
+                string why = ""
+                int nw = 0
+                int na0 = attT0.size()
+                if na0 > 0
+                    for i = na0 - 1 to 0
+                        if attT0.get(i) <= i_inspectT and i_inspectT <= attT1.get(i) and nw < 4
+                            why := why + attTxt.get(i) + "\n"
+                            nw += 1
+                string w1 = nw > 0 ? str.split(why, "\n").first() : "no sweep or BOS opened a setup"
+                row := f_dashRow(tb, row, "INSPECT", "no setup · " + w1, C_NEUT, it + "\n" + (nw > 0 ? "Attempts that ended without a trade:\n" + why : "No liquidity sweep with a shift, and no BOS with the trend, was open at this time.") + (na0 >= ATT_CAP ? "\nOnly the last " + str.tostring(ATT_CAP) + " attempts are kept." : ""), sz)
         // history: READY count, outcomes, and the most frequent reason a setup ended without a trade
         string topK = ""
         int topV = 0
@@ -3749,12 +3713,13 @@ if barstate.islastconfirmedhistory or (barstate.isrealtime and barstate.isconfir
     pSetBox.used := 0
     pSetLine.used := 0
     pSetLab.used := 0
-    f_renderSetups(view, pSetBox, pSetLine, pSetLab, setups, setupArch)
+    Setup ins = i_setups and i_inspect ? f_inspectSetup(setups, setupArch, i_inspectT) : na
+    f_renderSetups(view, pSetBox, pSetLine, pSetLab, setups, setupArch, ins)
     f_finishBoxes(pSetBox)
     f_finishLines(pSetLine)
     f_finishLabels(pSetLab)
     Setup focus = i_setups ? f_focusSetup(setups, 0) : na
-    f_setupPanel(tSetup, ctx, core, view.live, focus)
+    f_setupPanel(tSetup, ctx, core, view.live, focus, ins)
 
 // ═══ 95 · ALERTS ════════════════════════════════════════════════════════════════
 // Static alertcondition() set (docs §12.7). Conditions are read from the event bus of the

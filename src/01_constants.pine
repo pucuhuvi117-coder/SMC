@@ -109,7 +109,8 @@ GR_AP = 3
 SETUP_CAP = 12
 SETUP_ARCH_CAP = 80
 DASH_ROWS = 22
-SET_PANEL_ROWS = 7
+SET_PANEL_ROWS = 8
+ATT_CAP = 400
 
 // Fixed detector parameters (Appendix A.19)
 OB_NPRE = 3
