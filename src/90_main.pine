@@ -128,6 +128,12 @@ if cf
     if i_setups and core.warm
         f_setupStep(core, setups, setupArch, stS, stI, liqs, zones, ctx, sLon.on or sNy.on)
     //#endif
+    // Debug self-checks (P11): engines, and in SMC Pro · Setups the live setups
+    if mc.debug
+        f_engineChecks(core, zones, liqs, stS, stI)
+        //#if setups
+        f_setupChecks(setups)
+        //#endif
     if i_log
         f_logEvents(core)
 

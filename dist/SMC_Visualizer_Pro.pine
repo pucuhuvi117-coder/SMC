@@ -1,6 +1,6 @@
 //@version=6
 // ═══════════════════════════════════════════════════════════════════════════════
-//  SMC Visualizer Pro · build 0.7.0 · 2026-10-07
+//  SMC Visualizer Pro · build 0.8.0 · 2026-10-07
 //  Structure, liquidity, zones and context. Setups live in the companion "SMC Pro · Setups" (ADR-13).
 //  Generated from /src by build/build.py. Do not edit dist/ by hand.
 //  Architecture: docs/02-architecture.md · Detectors: docs/appendix-a-detection-spec.md
@@ -8,7 +8,7 @@
 indicator("SMC Visualizer Pro", shorttitle = "SMC Pro", overlay = true, max_boxes_count = 500, max_lines_count = 500, max_labels_count = 500)
 
 // ═══ 01 · CONSTANTS ═════════════════════════════════════════════════════════════
-BUILD = "0.7.0"
+BUILD = "0.8.0"
 
 // Timeframe slots (docs §8.2). v0.1 computes the chart TF only; HTF arrives with the HTF Feed (P5).
 TF_CHART = 0
@@ -2124,6 +2124,36 @@ f_htfBreak(Core c, array<Brk> hb, int dir, int kind, float px, int swT, int brkT
     b.evId := e.id
     b
 
+// ═══ 26 · DEBUG SELF-CHECKS ═════════════════════════════════════════════════════
+// P11: invariants of the engines, checked on confirmed bars in Debug mode only (no cost otherwise).
+// A violation is written to Pine Logs as `ASSERT|time|what` and counted; the count is shown in the
+// Debug table (SMC Visualizer Pro) and in the STATS row (SMC Pro · Setups). Read-only.
+
+var array<int> assertN = array.new<int>(1, 0)
+
+f_assert(bool ok, string what) =>
+    if not ok
+        assertN.set(0, assertN.get(0) + 1)
+        log.error("ASSERT|" + f_timeStr(time) + "|" + what)
+    ok
+
+f_engineChecks(Core c, array<Zone> zs, array<Liq> lv, StructState sw, StructState si) =>
+    for z in zs
+        if z.state < ZS_FILLED
+            string id = f_kindTag(z.kind) + " #" + str.tostring(z.id) + " "
+            f_assert(z.top > z.bottom, id + "top not above bottom")
+            f_assert(z.born <= bar_index, id + "born in the future")
+            f_assert(z.kind != ZK_FVG or na(z.unfilled) or (z.unfilled >= z.bottom - syminfo.mintick and z.unfilled <= z.top + syminfo.mintick), id + "unfilled edge outside the gap")
+    for x in lv
+        if x.state == LS_PENDING
+            f_assert(not na(x.ext) and not na(x.pendSince), "level #" + str.tostring(x.id) + " pending without extreme")
+    f_assert(math.abs(sw.trend) <= 1 and math.abs(si.trend) <= 1, "structure trend out of range")
+    int n = c.barEvents.size()
+    if n > 1
+        for i = 1 to n - 1
+            f_assert(c.barEvents.get(i).id > c.barEvents.get(i - 1).id, "event ids not increasing")
+    true
+
 // ═══ 60 · VISUAL TOKENS ═════════════════════════════════════════════════════════
 // Design system tokens (docs/04-visual-design-system.md §13.3–13.7). Renderers use only
 // these values: hue = meaning, form = entity type, transparency = state × relevance.
@@ -3158,6 +3188,8 @@ f_debugTable(table tb, View v, Core c, array<Zone> zs, array<Zone> za, array<Liq
         row := f_dashRow(tb, row, "BOXES", str.tostring(boxUsed) + " / " + str.tostring(boxCap), C_TEXT, "Drawn / pool size (platform limit 500)", sz)
         row := f_dashRow(tb, row, "LINES", str.tostring(lineUsed) + " / " + str.tostring(lineCap), C_TEXT, "Drawn / pool size (platform limit 500)", sz)
         row := f_dashRow(tb, row, "LABELS", str.tostring(pb.used) + " / " + str.tostring(pb.items.size()), C_TEXT, "Drawn / pool size (platform limit 500)", sz)
+        int na1 = assertN.get(0)
+        row := f_dashRow(tb, row, "ASSERTS", str.tostring(na1), na1 > 0 ? C_WARN : C_TEXT, "Self-check violations since the first bar (Debug mode); details in Pine Logs as ASSERT|…", sz)
         row := f_dashRow(tb, row, "VOLUME", hasVolume ? "yes" : "none (filters off)", hasVolume ? C_TEXT : C_WARN, "", sz)
         row := f_dashRow(tb, row, "CHART", nonStdChart ? "non-standard" : "standard", nonStdChart ? C_WARN : C_TEXT, "", sz)
         row := f_dashRow(tb, row, "LENGTHS", "swing " + str.tostring(swLen) + " · int " + str.tostring(inLen), C_TEXT, "", sz)
@@ -3286,6 +3318,9 @@ if cf
     f_rangeStep(core, rng, stS, rangeArch)
     float pdNow = f_pdStep(core, rng)
     f_ctxBuild(ctx, stS, stI, rng, pdNow, liqs, sAsia, sLon, sNy, htfOk, htfLowHist, hBias)
+    // Debug self-checks (P11): engines, and in SMC Pro · Setups the live setups
+    if mc.debug
+        f_engineChecks(core, zones, liqs, stS, stI)
     if i_log
         f_logEvents(core)
 

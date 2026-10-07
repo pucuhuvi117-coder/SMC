@@ -1,6 +1,6 @@
 //@version=6
 // ═══════════════════════════════════════════════════════════════════════════════
-//  SMC Pro · Setups · build 0.7.0 · 2026-10-07
+//  SMC Pro · Setups · build 0.8.0 · 2026-10-07
 //  Companion of SMC Visualizer Pro: same engines and settings, plus the setup engine (ADR-13).
 //  Generated from /src by build/build.py. Do not edit dist/ by hand.
 //  Architecture: docs/02-architecture.md · Detectors: docs/appendix-a-detection-spec.md
@@ -8,7 +8,7 @@
 indicator("SMC Pro · Setups", shorttitle = "SMC Setups", overlay = true, max_boxes_count = 100, max_lines_count = 250, max_labels_count = 150)
 
 // ═══ 01 · CONSTANTS ═════════════════════════════════════════════════════════════
-BUILD = "0.7.0"
+BUILD = "0.8.0"
 
 // Timeframe slots (docs §8.2). v0.1 computes the chart TF only; HTF arrives with the HTF Feed (P5).
 TF_CHART = 0
@@ -2195,6 +2195,36 @@ f_htfBreak(Core c, array<Brk> hb, int dir, int kind, float px, int swT, int brkT
     b.evId := e.id
     b
 
+// ═══ 26 · DEBUG SELF-CHECKS ═════════════════════════════════════════════════════
+// P11: invariants of the engines, checked on confirmed bars in Debug mode only (no cost otherwise).
+// A violation is written to Pine Logs as `ASSERT|time|what` and counted; the count is shown in the
+// Debug table (SMC Visualizer Pro) and in the STATS row (SMC Pro · Setups). Read-only.
+
+var array<int> assertN = array.new<int>(1, 0)
+
+f_assert(bool ok, string what) =>
+    if not ok
+        assertN.set(0, assertN.get(0) + 1)
+        log.error("ASSERT|" + f_timeStr(time) + "|" + what)
+    ok
+
+f_engineChecks(Core c, array<Zone> zs, array<Liq> lv, StructState sw, StructState si) =>
+    for z in zs
+        if z.state < ZS_FILLED
+            string id = f_kindTag(z.kind) + " #" + str.tostring(z.id) + " "
+            f_assert(z.top > z.bottom, id + "top not above bottom")
+            f_assert(z.born <= bar_index, id + "born in the future")
+            f_assert(z.kind != ZK_FVG or na(z.unfilled) or (z.unfilled >= z.bottom - syminfo.mintick and z.unfilled <= z.top + syminfo.mintick), id + "unfilled edge outside the gap")
+    for x in lv
+        if x.state == LS_PENDING
+            f_assert(not na(x.ext) and not na(x.pendSince), "level #" + str.tostring(x.id) + " pending without extreme")
+    f_assert(math.abs(sw.trend) <= 1 and math.abs(si.trend) <= 1, "structure trend out of range")
+    int n = c.barEvents.size()
+    if n > 1
+        for i = 1 to n - 1
+            f_assert(c.barEvents.get(i).id > c.barEvents.get(i - 1).id, "event ids not increasing")
+    true
+
 // ═══ 30 · SETUP ENGINE ══════════════════════════════════════════════════════════
 // Setup automaton (§7.7) for the models SWEEP_REVERSAL and CONTINUATION (A.18), POI selection
 // (§9.4), the DRAFT TradePlan (§10), risk checks (§11.3) and the explainable confluence score
@@ -2532,7 +2562,16 @@ f_setScore(Setup s, Ctx x, array<Zone> zs) =>
     if s.model == SM_CONT and x.ranging
         pen -= 0.5
         f := f_fac(f, "Ranging regime", -0.5)
-    s.score := math.max(0.0, math.min(10.0, gC + gL + gS + gP + gT + gR + pen))
+    // v0.8: without killzones (chart above 1H, or London and NY off) the Time factor cannot be earned;
+    // the other factors are scaled to the reachable maximum, so 4H / D setups are graded on the same
+    // 0–10 scale as intraday ones (Aggressive already reaches 10 without it)
+    float pos = gC + gL + gS + gP + gT + gR
+    float reach = math.min(10.0, agg ? 10.0 : 9.5)
+    if (not sesOk or not (i_lonOn or i_nyOn)) and reach < 10.0
+        float k = 10.0 / reach
+        pos := pos * k
+        f := f + "· no killzones on this timeframe: factors ×" + str.tostring(k, "0.00") + "\n"
+    s.score := math.max(0.0, math.min(10.0, pos + pen))
     s.grade := f_gradeFor(s.score)
     s.factors := f
     s.score
@@ -2828,6 +2867,23 @@ f_setupStep(Core c, array<Setup> ss, array<Setup> arch, StructState sw, StructSt
                         arch.push(done)
                         if arch.size() > SETUP_ARCH_CAP
                             arch.shift()
+    true
+
+// Debug self-checks (P11): a planned setup that is still READY or ACTIVE must have its stop on the
+// other side of the entry, the entry inside the POI, targets beyond the entry in order, and RR ≥ Min RR
+f_setupChecks(array<Setup> ss) =>
+    for s in ss
+        if not na(s.readyBar) and s.state <= SS_TP2
+            int d = s.dir
+            string id = "setup #" + str.tostring(s.id) + " "
+            float tick = syminfo.mintick
+            f_assert((s.entry - s.slInit) * d > 0, id + "stop not beyond the entry")
+            f_assert(s.entry >= s.entryBot - tick and s.entry <= s.entryTop + tick, id + "entry outside the POI")
+            f_assert((s.tp1 - s.entry) * d > 0, id + "TP1 not beyond the entry")
+            f_assert(s.nTp < 2 or (s.tp2 - s.tp1) * d > 0, id + "TP2 not beyond TP1")
+            f_assert(s.nTp < 3 or (s.tp3 - s.tp2) * d > 0, id + "TP3 not beyond TP2")
+            f_assert(s.rrFinal >= i_minRR - 0.01, id + "RR below Min RR")
+            f_assert(s.readyBar >= s.bornBar and s.stageBar >= s.readyBar, id + "stage bars out of order")
     true
 
 // Focus setup for the Ribbon, the Dashboard and the price-scale markers: the most advanced
@@ -3541,7 +3597,8 @@ f_setupPanel(table tb, Ctx x, Core c, bool liveView, Setup fs, Setup ins) =>
             if k != "READY" and k != "WIN" and k != "SL" and v > topV
                 topK := k
                 topV := v
-        string stxt = "READY " + str.tostring(nz(setStats.get("READY"))) + " · ✓" + str.tostring(nz(setStats.get("WIN"))) + " ✕" + str.tostring(nz(setStats.get("SL"))) + (topV > 0 ? " · " + str.lower(topK) + " " + str.tostring(topV) : "")
+        int nAs = assertN.get(0)
+        string stxt = (nAs > 0 ? "⚠" + str.tostring(nAs) + " asserts · " : "") + "READY " + str.tostring(nz(setStats.get("READY"))) + " · ✓" + str.tostring(nz(setStats.get("WIN"))) + " ✕" + str.tostring(nz(setStats.get("SL"))) + (topV > 0 ? " · " + str.lower(topK) + " " + str.tostring(topV) : "")
         row := f_dashRow(tb, row, "STATS", stxt, C_NEUT, "Whole loaded history: setups that reached READY, trades won (✓, at least TP1) and stopped (✕), and the most frequent reason a setup ended without a trade.\n\n" + all + "\nGRADE_LOW: score below the preset's READY grade · RR_LOW: last target closer than Min RR · SL_TOO_WIDE / SL_TOO_TIGHT: stop outside the limits · NO_POI / POI_IN_PREMIUM / POI_IN_DISCOUNT: no zone of the shift leg on the right side · NO_SHIFT_IN_WINDOW: no CHoCH / BOS after the sweep · SUPERSEDED: replaced by a newer setup · TP1_BEFORE_ENTRY: price ran away (MISSED)", sz)
         row := f_dashRow(tb, row, "CFG", str.tostring(cfgSig) + " · v" + BUILD, C_NEUT, "Settings signature: must equal the cfg number of SMC Visualizer Pro (Dashboard Expanded → MODE row). Different numbers mean the two indicators run the engines with different settings, and the setups do not match the structure on the chart.", sz)
         if row <= SET_PANEL_ROWS - 1
@@ -3674,6 +3731,10 @@ if cf
     // Setups (P7): never during warm-up (AC-08)
     if i_setups and core.warm
         f_setupStep(core, setups, setupArch, stS, stI, liqs, zones, ctx, sLon.on or sNy.on)
+    // Debug self-checks (P11): engines, and in SMC Pro · Setups the live setups
+    if mc.debug
+        f_engineChecks(core, zones, liqs, stS, stI)
+        f_setupChecks(setups)
     if i_log
         f_logEvents(core)
 
