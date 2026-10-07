@@ -1,7 +1,9 @@
 {
   "core": {
     "output": "dist/SMC_Visualizer_Pro.pine",
-    "flags": ["core"],
+    "flags": [
+      "core"
+    ],
     "modules": [
       "00_header.pine",
       "01_constants.pine",
@@ -26,7 +28,9 @@
   },
   "setups": {
     "output": "dist/SMC_Pro_Setups.pine",
-    "flags": ["setups"],
+    "flags": [
+      "setups"
+    ],
     "modules": [
       "00_header.pine",
       "01_constants.pine",
@@ -41,6 +45,7 @@
       "23_context.pine",
       "24_htf_ingest.pine",
       "30_setup.pine",
+      "50_webhook.pine",
       "60_visual_tokens.pine",
       "62_visual_base.pine",
       "63_visual_setup.pine",

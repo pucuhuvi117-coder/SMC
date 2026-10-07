@@ -1,6 +1,6 @@
 //@version=6
 // ═══════════════════════════════════════════════════════════════════════════════
-//  SMC Pro · Setups · build 0.4.3 · 2026-10-06
+//  SMC Pro · Setups · build 0.5.0 · 2026-10-07
 //  Companion of SMC Visualizer Pro: same engines and settings, plus the setup engine (ADR-13).
 //  Generated from /src by build/build.py. Do not edit dist/ by hand.
 //  Architecture: docs/02-architecture.md · Detectors: docs/appendix-a-detection-spec.md
@@ -8,7 +8,7 @@
 indicator("SMC Pro · Setups", shorttitle = "SMC Setups", overlay = true, max_boxes_count = 100, max_lines_count = 250, max_labels_count = 150)
 
 // ═══ 01 · CONSTANTS ═════════════════════════════════════════════════════════════
-BUILD = "0.4.3"
+BUILD = "0.5.0"
 
 // Timeframe slots (docs §8.2). v0.1 computes the chart TF only; HTF arrives with the HTF Feed (P5).
 TF_CHART = 0
@@ -475,6 +475,16 @@ type Ctx
     bool htfLow = false
     int htfTrend = 0
 
+// Alert message (§12.7) and the events it carries
+enum AlertFmt
+    text = "Text"
+    json = "JSON (webhook)"
+
+enum WhScope
+    setups = "Setups"
+    key = "Setups + key events"
+    all = "All events (min tier)"
+
 // Setup: an evolving trade hypothesis with its evidence, plan and score (§7.7, §9, §10).
 // v1.0 setups are analytical: drawn and alerted, never executed. The DRAFT TradePlan
 // (entry / SL / targets / RR) is kept inside the setup until the P9 webhook needs it apart.
@@ -641,6 +651,7 @@ G_RNG = "🎯 6 · DEALING RANGE"
 G_SES = "⏰ 7 · SESSIONS"
 G_MTF = "🌐 8 · MULTI-TIMEFRAME"
 G_SET = "🧩 9 · SETUPS (analytical)"
+G_ALR = "🔔 10 · ALERTS & WEBHOOK"
 G_ADV = "🛠 11 · ADVANCED"
 
 // ── 0 · Profile
@@ -749,6 +760,12 @@ i_priceMarkers = input.bool(false, "Price-scale markers", inline = "sp", tooltip
 i_alertGrade = input.enum(GradeOpt.a, "Alert min grade", tooltip = "Setup READY alerts fire only from this grade.", group = G_SET, display = display.none)
 i_showPath = input.bool(true, "Setup Path", tooltip = "① sweep → ② CHoCH / BOS → ③ POI → ④ entry, marked on the very sweep, break and zone that SMC Visualizer Pro draws (same cfg). Normal: the current setups; Analysis / Debug: also recent and past ones. Off in Clean.", group = G_SET, display = display.none)
 i_setPanel = input.bool(true, "Setup panel", inline = "spn", group = G_SET, display = display.none)
+i_alertFmt = input.enum(AlertFmt.text, "Alert message", tooltip = "For one alert \"Any alert() function call\": one message per bar close with every event that passes the filters below. Text: one readable line. JSON: envelope smcvp.event v1 for a webhook (docs §12). Re-create the alert after changing settings.", group = G_ALR, display = display.none)
+i_whScope = input.enum(WhScope.setups, "Events", inline = "whs", group = G_ALR, display = display.none)
+i_whMinTier = input.int(2, "min tier", minval = 1, maxval = 4, inline = "whs", tooltip = "Setups: setup transitions from READY on, grade ≥ Alert min grade. Setups + key events: also swing BOS / CHoCH, major sweeps, HTF bias (tier 1). All events: everything up to this tier (1 = most important).", group = G_ALR, display = display.none)
+i_whSnap = input.int(0, "Snapshot every N bars", minval = 0, maxval = 500, tooltip = "0 = off. Otherwise, on bars without events, the READY / ACTIVE setups are sent every N bars (heartbeat for the gateway).", group = G_ALR, display = display.none)
+i_whTok = input.string("", "Sender id (tok)", tooltip = "Optional id the gateway can check. Not a broker secret.", group = G_ALR, display = display.none)
+i_whMaxLen = input.int(4000, "Max message length", minval = 500, maxval = 20000, tooltip = "Events that do not fit are dropped; JSON then carries \"truncated\": true.", group = G_ALR, display = display.none)
 i_setPanelPos = input.string("Bottom Right", "", options = ["Bottom Right", "Top Right", "Bottom Left", "Top Left", "Bottom Center"], inline = "spn", tooltip = "Setup, quality, plan and invalidation of the focus setup, and the settings signature cfg (must match SMC Visualizer Pro).", group = G_SET, display = display.none)
 
 // ── 11 · Advanced
@@ -2811,6 +2828,184 @@ f_focusSetup(array<Setup> ss, int dirOnly) =>
                     best := s
     best
 
+// ═══ 50 · ALERT MESSAGE & WEBHOOK (SMC Pro · Setups) ═══════════════════════════════
+// One alert() per confirmed bar (§12.7, ADR-08) with every event of the bar that passes the
+// filters, as text or as the JSON envelope `smcvp.event` v1 (§12.2). Read-only sink of the event
+// bus: nothing here changes engine state. JSON is assembled from small helpers and array.join,
+// so commas and quotes are placed mechanically.
+// v0.5 scope: setup events carry full `setup` and `plan` objects with stable keys; other events
+// carry `data` as raw payload slots v1..v3 / s1 (names per type: §6.4), `ref` / `cause` = null.
+
+f_esc(string s) =>
+    str.replace_all(str.replace_all(str.replace_all(s, "\\", "\\\\"), "\"", "\\\""), "\n", "\\n")
+
+f_q(string s) =>
+    "\"" + f_esc(s) + "\""
+
+f_kv(string k, string v) =>
+    "\"" + k + "\":" + v
+
+f_obj(array<string> parts) =>
+    "{" + array.join(parts, ",") + "}"
+
+f_jn(float v) =>
+    na(v) ? "null" : str.tostring(v, "0.0###")
+
+f_jp(float v) =>
+    na(v) ? "null" : str.tostring(v, format.mintick)
+
+f_stateCode(int st) =>
+    switch st
+        SS_SWEEP => "SWEEP_SEEN"
+        SS_SHIFTED => "SHIFTED"
+        SS_FORMING => "FORMING"
+        SS_READY => "READY"
+        SS_TRIG => "TRIGGERED"
+        SS_TP1 => "TP1"
+        SS_TP2 => "TP2"
+        SS_WIN => "WIN"
+        SS_SL => "SL"
+        SS_INVALID => "INVALID"
+        SS_EXPIRED => "EXPIRED"
+        => "MISSED"
+
+// Live registry first; a setup that ended on this bar is already among the newest archive entries
+f_setupById(array<Setup> ss, array<Setup> arch, int id) =>
+    Setup s = na
+    for x in ss
+        if x.id == id
+            s := x
+    int n = arch.size()
+    if na(s) and n > 0
+        for i = n - 1 to math.max(0, n - 12)
+            Setup y = arch.get(i)
+            if na(s) and y.id == id
+                s := y
+    s
+
+// Stable external key (ADR-12): built from the bar time the setup was born, not from bar_index
+f_setKey(Setup s) =>
+    "SETUP|" + (s.model == SM_REV ? "SWEEP_REVERSAL" : "CONTINUATION") + "|" + str.tostring(s.dir) + "|CHART|" + str.tostring(s.bornT)
+
+f_jSetup(Setup s) =>
+    array<string> a = array.new<string>()
+    a.push(f_kv("model", f_q(s.model == SM_REV ? "SWEEP_REVERSAL" : "CONTINUATION")))
+    a.push(f_kv("state", f_q(f_stateCode(s.state))))
+    a.push(f_kv("grade", na(s.readyBar) ? "null" : f_q(f_gradeName(s.grade))))
+    a.push(f_kv("score", f_jn(s.score)))
+    a.push(f_kv("chain", f_q(s.chain)))
+    a.push(f_kv("factors", f_q(s.factors)))
+    a.push(f_kv("r_real", s.state >= SS_TRIG and s.state <= SS_SL ? f_jn(s.rReal) : "null"))
+    a.push(f_kv("reason", s.reason == "" ? "null" : f_q(s.reason)))
+    f_obj(a)
+
+// DRAFT TradePlan (§10, §12.4): limit entry in the POI, stop, targets with RR and allocation
+f_jPlan(Setup s) =>
+    float risk = (s.entry - s.slInit) * s.dir
+    array<string> tp = array.new<string>()
+    for n = 1 to 3
+        if n <= s.nTp
+            float p = f_tpAt(s, n)
+            tp.push(f_obj(array.from(f_kv("n", str.tostring(n)), f_kv("price", f_jp(p)), f_kv("rr", f_jn(f_rrAt(s, p))), f_kv("src", f_q(n == 1 ? s.tp1Tag : n == 2 ? s.tp2Tag : s.tp3Tag)), f_kv("alloc", f_jn(f_alloc(s.nTp, n))))))
+    string em = i_entryMode == EntryMode.edge ? "EDGE" : i_entryMode == EntryMode.ote ? "OTE" : "CE"
+    string sm = i_slMode == SlMode.atr ? "ATR" : i_slMode == SlMode.poi ? "BEYOND_POI" : s.model == SM_REV ? "BEYOND_SWEEP" : "STRUCTURAL"
+    array<string> a = array.new<string>()
+    a.push(f_kv("id", f_q("PLAN|" + f_setKey(s) + "|r1")))
+    a.push(f_kv("rev", "1"))
+    a.push(f_kv("side", f_q(s.dir == 1 ? "LONG" : "SHORT")))
+    a.push(f_kv("entry", f_obj(array.from(f_kv("type", f_q("LIMIT")), f_kv("mode", f_q(em)), f_kv("price", f_jp(s.entry)), f_kv("zone", "[" + f_jp(s.entryBot) + "," + f_jp(s.entryTop) + "]")))))
+    a.push(f_kv("sl", f_obj(array.from(f_kv("mode", f_q(sm)), f_kv("price", f_jp(s.slInit))))))
+    a.push(f_kv("tp", "[" + array.join(tp, ",") + "]"))
+    a.push(f_kv("rr_final", f_jn(s.rrFinal)))
+    a.push(f_kv("invalidation", f_jp(s.inv)))
+    a.push(f_kv("valid_until_t", str.tostring(s.readyT + i_expiry * barMs)))
+    a.push(f_kv("cancel", "[\"INVALIDATION_CLOSE\",\"OPP_CHOCH\",\"POI_BROKEN\",\"TP1_BEFORE_ENTRY\",\"EXPIRY\"" + (i_reqKz ? ",\"SESSION_END\"" : "") + "]"))
+    a.push(f_kv("risk", f_obj(array.from(f_kv("sl_atr", f_jn(risk / vu)), f_kv("sl_ticks", str.tostring(math.round(risk / syminfo.mintick))), f_kv("risk_pct", "null"), f_kv("qty", "null")))))
+    f_obj(a)
+
+f_isSetupEv(int typ) =>
+    typ >= EV_SETUP_FORMING and typ <= EV_SETUP_MISSED
+
+// Filters (§12.7): scope, minimum tier, and for setups the alert grade (a setup is reported once it
+// has been READY with a grade at or above "Alert min grade"; FORMING is not reported)
+f_whWanted(Event e, Setup s) =>
+    bool setupOk = not na(s) and not na(s.readyBar) and s.grade >= setAlertGrade
+    bool keyEv = e.tier <= 1 and not f_isSetupEv(e.typ)
+    f_isSetupEv(e.typ) ? setupOk : i_whScope == WhScope.key ? keyEv : i_whScope == WhScope.all and e.tier <= i_whMinTier
+
+f_jEvent(Event e, Setup s, int seq, string base) =>
+    string ty = f_evName(e.typ)
+    array<string> a = array.new<string>()
+    a.push(f_kv("seq", str.tostring(seq)))
+    a.push(f_kv("key", f_q(base + "|" + ty + "|" + str.tostring(seq))))
+    a.push(f_kv("type", f_q(ty)))
+    a.push(f_kv("dir", str.tostring(e.dir)))
+    a.push(f_kv("price", f_jp(e.price)))
+    a.push(f_kv("tf", f_q(e.tf == TF_CHART ? "CHART" : "HTF1")))
+    a.push(f_kv("tier", str.tostring(e.tier)))
+    a.push(f_kv("ref", na(s) ? "null" : f_q(f_setKey(s))))
+    a.push(f_kv("cause", "null"))
+    a.push(f_kv("data", f_obj(array.from(f_kv("v1", f_jn(e.v1)), f_kv("v2", f_jn(e.v2)), f_kv("v3", f_jn(e.v3)), f_kv("s1", f_q(e.s1))))))
+    if not na(s)
+        a.push(f_kv("setup", f_jSetup(s)))
+        if not na(s.readyBar)
+            a.push(f_kv("plan", f_jPlan(s)))
+    f_obj(a)
+
+// One line of the text format per event
+f_txtEvent(Event e, Setup s) =>
+    string side = e.dir == 1 ? "LONG " : e.dir == -1 ? "SHORT " : ""
+    na(s) ? f_evName(e.typ) + " " + f_arrow(e.dir) + " " + f_px(e.price) + (e.s1 != "" ? " · " + e.s1 : "") : side + f_stateCode(s.state) + " · " + f_modelName(s.model) + " · " + f_gradeName(s.grade) + " " + str.tostring(s.score, "0.0") + " · E " + f_px(s.entry) + " · SL " + f_px(s.slInit) + " · TP1 " + f_px(s.tp1) + " · RR " + str.tostring(s.rrFinal, "0.0") + " · " + s.chain + (s.reason != "" ? " · " + s.reason : "")
+
+f_ctxJson(Ctx x) =>
+    string str0 = x.ranging ? "RANGE" : x.swTrend == 1 ? "BULL" : x.swTrend == -1 ? "BEAR" : "NONE"
+    string pdz = na(x.pd) ? "null" : f_q(x.pdZone == 1 ? "PREMIUM" : x.pdZone == -1 ? "DISCOUNT" : "EQ")
+    f_obj(array.from(f_kv("htf", htfOk ? f_q(htfTf) : "null"), f_kv("htf_bias", f_q(not x.htfOk or x.htfLow ? "NONE" : x.htfTrend == 1 ? "BULL" : x.htfTrend == -1 ? "BEAR" : "NONE")), f_kv("structure", f_q(str0)), f_kv("session", x.sessCode == "" ? "null" : f_q(str.replace_all(x.sessCode, " ", "_"))), f_kv("pd", pdz), f_kv("pd_pct", f_jn(x.pd)), f_kv("regime", f_q(x.ranging ? "RANGING" : "TRENDING"))))
+
+// The bar's message: [text, number of events]. snap adds the READY / ACTIVE setups (§12.6).
+f_whMessage(Core c, Ctx x, array<Setup> ss, array<Setup> arch, bool snap) =>
+    string base = syminfo.tickerid + "|" + timeframe.period + "|" + str.tostring(time)
+    array<string> ev = array.new<string>()
+    int seq = 0
+    int len = 0
+    bool trunc = false
+    for e in c.barEvents
+        Setup s = f_isSetupEv(e.typ) ? f_setupById(ss, arch, e.ref) : na
+        if f_whWanted(e, s)
+            seq += 1
+            string j = i_alertFmt == AlertFmt.json ? f_jEvent(e, s, seq, base) : f_txtEvent(e, s)
+            if len + str.length(j) <= i_whMaxLen
+                ev.push(j)
+                len += str.length(j) + 1
+            else
+                trunc := true
+    string out = ""
+    if i_alertFmt == AlertFmt.json
+        array<string> a = array.new<string>()
+        a.push(f_kv("schema", f_q("smcvp.event")))
+        a.push(f_kv("v", f_q("1.0")))
+        a.push(f_kv("msg_id", f_q("SMCVP|" + base)))
+        a.push(f_kv("build", f_q(BUILD)))
+        a.push(f_kv("cfg", f_q(str.tostring(cfgSig))))
+        if i_whTok != ""
+            a.push(f_kv("tok", f_q(i_whTok)))
+        a.push(f_kv("inst", f_obj(array.from(f_kv("tickerid", f_q(syminfo.tickerid)), f_kv("tf", f_q(timeframe.period)), f_kv("mintick", str.tostring(syminfo.mintick, "0.##########"))))))
+        a.push(f_kv("bar", f_obj(array.from(f_kv("t", str.tostring(time)), f_kv("o", f_jp(open)), f_kv("h", f_jp(high)), f_kv("l", f_jp(low)), f_kv("c", f_jp(close))))))
+        a.push(f_kv("ctx", f_ctxJson(x)))
+        a.push(f_kv("events", "[" + array.join(ev, ",") + "]"))
+        if trunc
+            a.push(f_kv("truncated", "true"))
+        if snap
+            array<string> sn = array.new<string>()
+            for s in ss
+                if s.state >= SS_READY and s.state <= SS_TP2 and s.grade >= setAlertGrade
+                    sn.push(f_obj(array.from(f_kv("ref", f_q(f_setKey(s))), f_kv("setup", f_jSetup(s)), f_kv("plan", f_jPlan(s)))))
+            a.push(f_kv("snapshot", "[" + array.join(sn, ",") + "]"))
+        out := f_obj(a)
+    else
+        out := "SMC Pro · " + syminfo.ticker + " " + timeframe.period + " · " + (seq == 0 ? "SNAPSHOT" : array.join(ev, " | ")) + (trunc ? " | …" : "")
+    [out, seq]
+
 // ═══ 60 · VISUAL TOKENS ═════════════════════════════════════════════════════════
 // Design system tokens (docs/04-visual-design-system.md §13.3–13.7). Renderers use only
 // these values: hue = meaning, form = entity type, transparency = state × relevance.
@@ -3561,29 +3756,20 @@ bool aSetReady = not na(evReady)
 bool aSetTrig = not na(evTrig)
 bool aSetInv = not na(evInv)
 
-// Detailed text for "Any alert() function call" alerts: direction, grade, plan (P9 adds JSON)
-f_setupMsg(Event e, string what) =>
-    Setup s = na
-    for x in setups
-        if x.id == e.ref
-            s := x
-    // a setup that ended on this bar has already moved to the archive; several may have ended
-    // on one bar, so look through the newest entries rather than only the last one
-    int nArch = setupArch.size()
-    if na(s) and nArch > 0
-        for i = nArch - 1 to math.max(0, nArch - 12)
-            Setup y = setupArch.get(i)
-            if na(s) and y.id == e.ref
-                s := y
-    string detail = na(s) ? "" : " · " + f_modelName(s.model) + " · " + f_gradeName(s.grade) + " " + str.tostring(s.score, "0.0") + " · E " + f_px(s.entry) + " · SL " + f_px(s.slInit) + " · TP1 " + f_px(s.tp1) + " · RR " + str.tostring(s.rrFinal, "0.0") + " · " + s.chain
-    "SMC Pro · " + syminfo.ticker + " " + timeframe.period + " · " + (e.dir == 1 ? "LONG " : "SHORT ") + what + detail + (what == "INVALID" ? " · " + e.s1 : "")
-
-if aSetReady
-    alert(f_setupMsg(evReady, "READY"), alert.freq_once_per_bar_close)
-if aSetTrig
-    alert(f_setupMsg(evTrig, "TRIGGERED"), alert.freq_once_per_bar_close)
-if aSetInv
-    alert(f_setupMsg(evInv, "INVALID"), alert.freq_once_per_bar_close)
+// One message per bar close for the alert "Any alert() function call" (§12.7, ADR-08): text or the
+// JSON webhook envelope (50_webhook). Alerts fire only in realtime, so the message is built there;
+// with Debug + "log events" it is also written to Pine Logs on every bar, to inspect the JSON.
+bool whLog = mc.debug and i_log
+if barstate.isconfirmed and core.warm and (barstate.isrealtime or whLog)
+    bool whLive = false
+    for s in setups
+        whLive := whLive or (s.state >= SS_READY and s.state <= SS_TP2 and s.grade >= setAlertGrade)
+    bool whSnap = i_whSnap > 0 and bar_index % i_whSnap == 0 and core.barEvents.size() == 0 and whLive
+    [whMsg, whN] = f_whMessage(core, ctx, setups, setupArch, whSnap)
+    if whN > 0 or whSnap
+        alert(whMsg, alert.freq_once_per_bar_close)
+        if whLog
+            log.info(whMsg)
 
 
 alertcondition(aSetReady, "Setup READY", "SMC Pro · {{ticker}} {{interval}} · setup READY (grade ≥ alert min grade) · close {{close}}")

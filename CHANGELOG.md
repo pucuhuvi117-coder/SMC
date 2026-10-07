@@ -2,6 +2,22 @@
 
 Формат: [Keep a Changelog](https://keepachangelog.com/ru/1.1.0/). Версии — SemVer. Схема webhook версионируется отдельно (docs §12).
 
+## [0.5.0] — 2026-10-07 · Алерты и webhook JSON (P9)
+
+Фаза P9 плана; по ADR-13 — в индикаторе SMC Pro · Setups (`src/50_webhook.pine`).
+
+### Добавлено
+- **Одно сообщение на бар** для алерта «Any alert() function call» (§12.7, ADR-08) вместо отдельных `alert()` на READY / TRIGGERED / INVALID. Настройки — группа «10 · ALERTS & WEBHOOK»:
+  - **Alert message:** Text (читаемая строка) или JSON (webhook);
+  - **Events:** Setups / Setups + key events / All events с «min tier»;
+  - **Snapshot every N bars** (heartbeat для шлюза, по умолчанию выключен), **Sender id (tok)**, **Max message length**.
+- **JSON-конверт `smcvp.event` v1** (§12.2): `msg_id` (`SMCVP|tickerid|tf|bar_t`), `build`, `cfg`, `inst`, `bar`, `ctx` (HTF bias, структура, сессия, PD, режим), `events[]` с `seq`, ключом, типом, ценой, tier. События сетапа — с полными `setup` и `plan`: вход LIMIT в зоне, SL с режимом, TP с RR, источником и долей позиции, итоговый RR, уровень отмены, срок, условия отмены, риск в ATR и тиках. `truncated` при превышении длины, `snapshot` с активными сетапами.
+- Проверка: офлайн-тест `tests/offline/test_webhook_json.py`; в TradingView — Debug + «log events» пишет сообщение каждого бара в Pine Logs.
+- Отклонения от §12 первой версии (ref / cause у несетаповых событий, сырые `data`, текстовые `factors`) — `docs/03-domain-models.md` §12.8.
+
+### Изменено
+- Статические `alertcondition()` не менялись. Подробные тексты сетапов теперь идут через общее сообщение бара.
+
 ## [0.4.3] — 2026-10-06 · Сетапы и разметка — одна картина (Setup Path)
 
 Замечание пользователя: «сетапы и зоны на графике должны синергировать». Оба индикатора при одинаковом `cfg` считают одни и те же объекты, поэтому SMC Pro · Setups теперь показывает, **из каких именно** объектов разметки SMC Visualizer Pro собран сетап.

@@ -1,5 +1,18 @@
 # Проверка сборки в TradingView
 
+## v0.5.0 — алерты и webhook
+
+**Как создать алерт:** на графике с SMC Pro · Setups → Alert → Condition: «SMC Pro · Setups» → **Any alert() function call** → Webhook URL (для шлюза) → Create. После изменения настроек индикатора алерт нужно пересоздать.
+
+| # | Проверка | Ожидание |
+|---|---|---|
+| 1 | Alert message = Text, Events = Setups | На READY / TRIGGERED / TP / SL / INVALID сетапа грейда ≥ «Alert min grade» приходит одна строка на бар: `SMC Pro · ETHUSDT 240 · LONG READY · Sweep Reversal · A 7.1 · E … · SL … · TP1 … · RR … · Sweep → CHoCH → …` |
+| 2 | Alert message = JSON | Сообщение — валидный JSON (проверьте любым JSON-валидатором): `schema`, `msg_id`, `cfg`, `events[]`, у сетапа — `setup` и `plan` |
+| 3 | Без ожидания realtime | Display Mode = Debug, Advanced → «log events» → Pine Logs: строки JSON для баров с событиями |
+| 4 | Events = Setups + key events | Добавляются swing BOS / CHoCH, свипы major-ликвидности, смена HTF bias |
+| 5 | Snapshot every N bars = 5 | При READY / ACTIVE сетапе без событий — сообщение со `snapshot` раз в 5 баров |
+| 6 | Статические алерты | «Setup READY / TRIGGERED / INVALID» работают как раньше |
+
 ## v0.4.3 — сетапы и разметка вместе (Setup Path)
 
 Оба индикатора на графике, одинаковый `cfg`.

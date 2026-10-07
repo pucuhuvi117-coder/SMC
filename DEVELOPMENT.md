@@ -62,6 +62,7 @@ python3 build/build.py --check          # + проверка синтаксис�
 | `23_context` | L2 | оба | Диапазон, PD/OTE, режим, MarketContext (A.14, A.16, A.17) |
 | `24_htf_ingest` | L2 | оба | Приём HTF-уровней, зон и пробоев в общие реестры (`tf = HTF1`) |
 | `30_setup` | L3/L4 | setups | Сетапы (§7.7, A.18): автомат стадий, выбор POI, DRAFT-план Entry/SL/TP, риск-проверки, Confluence Score |
+| `50_webhook` | S | setups | Сообщение алерта на бар: Text или JSON-конверт `smcvp.event` v1 (§12), фильтры, `truncated`, `snapshot` |
 | `60_visual_tokens` | S | оба | Тема, палитры, прозрачности (§13) |
 | `61_visual_priority` | S | core | Relevance Score (§16) |
 | `62_visual_base` | S | оба | Пулы, примитивы `f_box/f_line/f_label`, теги Smart Labels, View (видимый диапазон, сегменты) |
@@ -71,7 +72,9 @@ python3 build/build.py --check          # + проверка синтаксис�
 | `90_main` | — | оба: конвейер общий; рендер, пулы и таблицы по целям | Конвейер бара (§4.5), пулы, проход рендера |
 | `95_alerts` | S | оба: структурные — core, сетапы — setups | `alertcondition()` из шины событий |
 
-Следующие модули по плану: `50_webhook` (P9), `32_signal` / `40_risk_tradeplan` как отдельные объекты и `41_execution_adapter` (v2.0) — все в цели `setups`. Confluence и Risk пока живут в `30_setup`.
+Следующие модули по плану: `32_signal` / `40_risk_tradeplan` как отдельные объекты и `41_execution_adapter` (v2.0) — все в цели `setups`.
+
+Офлайн-тест конверта webhook: `python3 tests/offline/test_webhook_json.py`. Он повторяет сборку JSON из `50_webhook` на Python — при изменении конверта правьте оба файла. Confluence и Risk пока живут в `30_setup`.
 
 ## Ожидаемые предупреждения TradingView
 

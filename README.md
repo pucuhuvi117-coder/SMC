@@ -1,6 +1,6 @@
 # SMC Visualizer Pro — архитектурное ТЗ v2.0
 
-> **Статус:** разработка, alpha v0.4.3. Дата ревизии: 2026-10-06.
+> **Статус:** разработка, alpha v0.5.0. Дата ревизии: 2026-10-06.
 > **Платформа:** TradingView · Pine Script v6 · indicator (v1.x) → strategy + автоматизация через внешний шлюз (v2.0+).
 > **Источник требований:** исходное ТЗ v1 — [`docs/00-source-tz-v1.md`](docs/00-source-tz-v1.md).
 
@@ -14,8 +14,9 @@
 | 0.4.0 | Сетапы Sweep Reversal и Continuation, скоринг и грейды, Entry/SL/TP, композиция на графике, алерты сетапов (P7–P8) | Не компилируется в TradingView: «Pine compilation was timed out» — заменена 0.4.1 |
 | 0.4.1 | Два индикатора из одних исходников (ADR-13): **SMC Visualizer Pro** и **SMC Pro · Setups**; оптимизация по профайлеру; подпись настроек `cfg` | Компилируется в TradingView (оба индикатора) |
 | 0.4.2 | Сетапы читаются на графике: цвет по исходу, прошлые сетапы в Normal | Собрана |
-| **0.4.3** | Setup Path: сетап отмечает свип, CHoCH/BOS и зону разметки, из которых собран; POI — рамка поверх зоны | Собрана, синтаксис проверен офлайн, ждёт проверки в TradingView |
-| 0.5.0 | Алерты и webhook JSON (P9), Setup Path и Inspect (P10) | План |
+| 0.4.3 | Setup Path: сетап отмечает свип, CHoCH/BOS и зону разметки, из которых собран; POI — рамка поверх зоны | Собрана |
+| **0.5.0** | Алерты и webhook JSON (P9): одно сообщение на бар, Text / JSON `smcvp.event` v1 с планом сделки | Собрана, синтаксис и JSON проверены офлайн, ждёт проверки в TradingView |
+| 0.6.0 | Analysis & Debug (P10): Event Timeline, Focus / Inspect, «почему нет сетапа» | План |
 
 **Быстрый старт (с v0.4.1 — два индикатора):**
 1. `dist/SMC_Visualizer_Pro.pine` → Pine Editor → New indicator → вставить → **Add to chart**. Структура, ликвидность, зоны, HTF, история, Ribbon, Dashboard, алерты структуры.
