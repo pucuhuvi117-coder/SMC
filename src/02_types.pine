@@ -415,7 +415,9 @@ type Setup
     string reason = ""
 //#endif
 
-// Display mode ceilings (§15.3, §19.2)
+// Display mode ceilings (§15.3, §19.2). SMC Pro · Setups gets a short type with only the
+// fields it reads: the full rows cost it ~600 tokens of compile budget (ADR-13).
+//#if core
 type ModeCfg
     int structEvents
     int internalEvents
@@ -454,6 +456,18 @@ type ModeCfg
     int poolSetBox = 8
     int poolSetLine = 16
     int poolSetLab = 16
+//#else
+type ModeCfg
+    float distMax
+    int hist
+    int labelLevel
+    bool debug
+    int gradeFloor = 1
+    int setupPast = 0
+    int poolSetBox = 8
+    int poolSetLine = 16
+    int poolSetLab = 16
+//#endif
 
 // What the render pass draws: a bar window, split into time segments. Each segment ranks
 // objects against its own anchor (close and ATR at the segment's last bar), so a wide or

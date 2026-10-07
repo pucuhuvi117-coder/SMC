@@ -477,7 +477,8 @@ type Ctx
     int htfTrend = 0
 
 
-// Display mode ceilings (§15.3, §19.2)
+// Display mode ceilings (§15.3, §19.2). SMC Pro · Setups gets a short type with only the
+// fields it reads: the full rows cost it ~600 tokens of compile budget (ADR-13).
 type ModeCfg
     int structEvents
     int internalEvents
