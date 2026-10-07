@@ -79,7 +79,7 @@ enum HtfMode
     off = "Off"
 
 enum HistView
-    visible = "Visible range"
+    visible = "History window"
     recent = "Recent only"
 
 enum SetPreset

@@ -22,14 +22,14 @@ i_palette = input.enum(PaletteOpt.standard, "Palette", tooltip = "Color-blind sa
 
 // ── 1 · Visual experience
 //#if core
-i_histView = input.enum(HistView.visible, "History view", tooltip = "Visible range: draws structure, zones, levels and sweeps for the part of the chart on screen, with even density across it. Scroll or zoom out to see history.\nRecent only: focuses on the latest bars (v0.1 behaviour).\nThe script recalculates when the visible range changes.", group = G_VIS, display = display.none)
+i_histView = input.enum(HistView.visible, "History view", tooltip = "History window: structure, zones, levels, sweeps and sessions over the last «depth» bars (below), evenly spread over the window. Recent only: the latest objects near the right edge. The chart is no longer re-calculated on scroll and zoom (v0.6).", group = G_VIS, display = display.none)
 i_rightExt = input.int(5, "Extend right (bars)", minval = 3, maxval = 100, tooltip = "How far active zones and levels extend to the right of the last candle.", group = G_VIS, display = display.none)
 //#endif
 i_verb = input.enum(Verbosity.brief, "Label verbosity", tooltip = "Icons: arrows only for minor objects. Short: BOS↑, SSL ✕. Full: adds prices and displacement (shown in Analysis/Debug).", group = G_VIS, display = display.none)
 //#if core
 i_smartLabels = input.bool(true, "Smart Labels", tooltip = "Merge right-edge tags that are too close to read separately.", group = G_VIS, display = display.none)
 i_autoHide = input.bool(true, "Auto Hide Old Objects", inline = "hist", group = G_VIS, display = display.none)
-i_histDepth = input.int(1500, "depth (bars)", minval = 100, maxval = 20000, inline = "hist", tooltip = "Objects born earlier than this many bars ago are not drawn (active key levels excepted). Capped by the display mode.", group = G_VIS, display = display.none)
+i_histDepth = input.int(1500, "depth (bars)", minval = 100, maxval = 20000, inline = "hist", tooltip = "How many bars back history is drawn (capped by the display mode: Normal 1500, Analysis 5000). Larger windows draw further back but take longer on load.", group = G_VIS, display = display.none)
 i_zonesPerSide = input.int(2, "Max zones per side", minval = 1, maxval = 20, tooltip = "Per family (OB / FVG), above and below price. Capped by the display mode.", group = G_VIS, display = display.none)
 i_reduceMinorLiq = input.bool(true, "Reduce Minor Liquidity", tooltip = "At most one minor (young, single-touch) level per side.", group = G_VIS, display = display.none)
 i_reduceMinorFvg = input.bool(true, "Reduce Minor FVG", inline = "rm", group = G_VIS, display = display.none)

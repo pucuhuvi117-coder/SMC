@@ -190,6 +190,9 @@ def lint(name: str, text: str) -> list[str]:
             issues.append(f"{where}: varip is forbidden in logic (ADR-10)")
         if re.search(r"\btimenow\b", code):
             issues.append(f"{where}: timenow is forbidden in logic (§20.8)")
+        # Reading the visible range makes TradingView re-run the whole script on every scroll / zoom (v0.6)
+        if re.search(r"\bchart\.(left|right)_visible_bar_time\b", code):
+            issues.append(f"{where}: chart.left/right_visible_bar_time re-runs the script on every scroll and zoom (v0.6, ADR-14)")
         # The [1] offset may live inside the requested function; such lines must say so explicitly
         if "lookahead_on" in code and "[1]" not in code and "no-repaint:" not in raw:
             issues.append(f"{where}: lookahead_on without [1] offset or a `// no-repaint:` note (repaint, §4.7)")

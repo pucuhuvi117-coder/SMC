@@ -1,6 +1,6 @@
 //@version=6
 // ═══════════════════════════════════════════════════════════════════════════════
-//  SMC Visualizer Pro · build 0.5.1 · 2026-10-07
+//  SMC Visualizer Pro · build 0.6.0 · 2026-10-07
 //  Structure, liquidity, zones and context. Setups live in the companion "SMC Pro · Setups" (ADR-13).
 //  Generated from /src by build/build.py. Do not edit dist/ by hand.
 //  Architecture: docs/02-architecture.md · Detectors: docs/appendix-a-detection-spec.md
@@ -8,7 +8,7 @@
 indicator("SMC Visualizer Pro", shorttitle = "SMC Pro", overlay = true, max_boxes_count = 500, max_lines_count = 500, max_labels_count = 500)
 
 // ═══ 01 · CONSTANTS ═════════════════════════════════════════════════════════════
-BUILD = "0.5.1"
+BUILD = "0.6.0"
 
 // Timeframe slots (docs §8.2). v0.1 computes the chart TF only; HTF arrives with the HTF Feed (P5).
 TF_CHART = 0
@@ -228,7 +228,7 @@ enum HtfMode
     off = "Off"
 
 enum HistView
-    visible = "Visible range"
+    visible = "History window"
     recent = "Recent only"
 
 enum SetPreset
@@ -575,12 +575,12 @@ i_visibility = input.enum(Visibility.standard, "Visibility", tooltip = "Shifts t
 i_palette = input.enum(PaletteOpt.standard, "Palette", tooltip = "Color-blind safe replaces green/red with blue/orange (Okabe–Ito). Direction is always duplicated by arrows and position.", group = G_PROF, display = display.none)
 
 // ── 1 · Visual experience
-i_histView = input.enum(HistView.visible, "History view", tooltip = "Visible range: draws structure, zones, levels and sweeps for the part of the chart on screen, with even density across it. Scroll or zoom out to see history.\nRecent only: focuses on the latest bars (v0.1 behaviour).\nThe script recalculates when the visible range changes.", group = G_VIS, display = display.none)
+i_histView = input.enum(HistView.visible, "History view", tooltip = "History window: structure, zones, levels, sweeps and sessions over the last «depth» bars (below), evenly spread over the window. Recent only: the latest objects near the right edge. The chart is no longer re-calculated on scroll and zoom (v0.6).", group = G_VIS, display = display.none)
 i_rightExt = input.int(5, "Extend right (bars)", minval = 3, maxval = 100, tooltip = "How far active zones and levels extend to the right of the last candle.", group = G_VIS, display = display.none)
 i_verb = input.enum(Verbosity.brief, "Label verbosity", tooltip = "Icons: arrows only for minor objects. Short: BOS↑, SSL ✕. Full: adds prices and displacement (shown in Analysis/Debug).", group = G_VIS, display = display.none)
 i_smartLabels = input.bool(true, "Smart Labels", tooltip = "Merge right-edge tags that are too close to read separately.", group = G_VIS, display = display.none)
 i_autoHide = input.bool(true, "Auto Hide Old Objects", inline = "hist", group = G_VIS, display = display.none)
-i_histDepth = input.int(1500, "depth (bars)", minval = 100, maxval = 20000, inline = "hist", tooltip = "Objects born earlier than this many bars ago are not drawn (active key levels excepted). Capped by the display mode.", group = G_VIS, display = display.none)
+i_histDepth = input.int(1500, "depth (bars)", minval = 100, maxval = 20000, inline = "hist", tooltip = "How many bars back history is drawn (capped by the display mode: Normal 1500, Analysis 5000). Larger windows draw further back but take longer on load.", group = G_VIS, display = display.none)
 i_zonesPerSide = input.int(2, "Max zones per side", minval = 1, maxval = 20, tooltip = "Per family (OB / FVG), above and below price. Capped by the display mode.", group = G_VIS, display = display.none)
 i_reduceMinorLiq = input.bool(true, "Reduce Minor Liquidity", tooltip = "At most one minor (young, single-touch) level per side.", group = G_VIS, display = display.none)
 i_reduceMinorFvg = input.bool(true, "Reduce Minor FVG", inline = "rm", group = G_VIS, display = display.none)
@@ -2240,8 +2240,9 @@ f_liqRAt(Liq x, float px, float atr, int anchor) =>
 
 // ═══ 62 · VISUAL BASE: POOLS, PRIMITIVES, TAGS, VIEW ═══════════════════════════════
 // Shared by both indicators (ADR-13): object pools created once and reused (§4.9), primitive
-// setters, right-edge tags with Smart Labels, and the View — the visible range (or the recent
-// window) split into time segments (§15, AC-M16). Runs only on the last bar (ADR-02).
+// setters, right-edge tags with Smart Labels, and the View — the history window of the last
+// histDepth bars split into time segments (§15). Rendered on the last historical bar and on each
+// closed realtime bar (ADR-02, v0.6).
 
 // ── Pools
 f_fillBoxPool(BoxPool p, int n) =>
@@ -2382,34 +2383,31 @@ f_drawTags(LabelPool p, array<Tag> tags, int x, float sep) =>
             f_label(p, x, curP, curT, curC, label.style_label_left, size.tiny, curTip, yloc.price)
     n
 
-// ── View: visible range (or recent window) split into time segments (§15, AC-M16)
+// ── View: history window (last histDepth bars) split into time segments (§15)
 f_histAt(array<float> a, int base, int idx, float dflt) =>
     int k = idx - base
     k >= 0 and k < a.size() ? a.get(k) : dflt
 
-f_buildView(int vpBarL, int vpBarR, array<float> hc, array<float> ha, int hb, float pxLive) =>
-    bool vp = vHistory and not na(vpBarL) and not na(vpBarR) and vpBarR >= vpBarL
-    int iR = vp ? vpBarR : bar_index
-    int iL = vp ? vpBarL : math.max(0, bar_index - histDepth)
-    bool live = iR >= bar_index - 1
-    if live
-        iR := bar_index
+f_buildView(array<float> hc, array<float> ha, int hb, float pxLive) =>
+    // v0.6: the window is the last histDepth bars, not the chart's visible range: reading
+    // chart.left/right_visible_bar_time made TradingView re-run the whole script on every scroll
+    // and zoom. The window is still split into time segments, so history keeps an even density.
+    bool vp = vHistory
+    int iR = bar_index
+    int iL = math.max(0, bar_index - histDepth)
     int w = iR - iL + 1
-    // v0.3: a segment is at most SEG_BARS wide, so even the default zoom has two anchors
     int segs = vp ? math.max(1, math.min(SEG_MAX, int(math.ceil(w / SEG_BARS)))) : 1
-    View v = View.new(vp, live, iL, iR, segs, array.new<int>(), array.new<float>(), array.new<float>())
+    View v = View.new(vp, true, iL, iR, segs, array.new<int>(), array.new<float>(), array.new<float>())
     for s = 0 to segs - 1
         int e = s == segs - 1 ? iR : iL + int(math.round((s + 1) * w / segs)) - 1
         v.segEnd.push(e)
         v.segPx.push(e >= bar_index ? pxLive : f_histAt(hc, hb, e, pxLive))
         v.segAtr.push(e >= bar_index ? vu : f_histAt(ha, hb, e, vu))
-    // visible range only: left edge time (label clamping) and price span of the closes
-    // (label spacing that follows the zoom)
+    // price span of the recent closes for tag spacing: the last 300 bars stand in for the screen
     if vp
-        v.tL := chart.left_visible_bar_time
         float lo = na
         float hi = na
-        for k = iL to iR
+        for k = math.max(iL, iR - 300) to iR
             float c = k >= bar_index ? pxLive : f_histAt(hc, hb, k, na)
             if not na(c)
                 lo := na(lo) ? c : math.min(lo, c)
@@ -3150,7 +3148,7 @@ f_debugTable(table tb, View v, Core c, array<Zone> zs, array<Zone> za, array<Liq
         int row = 0
         row := f_dashRow(tb, row, "BUILD", "v" + BUILD + " · " + str.tostring(i_mode) + " · cfg " + str.tostring(cfgSig), C_TEXT, "cfg: settings signature, equal in both indicators when their engine settings match", sz)
         row := f_dashRow(tb, row, "BARS", str.tostring(bar_index + 1) + (c.warm ? " · warm" : " · warming up"), c.warm ? C_TEXT : C_WARN, "Warm-up: " + str.tostring(warmBars) + " bars", sz)
-        row := f_dashRow(tb, row, "VIEW", (v.vp ? "visible " : "recent ") + str.tostring(v.iL) + "–" + str.tostring(v.iR) + " · " + str.tostring(v.segs) + " seg" + (v.live ? "" : " · history"), C_TEXT, "Bar window drawn and number of time segments", sz)
+        row := f_dashRow(tb, row, "VIEW", (v.vp ? "window " : "recent ") + str.tostring(v.iL) + "–" + str.tostring(v.iR) + " · " + str.tostring(v.segs) + " seg" + (v.live ? "" : " · history"), C_TEXT, "Bar window drawn and number of time segments", sz)
         string zFrom = za.size() > 0 ? " · from bar " + str.tostring(za.get(0).endBar) : ""
         string lFrom = la.size() > 0 ? " · from bar " + str.tostring(la.get(0).endBar) : ""
         row := f_dashRow(tb, row, "ZONES", str.tostring(zLive) + " live / " + str.tostring(zs.size()) + " · arch " + str.tostring(za.size()), C_TEXT, "Live cap " + str.tostring(ZONE_CAP) + " · archive cap " + str.tostring(ZONE_ARCH_CAP) + zFrom, sz)
@@ -3291,17 +3289,6 @@ if cf
         f_logEvents(core)
 
 
-// ── Visible range (§15 AC-M16): bar indices of the leftmost and rightmost visible bars.
-// Using these built-ins makes the script recalculate when the chart is scrolled or zoomed.
-int vpLT = chart.left_visible_bar_time
-int vpRT = chart.right_visible_bar_time
-var int vpBarL = na
-var int vpBarR = na
-if not na(vpLT) and na(vpBarL) and time >= vpLT
-    vpBarL := bar_index
-if not na(vpRT) and time <= vpRT
-    vpBarR := bar_index
-
 // ── Visual pools (created once; creation order = z-order, §13.13)
 var BoxPool pWash = BoxPool.new(array.new<box>())
 var BoxPool pRngBox = BoxPool.new(array.new<box>())
@@ -3326,10 +3313,13 @@ var table tRibbon = vRibbon ? table.new(f_pos(i_ribbonPos), 6, 1, bgcolor = colo
 var table tDash = vDash ? table.new(f_pos(i_dashPos), 2, DASH_ROWS, bgcolor = color.new(C_PANEL, F_PANEL), frame_color = C_PBORDER, frame_width = 1, border_width = 0) : na
 var table tDebug = mc.debug and i_debugTable ? table.new(position.middle_left, 2, 16, bgcolor = color.new(C_PANEL, F_PANEL), frame_color = C_PBORDER, frame_width = 1, border_width = 0) : na
 
-// ── Render pass (last bar only; call order decides who gets the label budget)
-if barstate.islast
+// ── Render pass (call order decides who gets the label budget). v0.6: once on the last historical
+// bar, then once per closed realtime bar. Logic changes only on confirmed bars, so there is nothing
+// to redraw between closes; nothing depends on the visible range, so scrolling and zooming never
+// re-run the script (user feedback: "lags, keeps redrawing").
+if barstate.islastconfirmedhistory or (barstate.isrealtime and barstate.isconfirmed)
     float px = na(confClose) ? close : confClose
-    View view = f_buildView(vpBarL, vpBarR, histClose, histAtr, histBase, px)
+    View view = f_buildView(histClose, histAtr, histBase, px)
     int rightT = time + i_rightExt * barMs
     pWash.used := 0
     pRngBox.used := 0
