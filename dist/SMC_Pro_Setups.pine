@@ -477,7 +477,7 @@ type Ctx
 
 // Alert message (§12.7) and the events it carries
 enum AlertFmt
-    text = "Text"
+    plain = "Text"
     json = "JSON (webhook)"
 
 enum WhScope
@@ -760,7 +760,7 @@ i_priceMarkers = input.bool(false, "Price-scale markers", inline = "sp", tooltip
 i_alertGrade = input.enum(GradeOpt.a, "Alert min grade", tooltip = "Setup READY alerts fire only from this grade.", group = G_SET, display = display.none)
 i_showPath = input.bool(true, "Setup Path", tooltip = "① sweep → ② CHoCH / BOS → ③ POI → ④ entry, marked on the very sweep, break and zone that SMC Visualizer Pro draws (same cfg). Normal: the current setups; Analysis / Debug: also recent and past ones. Off in Clean.", group = G_SET, display = display.none)
 i_setPanel = input.bool(true, "Setup panel", inline = "spn", group = G_SET, display = display.none)
-i_alertFmt = input.enum(AlertFmt.text, "Alert message", tooltip = "For one alert \"Any alert() function call\": one message per bar close with every event that passes the filters below. Text: one readable line. JSON: envelope smcvp.event v1 for a webhook (docs §12). Re-create the alert after changing settings.", group = G_ALR, display = display.none)
+i_alertFmt = input.enum(AlertFmt.plain, "Alert message", tooltip = "For one alert \"Any alert() function call\": one message per bar close with every event that passes the filters below. Text: one readable line. JSON: envelope smcvp.event v1 for a webhook (docs §12). Re-create the alert after changing settings.", group = G_ALR, display = display.none)
 i_whScope = input.enum(WhScope.setups, "Events", inline = "whs", group = G_ALR, display = display.none)
 i_whMinTier = input.int(2, "min tier", minval = 1, maxval = 4, inline = "whs", tooltip = "Setups: setup transitions from READY on, grade ≥ Alert min grade. Setups + key events: also swing BOS / CHoCH, major sweeps, HTF bias (tier 1). All events: everything up to this tier (1 = most important).", group = G_ALR, display = display.none)
 i_whSnap = input.int(0, "Snapshot every N bars", minval = 0, maxval = 500, tooltip = "0 = off. Otherwise, on bars without events, the READY / ACTIVE setups are sent every N bars (heartbeat for the gateway).", group = G_ALR, display = display.none)

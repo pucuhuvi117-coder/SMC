@@ -329,7 +329,7 @@ type Ctx
 //#if setups
 // Alert message (§12.7) and the events it carries
 enum AlertFmt
-    text = "Text"
+    plain = "Text"
     json = "JSON (webhook)"
 
 enum WhScope

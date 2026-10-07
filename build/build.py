@@ -79,6 +79,7 @@ def strip_comment(line: str) -> str:
     return "".join(out)
 
 
+RESERVED = "text|line|label|box|table|color|array|map|matrix|polyline|linefill|string|int|float|bool|const|simple|series"
 DIRECTIVE_RE = re.compile(r"^\s*//#(if|else|endif)\b\s*(!?\w*)\s*$")
 
 
@@ -204,6 +205,10 @@ def lint(name: str, text: str) -> list[str]:
         kw = re.search(r"\b(?:int|float|bool|string|color|line|box|label|table|array<[^>]+>|map<[^>]+>|[A-Z]\w*)\s+(to|by|in|or|and|not|if|else|for|while|var|switch|import|export|method|type|enum|true|false|na)\b\s*(?:[,)=]|$)", code)
         if kw:
             issues.append(f"{where}: `{kw.group(1)}` is a Pine keyword and cannot be used as a name")
+        # Built-in type / namespace names are reserved (caught in v0.5: an enum member named `text`, CE10150)
+        rs = re.match(r"^\s*(?:var\s+)?(?:[\w<>.]+\s+)?(" + RESERVED + r")\s*(?:=(?!=)|$)", code)
+        if rs and not re.match(r"^\s*(?:type|enum)\b", code):
+            issues.append(f"{where}: `{rs.group(1)}` is a reserved Pine name and cannot be used as a variable, field or enum member")
         m = re.search(r"for\s+\w+\s*=\s*0\s+to\s+(.+?)\s*-\s*1\s*$", code)
         if m and "size()" in m.group(1):
             issues.append(f"{where}: ascending loop to size()-1 iterates twice on empty arrays; guard it with `if n > 0`")
