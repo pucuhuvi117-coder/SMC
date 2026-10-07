@@ -1,7 +1,8 @@
 // ═══ 62 · VISUAL BASE: POOLS, PRIMITIVES, TAGS, VIEW ═══════════════════════════════
 // Shared by both indicators (ADR-13): object pools created once and reused (§4.9), primitive
-// setters, right-edge tags with Smart Labels, and the View — the visible range (or the recent
-// window) split into time segments (§15, AC-M16). Runs only on the last bar (ADR-02).
+// setters, right-edge tags with Smart Labels, and the View — the history window of the last
+// histDepth bars split into time segments (§15). Rendered on the last historical bar and on each
+// closed realtime bar (ADR-02, v0.6).
 
 // ── Pools
 f_fillBoxPool(BoxPool p, int n) =>
@@ -113,6 +114,7 @@ f_label(LabelPool p, int x, float y, string txt, color tc, string st, string sz,
         label.set_textalign(lb, text.align_left)
     not na(lb)
 
+//#if core
 // ── Right-edge tags with Smart Labels merging (§14.7). The merge distance grows with the
 // visible price span, so tags never print on top of each other when zoomed out.
 f_drawTags(LabelPool p, array<Tag> tags, int x, float sep) =>
@@ -141,35 +143,33 @@ f_drawTags(LabelPool p, array<Tag> tags, int x, float sep) =>
         if not na(curP)
             f_label(p, x, curP, curT, curC, label.style_label_left, size.tiny, curTip, yloc.price)
     n
+//#endif
 
-// ── View: visible range (or recent window) split into time segments (§15, AC-M16)
+// ── View: history window (last histDepth bars) split into time segments (§15)
 f_histAt(array<float> a, int base, int idx, float dflt) =>
     int k = idx - base
     k >= 0 and k < a.size() ? a.get(k) : dflt
 
-f_buildView(int vpBarL, int vpBarR, array<float> hc, array<float> ha, int hb, float pxLive) =>
-    bool vp = vHistory and not na(vpBarL) and not na(vpBarR) and vpBarR >= vpBarL
-    int iR = vp ? vpBarR : bar_index
-    int iL = vp ? vpBarL : math.max(0, bar_index - histDepth)
-    bool live = iR >= bar_index - 1
-    if live
-        iR := bar_index
+f_buildView(array<float> hc, array<float> ha, int hb, float pxLive) =>
+    // v0.6: the window is the last histDepth bars, not the chart's visible range: reading
+    // chart.left/right_visible_bar_time made TradingView re-run the whole script on every scroll
+    // and zoom. The window is still split into time segments, so history keeps an even density.
+    bool vp = vHistory
+    int iR = bar_index
+    int iL = math.max(0, bar_index - histDepth)
     int w = iR - iL + 1
-    // v0.3: a segment is at most SEG_BARS wide, so even the default zoom has two anchors
     int segs = vp ? math.max(1, math.min(SEG_MAX, int(math.ceil(w / SEG_BARS)))) : 1
-    View v = View.new(vp, live, iL, iR, segs, array.new<int>(), array.new<float>(), array.new<float>())
+    View v = View.new(vp, true, iL, iR, segs, array.new<int>(), array.new<float>(), array.new<float>())
     for s = 0 to segs - 1
         int e = s == segs - 1 ? iR : iL + int(math.round((s + 1) * w / segs)) - 1
         v.segEnd.push(e)
         v.segPx.push(e >= bar_index ? pxLive : f_histAt(hc, hb, e, pxLive))
         v.segAtr.push(e >= bar_index ? vu : f_histAt(ha, hb, e, vu))
-    // visible range only: left edge time (label clamping) and price span of the closes
-    // (label spacing that follows the zoom)
+    // price span of the recent closes for tag spacing: the last 300 bars stand in for the screen
     if vp
-        v.tL := chart.left_visible_bar_time
         float lo = na
         float hi = na
-        for k = iL to iR
+        for k = math.max(iL, iR - 300) to iR
             float c = k >= bar_index ? pxLive : f_histAt(hc, hb, k, na)
             if not na(c)
                 lo := na(lo) ? c : math.min(lo, c)
@@ -178,6 +178,7 @@ f_buildView(int vpBarL, int vpBarR, array<float> hc, array<float> ha, int hb, fl
         v.winHi := hi
     v
 
+//#if core
 // Segment that contains a bar index (the last segment for anything at or beyond the right edge)
 f_segOf(View v, int idx) =>
     int s = v.segs - 1
@@ -186,13 +187,17 @@ f_segOf(View v, int idx) =>
             s := k
             break
     s
+//#endif
 
+//#if core
 // Per-segment share of a window cap, so objects cover the whole screen instead of piling
 // up near the right edge (user feedback v0.2: "the chart is empty on the left"). Rounded
 // down, so the shares never add up to more than the cap and the pools behind it.
 f_quota(View v, int cap) =>
     cap <= 0 ? 0 : math.max(1, int(cap / v.segs))
+//#endif
 
+//#if core
 // Even spread inside segments (v0.3): candidates arrive in priority order. Pass 1 takes at most
 // one object per time slot, pass 2 fills each segment's quota in priority order. Returns the
 // indices of the picked candidates; index 0 is always picked first when anything is.
@@ -217,3 +222,4 @@ f_spreadPick(View v, array<int> xs, array<int> sg, int q, int slots) =>
                             cnt.set(s, cnt.get(s) + 1)
                             out.push(k)
     out
+//#endif

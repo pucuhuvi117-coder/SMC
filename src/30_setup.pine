@@ -4,6 +4,19 @@
 // with presets (§9.5–9.6). Runs on confirmed bars after the Context engine: it reads the event
 // bus and the registries and emits SETUP_* events. Analytical in v1.0: nothing is executed.
 
+// Outcome and rejection counters over the whole history, shown by the Setup panel ("why so few
+// setups", §19.1): READY, WIN / SL, and the first word of every reason a setup ended without a trade
+var map<string, int> setStats = map.new<string, int>()
+
+f_statAdd(string k) =>
+    setStats.put(k, nz(setStats.get(k)) + 1)
+
+// Ring of the last ATT_CAP attempts that ended without a trade (with or without a POI), for Inspect
+// ("why was there no setup here", §17.3): start and end time, and a one-line reason
+var array<int> attT0 = array.new<int>()
+var array<int> attT1 = array.new<int>()
+var array<string> attTxt = array.new<string>()
+
 f_modelName(int m) =>
     m == SM_REV ? "Sweep Reversal" : "Continuation"
 
@@ -41,6 +54,14 @@ f_setEmit(Core c, Setup s, int typ, float price, float v1 = na, float v2 = na, f
 // Terminal transition before entry (INVALID / EXPIRED / MISSED). Only setups that were shown
 // (a POI was chosen) report it on the bus.
 f_setEnd(Core c, Setup s, int st, string why) =>
+    f_statAdd(why == "" ? "UNKNOWN" : str.split(why, " ").first())
+    attT0.push(s.bornT)
+    attT1.push(time)
+    attTxt.push(f_sideName(s.dir) + " " + f_modelName(s.model) + ": " + str.lower(str.replace_all(why, "_", " ")))
+    if attT0.size() > ATT_CAP
+        attT0.shift()
+        attT1.shift()
+        attTxt.shift()
     s.state := st
     s.reason := why
     s.endBar := bar_index
@@ -319,14 +340,18 @@ f_setScore(Setup s, Ctx x, array<Zone> zs) =>
     s.factors := f
     s.score
 
+// Entry zone inside the OTE band of the shift range
+f_poiInOte(Setup s) =>
+    float span = s.rHi - s.rLo
+    float bLo = s.dir == 1 ? s.rHi - oteHi * span : s.rLo + oteLo * span
+    float bHi = s.dir == 1 ? s.rHi - oteLo * span : s.rLo + oteHi * span
+    not na(s.entryTop) and s.entryTop >= bLo and s.entryBot <= bHi
+
 // Setup Path text (§9.7): short for the card, medium for Analysis and the tooltip
 f_setChain(Setup s) =>
     int d = s.dir
     string sn = s.shiftKind == BK_BOS ? "BOS" : s.isMSS ? "MSS" : "CHoCH"
-    float span = s.rHi - s.rLo
-    float bLo = d == 1 ? s.rHi - oteHi * span : s.rLo + oteLo * span
-    float bHi = d == 1 ? s.rHi - oteLo * span : s.rLo + oteHi * span
-    bool inOte = not na(s.entryTop) and s.entryTop >= bLo and s.entryBot <= bHi
+    bool inOte = f_poiInOte(s)
     string poi = na(s.poi) ? "" : " → " + (s.combo ? "FVG+OB" : f_zoneName(s.poi))
     string loc = na(s.poi) ? "" : inOte ? " → OTE" : d == 1 ? " → DISC" : " → PREM"
     string head = s.model == SM_REV ? "Sweep → " + sn : sn
@@ -386,6 +411,8 @@ f_setShift(Setup s, Brk b) =>
     s.shiftKind := b.kind
     s.isMSS := b.mss
     s.disp := b.disp
+    s.shiftPx := b.price
+    s.shiftSwT := b.swingT
     s.legBar := b.origBar
     if s.dir == 1
         s.rLo := s.model == SM_REV ? math.min(s.sweepExt, b.legExt0) : b.legExt0
@@ -469,6 +496,7 @@ f_setAdvance(Core c, Setup s, StructState sw, StructState si, array<Liq> lv, arr
                 s.stageBar := bar_index
                 s.readyBar := bar_index
                 s.readyT := time
+                f_statAdd("READY")
                 f_setEmit(c, s, EV_SETUP_READY, s.entry, s.score, s.rrFinal, s.grade, s.chain)
             else if bar_index - s.stageBar >= i_expiry
                 endSt := SS_EXPIRED
@@ -511,6 +539,7 @@ f_setAdvance(Core c, Setup s, StructState sw, StructState si, array<Liq> lv, arr
             s.rReal += left * rSl
             s.state := s.tpHit > 0 ? SS_WIN : SS_SL
             s.reason := s.be ? "BE" : "SL"
+            f_statAdd(s.tpHit > 0 ? "WIN" : "SL")
             s.endBar := bar_index
             s.endT := time
             f_setEmit(c, s, EV_SETUP_SL, s.sl, rSl, s.rReal)
@@ -526,6 +555,7 @@ f_setAdvance(Core c, Setup s, StructState sw, StructState si, array<Liq> lv, arr
                         s.sl := s.entry
                         s.be := true
             if s.tpHit >= s.nTp
+                f_statAdd("WIN")
                 s.state := SS_WIN
                 s.reason := "TP" + str.tostring(s.nTp)
                 s.endBar := bar_index
@@ -570,6 +600,8 @@ f_setupStep(Core c, array<Setup> ss, array<Setup> arch, StructState sw, StructSt
                         s.sweepMajor := lq.major or lq.tf != TF_CHART
                         s.sweepTag := f_htfPrefix(lq.tf) + (d == 1 ? "SSL" : "BSL") + (lq.kind == LK_SWING ? (lq.touches >= 2 ? " ≡" + str.tostring(lq.touches) : "") : " " + lq.tag)
                         s.sweepBar := bar_index
+                        s.sweepT := time
+                        s.sweepPx := lq.price
         else if i_smCont
             // CONTINUATION: BOS with the swing trend and a real leg (swing, or internal inside a swing trend)
             int k = j - n - nb

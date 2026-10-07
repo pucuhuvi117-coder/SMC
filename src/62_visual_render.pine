@@ -27,6 +27,10 @@ f_drawZone(BoxPool pz, LinePool pm, array<Tag> tags, Zone z, float r, int mergeN
     int borderBase = not liveNow ? OP_SOFT : z.state == ZS_FRESH ? (htf ? OP_STRONG : OP_MEDIUM) : OP_SOFT
     string bst = z.kind == ZK_BB or z.kind == ZK_IFVG ? line.style_dashed : z.kind == ZK_MB or z.kind == ZK_FVG or z.state == ZS_MITIGATED or not liveNow ? line.style_dotted : line.style_solid
     int fT = ghost ? F_GHOST : f_tr(fillBase, r)
+    // v0.5.1: a zone taller than 2 ATR (typically a higher-timeframe OB) keeps its border but only a
+    // wash fill, so it does not bury the chart-timeframe zones and setups inside it
+    if not ghost and z.top - z.bottom > 2.0 * vu
+        fT := math.max(fT, F_WASH)
     color fillC = color.new(hue, fT)
     color bdC = hasBorder ? color.new(hue, ghost ? f_tok(85) : f_tr(borderBase, r)) : color(na)
     float top = z.top

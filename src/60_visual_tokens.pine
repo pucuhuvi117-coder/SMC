@@ -48,12 +48,16 @@ F_WASH = f_tok(90)
 F_GHOST = f_tok(94)
 F_PANEL = 10
 
+//#if core
 // Relevance modulation (§16.4): less important objects fade a little, never to invisible
 f_tr(int base, float r) =>
     math.max(0, math.min(94, base + math.round((1.0 - r) * 6.0)))
+//#endif
 
+//#if core
 f_dirColor(int d) =>
     d > 0 ? C_BULL : d < 0 ? C_BEAR : C_NEUT
+//#endif
 
 // Session hues: theme-adaptive light tints on dark charts (they stand out on navy/blue
 // backgrounds too), deeper tones on light charts; or the user's own colors
@@ -61,5 +65,7 @@ color C_SES_ASIA = i_sesCustom ? i_sesColAsia : isDark ? #C5A3FF : #7E57C2
 color C_SES_LON = i_sesCustom ? i_sesColLon : isDark ? #7FDBFF : #0277BD
 color C_SES_NY = i_sesCustom ? i_sesColNy : isDark ? #FFC46B : #EF6C00
 
+//#if core
 f_sesColor(string code) =>
     code == "ASIA" ? C_SES_ASIA : code == "LON KZ" ? C_SES_LON : C_SES_NY
+//#endif

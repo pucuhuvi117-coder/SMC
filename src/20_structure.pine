@@ -30,53 +30,55 @@ f_makeSwing(Core c, StructState st, int side, float price) =>
     sw
 
 // Rebuild the up-leg tracker from the new reference high: origin = lowest low since the pivot
-f_resetUpLeg(StructState st) =>
-    int k0 = bar_index - st.refHigh.bar
-    float mn = na
-    int mb = na
-    int mt = na
-    for k = k0 to 0
-        if na(mn) or low[k] < mn
-            mn := low[k]
-            mb := bar_index - k
-            mt := time[k]
-    float lh = na
-    int fd = na
-    int k1 = bar_index - mb
-    for k = k1 to 0
-        lh := na(lh) ? high[k] : math.max(lh, high[k])
-        if k < k1 and na(fd) and isDispUp[k]
-            fd := bar_index - k
-    st.upOrigLow := mn
-    st.upOrigBar := mb
-    st.upOrigT := mt
-    st.upLegHigh := lh
-    st.upFirstDisp := fd
+f_resetUpLeg(StructState st, bool on) =>
+    if on
+        int k0 = bar_index - st.refHigh.bar
+        float mn = na
+        int mb = na
+        int mt = na
+        for k = k0 to 0
+            if na(mn) or low[k] < mn
+                mn := low[k]
+                mb := bar_index - k
+                mt := time[k]
+        float lh = na
+        int fd = na
+        int k1 = bar_index - mb
+        for k = k1 to 0
+            lh := na(lh) ? high[k] : math.max(lh, high[k])
+            if k < k1 and na(fd) and isDispUp[k]
+                fd := bar_index - k
+        st.upOrigLow := mn
+        st.upOrigBar := mb
+        st.upOrigT := mt
+        st.upLegHigh := lh
+        st.upFirstDisp := fd
     true
 
 // Mirror: down-leg origin = highest high since the reference low
-f_resetDnLeg(StructState st) =>
-    int k0 = bar_index - st.refLow.bar
-    float mx = na
-    int mb = na
-    int mt = na
-    for k = k0 to 0
-        if na(mx) or high[k] > mx
-            mx := high[k]
-            mb := bar_index - k
-            mt := time[k]
-    float ll = na
-    int fd = na
-    int k1 = bar_index - mb
-    for k = k1 to 0
-        ll := na(ll) ? low[k] : math.min(ll, low[k])
-        if k < k1 and na(fd) and isDispDn[k]
-            fd := bar_index - k
-    st.dnOrigHigh := mx
-    st.dnOrigBar := mb
-    st.dnOrigT := mt
-    st.dnLegLow := ll
-    st.dnFirstDisp := fd
+f_resetDnLeg(StructState st, bool on) =>
+    if on
+        int k0 = bar_index - st.refLow.bar
+        float mx = na
+        int mb = na
+        int mt = na
+        for k = k0 to 0
+            if na(mx) or high[k] > mx
+                mx := high[k]
+                mb := bar_index - k
+                mt := time[k]
+        float ll = na
+        int fd = na
+        int k1 = bar_index - mb
+        for k = k1 to 0
+            ll := na(ll) ? low[k] : math.min(ll, low[k])
+            if k < k1 and na(fd) and isDispDn[k]
+                fd := bar_index - k
+        st.dnOrigHigh := mx
+        st.dnOrigBar := mb
+        st.dnOrigT := mt
+        st.dnLegLow := ll
+        st.dnFirstDisp := fd
     true
 
 // Incremental leg tracking on every confirmed bar
@@ -160,31 +162,34 @@ f_breakDn(Core c, StructState st) =>
     st.newDn := b
     b
 
-// One confirmed-bar step for a structure level
-f_structStep(Core c, StructState st, float ph, float pl) =>
-    st.newUp := na
-    st.newDn := na
-    st.newHigh := na
-    st.newLow := na
-    f_trackLegs(st)
-    if not na(ph)
-        Swing swH = f_makeSwing(c, st, 1, ph)
-        st.refHigh := swH
-        st.newHigh := swH
-        f_resetUpLeg(st)
-    if not na(pl)
+// One confirmed-bar step for a structure level. Called on every calculation with on = confirmed
+// bar (CW10003): functions that read the bar history are never called from a conditional scope.
+f_structStep(Core c, StructState st, float ph, float pl, bool on) =>
+    if on
+        st.newUp := na
+        st.newDn := na
+        st.newHigh := na
+        st.newLow := na
+        f_trackLegs(st)
+        if not na(ph)
+            Swing swH = f_makeSwing(c, st, 1, ph)
+            st.refHigh := swH
+            st.newHigh := swH
+    f_resetUpLeg(st, on and not na(ph))
+    if on and not na(pl)
         Swing swL = f_makeSwing(c, st, -1, pl)
         st.refLow := swL
         st.newLow := swL
-        f_resetDnLeg(st)
-    float srcUp = i_brk == BreakSrc.wick ? high : close
-    float srcDn = i_brk == BreakSrc.wick ? low : close
-    Swing rh = st.refHigh
-    if not na(rh)
-        if not rh.broken and srcUp > rh.price
-            f_breakUp(c, st)
-    Swing rl = st.refLow
-    if not na(rl)
-        if not rl.broken and srcDn < rl.price
-            f_breakDn(c, st)
+    f_resetDnLeg(st, on and not na(pl))
+    if on
+        float srcUp = i_brk == BreakSrc.wick ? high : close
+        float srcDn = i_brk == BreakSrc.wick ? low : close
+        Swing rh = st.refHigh
+        if not na(rh)
+            if not rh.broken and srcUp > rh.price
+                f_breakUp(c, st)
+        Swing rl = st.refLow
+        if not na(rl)
+            if not rl.broken and srcDn < rl.price
+                f_breakDn(c, st)
     true

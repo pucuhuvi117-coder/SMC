@@ -11,7 +11,7 @@
 //  Architecture: docs/02-architecture.md · Detectors: docs/appendix-a-detection-spec.md
 // ═══════════════════════════════════════════════════════════════════════════════
 //#if setups
-indicator("SMC Pro · Setups", shorttitle = "SMC Setups", overlay = true, max_boxes_count = 100, max_lines_count = 200, max_labels_count = 100)
+indicator("SMC Pro · Setups", shorttitle = "SMC Setups", overlay = true, max_boxes_count = 100, max_lines_count = 250, max_labels_count = 150)
 //#else
 indicator("SMC Visualizer Pro", shorttitle = "SMC Pro", overlay = true, max_boxes_count = 500, max_lines_count = 500, max_labels_count = 500)
 //#endif

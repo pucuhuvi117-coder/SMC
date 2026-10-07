@@ -39,29 +39,20 @@ bool aSetReady = not na(evReady)
 bool aSetTrig = not na(evTrig)
 bool aSetInv = not na(evInv)
 
-// Detailed text for "Any alert() function call" alerts: direction, grade, plan (P9 adds JSON)
-f_setupMsg(Event e, string what) =>
-    Setup s = na
-    for x in setups
-        if x.id == e.ref
-            s := x
-    // a setup that ended on this bar has already moved to the archive; several may have ended
-    // on one bar, so look through the newest entries rather than only the last one
-    int nArch = setupArch.size()
-    if na(s) and nArch > 0
-        for i = nArch - 1 to math.max(0, nArch - 12)
-            Setup y = setupArch.get(i)
-            if na(s) and y.id == e.ref
-                s := y
-    string detail = na(s) ? "" : " · " + f_modelName(s.model) + " · " + f_gradeName(s.grade) + " " + str.tostring(s.score, "0.0") + " · E " + f_px(s.entry) + " · SL " + f_px(s.slInit) + " · TP1 " + f_px(s.tp1) + " · RR " + str.tostring(s.rrFinal, "0.0") + " · " + s.chain
-    "SMC Pro · " + syminfo.ticker + " " + timeframe.period + " · " + (e.dir == 1 ? "LONG " : "SHORT ") + what + detail + (what == "INVALID" ? " · " + e.s1 : "")
-
-if aSetReady
-    alert(f_setupMsg(evReady, "READY"), alert.freq_once_per_bar_close)
-if aSetTrig
-    alert(f_setupMsg(evTrig, "TRIGGERED"), alert.freq_once_per_bar_close)
-if aSetInv
-    alert(f_setupMsg(evInv, "INVALID"), alert.freq_once_per_bar_close)
+// One message per bar close for the alert "Any alert() function call" (§12.7, ADR-08): text or the
+// JSON webhook envelope (50_webhook). Alerts fire only in realtime, so the message is built there;
+// with Debug + "log events" it is also written to Pine Logs on every bar, to inspect the JSON.
+bool whLog = mc.debug and i_log
+if barstate.isconfirmed and core.warm and (barstate.isrealtime or whLog)
+    bool whLive = false
+    for s in setups
+        whLive := whLive or (s.state >= SS_READY and s.state <= SS_TP2 and s.grade >= setAlertGrade)
+    bool whSnap = i_whSnap > 0 and bar_index % i_whSnap == 0 and core.barEvents.size() == 0 and whLive
+    [whMsg, whN] = f_whMessage(core, ctx, setups, setupArch, whSnap)
+    if whN > 0 or whSnap
+        alert(whMsg, alert.freq_once_per_bar_close)
+        if whLog
+            log.info(whMsg)
 
 //#endif
 

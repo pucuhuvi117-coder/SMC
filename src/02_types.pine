@@ -79,7 +79,7 @@ enum HtfMode
     off = "Off"
 
 enum HistView
-    visible = "Visible range"
+    visible = "History window"
     recent = "Recent only"
 
 enum SetPreset
@@ -327,6 +327,16 @@ type Ctx
     int htfTrend = 0
 
 //#if setups
+// Alert message (§12.7) and the events it carries
+enum AlertFmt
+    plain = "Text"
+    json = "JSON (webhook)"
+
+enum WhScope
+    setups = "Setups"
+    key = "Setups + key events"
+    all = "All events (min tier)"
+
 // Setup: an evolving trade hypothesis with its evidence, plan and score (§7.7, §9, §10).
 // v1.0 setups are analytical: drawn and alerted, never executed. The DRAFT TradePlan
 // (entry / SL / targets / RR) is kept inside the setup until the P9 webhook needs it apart.
@@ -345,6 +355,8 @@ type Setup
     bool sweepMajor = false
     string sweepTag = ""
     int sweepBar
+    int sweepT
+    float sweepPx
     bool contSweep = false
     // shift component
     int shiftEvId
@@ -355,6 +367,8 @@ type Setup
     int shiftKind
     bool isMSS = false
     float disp
+    float shiftPx
+    int shiftSwT
     // location: range built by the shift leg
     float rLo
     float rHi
