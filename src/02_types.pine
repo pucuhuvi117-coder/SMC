@@ -471,10 +471,9 @@ type ModeCfg
 
 // What the render pass draws: a bar window, split into time segments. Each segment ranks
 // objects against its own anchor (close and ATR at the segment's last bar), so a wide or
-// scrolled-back view keeps the same density as the live edge (docs §15, AC-M16).
+// window keeps the same density as the live edge (docs §15, ADR-14).
 type View
     bool vp
-    bool live
     int iL
     int iR
     int segs = 1
@@ -483,7 +482,6 @@ type View
     array<float> segAtr
     float winLo
     float winHi
-    int tL
 
 // Visual pools: drawings are created once and reused (§4.9)
 type BoxPool

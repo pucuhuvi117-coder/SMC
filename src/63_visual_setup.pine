@@ -185,15 +185,14 @@ f_renderSetups(View v, BoxPool pb, LinePool pl, LabelPool plb, array<Setup> ss, 
             f_drawSetup(pb, pl, plb, ins, false)
             drawn.push(ins.id)
             shown += 1
-        if v.live
-            for d in array.from(1, -1)
-                Setup fs = f_focusSetup(ss, d)
-                if not na(fs) and not drawn.includes(fs.id)
-                    if pathOn
-                        f_drawPath(pl, plb, fs, false)
-                    f_drawSetup(pb, pl, plb, fs, false)
-                    drawn.push(fs.id)
-                    shown += 1
+        for d in array.from(1, -1)
+            Setup fs = f_focusSetup(ss, d)
+            if not na(fs) and not drawn.includes(fs.id)
+                if pathOn
+                    f_drawPath(pl, plb, fs, false)
+                f_drawSetup(pb, pl, plb, fs, false)
+                drawn.push(fs.id)
+                shown += 1
         int n = arch.size()
         if n > 0
             int recent = 0
@@ -201,7 +200,7 @@ f_renderSetups(View v, BoxPool pb, LinePool pl, LabelPool plb, array<Setup> ss, 
             for i = n - 1 to 0
                 Setup s = arch.get(i)
                 if not drawn.includes(s.id) and f_setShownDone(s)
-                    if v.live and recent < 2 and bar_index - s.endBar <= f_setDoneTtl(s)
+                    if recent < 2 and bar_index - s.endBar <= f_setDoneTtl(s)
                         if pathAll
                             f_drawPath(pl, plb, s, true)
                         f_drawSetup(pb, pl, plb, s, false)

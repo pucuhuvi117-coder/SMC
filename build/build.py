@@ -178,6 +178,33 @@ def lint_shadowing(body: str) -> list[str]:
     return issues
 
 
+def lint_inputs(body: str) -> list[str]:
+    """Settings dialog order: one `inline` row and one `group` must be declared without gaps
+    (v0.8.1: the Setup panel position sat below the alert inputs)."""
+    issues = []
+    prev_inline = prev_group = None
+    seen_inline: set[str] = set()
+    seen_group: set[str] = set()
+    for n, raw in enumerate(body.splitlines(), 1):
+        code = strip_comment(raw)
+        if not re.match(r"^\w+\s*=\s*input\.\w+\(", code):
+            continue
+        il = re.search(r"\binline\s*=\s*\"([^\"]*)\"", code)
+        gr = re.search(r"\bgroup\s*=\s*(\w+|\"[^\"]*\")", code)
+        il = il.group(1) if il else None
+        gr = gr.group(1) if gr else None
+        if il is not None and il != prev_inline and il in seen_inline:
+            issues.append(f"dist:{n}: input row inline=\"{il}\" is split by other inputs; declare its inputs one after another")
+        if gr is not None and gr != prev_group and gr in seen_group:
+            issues.append(f"dist:{n}: input group {gr} is split by other groups; declare its inputs one after another")
+        if il is not None:
+            seen_inline.add(il)
+        if gr is not None:
+            seen_group.add(gr)
+        prev_inline, prev_group = il, gr
+    return issues
+
+
 def lint(name: str, text: str) -> list[str]:
     """Project rules from docs/02-architecture.md §20.8 and docs/09-master-checklist.md."""
     issues = []
@@ -234,6 +261,7 @@ def assemble(target: str) -> tuple[Path, str, list[str]]:
     body = "\n".join(parts)
     body = body.replace("{{VERSION}}", version).replace("{{DATE}}", date)
     issues += lint_shadowing(body)
+    issues += lint_inputs(body)
     if not body.startswith("//@version=6"):
         issues.append("00_header.pine must start with //@version=6")
     out = ROOT / cfg["output"]

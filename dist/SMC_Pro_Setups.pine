@@ -1,6 +1,6 @@
 //@version=6
 // ═══════════════════════════════════════════════════════════════════════════════
-//  SMC Pro · Setups · build 0.8.0 · 2026-10-07
+//  SMC Pro · Setups · build 0.8.1 · 2026-10-07
 //  Companion of SMC Visualizer Pro: same engines and settings, plus the setup engine (ADR-13).
 //  Generated from /src by build/build.py. Do not edit dist/ by hand.
 //  Architecture: docs/02-architecture.md · Detectors: docs/appendix-a-detection-spec.md
@@ -8,7 +8,7 @@
 indicator("SMC Pro · Setups", shorttitle = "SMC Setups", overlay = true, max_boxes_count = 100, max_lines_count = 250, max_labels_count = 150)
 
 // ═══ 01 · CONSTANTS ═════════════════════════════════════════════════════════════
-BUILD = "0.8.0"
+BUILD = "0.8.1"
 
 // Timeframe slots (docs §8.2). v0.1 computes the chart TF only; HTF arrives with the HTF Feed (P5).
 TF_CHART = 0
@@ -140,9 +140,12 @@ RANGE_ARCH_CAP = 600
 SESS_CAP = 1200
 BRK_CAP = 3000
 SWING_CAP = 3000
-// Visible-range rendering: a wide view is split into time segments with their own anchor
+// History window rendering: a wide window is split into time segments with their own anchor
 SEG_BARS = 150
 SEG_MAX = 6
+// Bars on a ~1300 px screen at the default zoom. The visible range is not read (ADR-14), so
+// label widths, slivers and tag spacing are estimated for this zoom, not for the whole window.
+VIEW_BARS = 200
 HIST_CAP = 90000
 // History buffer for dynamic offsets and the guard that keeps every lookback below it
 MAXBACK = 600
@@ -578,10 +581,9 @@ type ModeCfg
 
 // What the render pass draws: a bar window, split into time segments. Each segment ranks
 // objects against its own anchor (close and ATR at the segment's last bar), so a wide or
-// scrolled-back view keeps the same density as the live edge (docs §15, AC-M16).
+// window keeps the same density as the live edge (docs §15, ADR-14).
 type View
     bool vp
-    bool live
     int iL
     int iR
     int segs = 1
@@ -590,7 +592,6 @@ type View
     array<float> segAtr
     float winLo
     float winHi
-    int tL
 
 // Visual pools: drawings are created once and reused (§4.9)
 type BoxPool
@@ -736,13 +737,13 @@ i_showPath = input.bool(true, "Setup Path", tooltip = "① sweep → ② CHoCH /
 i_inspect = input.bool(false, "Inspect", inline = "insp", group = G_SET, display = display.none)
 i_inspectT = input.time(timestamp("01 Jan 2026 00:00 +0000"), "", inline = "insp", tooltip = "Pick a moment: the setup that was live there is drawn in full with its path and explained in the panel (INSPECT row), even if its grade is below the display filter. Without a setup, the row tells why: the attempts that ended there and their reasons, or that there was no sweep / BOS.", group = G_SET, display = display.none)
 i_setPanel = input.bool(true, "Setup panel", inline = "spn", group = G_SET, display = display.none)
+i_setPanelPos = input.string("Bottom Right", "", options = ["Bottom Right", "Top Right", "Bottom Left", "Top Left", "Bottom Center"], inline = "spn", tooltip = "Setup, quality, plan and invalidation of the focus setup, and the settings signature cfg (must match SMC Visualizer Pro).", group = G_SET, display = display.none)
 i_alertFmt = input.enum(AlertFmt.plain, "Alert message", tooltip = "For one alert \"Any alert() function call\": one message per bar close with every event that passes the filters below. Text: one readable line. JSON: envelope smcvp.event v1 for a webhook (docs §12). Re-create the alert after changing settings.", group = G_ALR, display = display.none)
 i_whScope = input.enum(WhScope.setups, "Events", inline = "whs", group = G_ALR, display = display.none)
 i_whMinTier = input.int(2, "min tier", minval = 1, maxval = 4, inline = "whs", tooltip = "Setups: setup transitions from READY on, grade ≥ Alert min grade. Setups + key events: also swing BOS / CHoCH, major sweeps, HTF bias (tier 1). All events: everything up to this tier (1 = most important).", group = G_ALR, display = display.none)
 i_whSnap = input.int(0, "Snapshot every N bars", minval = 0, maxval = 500, tooltip = "0 = off. Otherwise, on bars without events, the READY / ACTIVE setups are sent every N bars (heartbeat for the gateway).", group = G_ALR, display = display.none)
 i_whTok = input.string("", "Sender id (tok)", tooltip = "Optional id the gateway can check. Not a broker secret.", group = G_ALR, display = display.none)
 i_whMaxLen = input.int(4000, "Max message length", minval = 500, maxval = 20000, tooltip = "Events that do not fit are dropped; JSON then carries \"truncated\": true.", group = G_ALR, display = display.none)
-i_setPanelPos = input.string("Bottom Right", "", options = ["Bottom Right", "Top Right", "Bottom Left", "Top Left", "Bottom Center"], inline = "spn", tooltip = "Setup, quality, plan and invalidation of the focus setup, and the settings signature cfg (must match SMC Visualizer Pro).", group = G_SET, display = display.none)
 
 // ── 11 · Advanced
 i_atrLen = input.int(14, "ATR length", minval = 5, maxval = 200, tooltip = "Volatility unit for every threshold expressed in ×ATR.", group = G_ADV, display = display.none)
@@ -826,8 +827,8 @@ f_cfgSig() =>
 var int cfgSig = f_cfgSig()
 
 // Display mode ceilings (docs §15.3, §19.2). Recent view uses structEvents / sweptShow / sessions;
-// visible-range view uses the *Win caps, split evenly across time segments so the whole
-// screen is covered. Pool sizes keep every mode within the 500-object limits.
+// the history window uses the *Win caps, split evenly across time segments so the whole
+// window is covered. Pool sizes keep every mode within the 500-object limits.
 f_modeCfg(DisplayMode m) =>
     switch m
         DisplayMode.clean => ModeCfg.new(distMax = 3.0, hist = 500, labelLevel = 1, debug = false, gradeFloor = 2, setupPast = 0, poolSetBox = 4, poolSetLine = 8, poolSetLab = 8)
@@ -844,7 +845,7 @@ verbLevel = switch i_verb
     Verbosity.brief => 1
     => 3
 labelLvl = math.min(verbLevel, mc.labelLevel)
-// Setups indicator: zone filters for the (unused) history archive, and the visible-range view
+// Setups indicator: zone filters for the (unused) history archive, and the history window
 // for past setups in Analysis / Debug
 vOB = true
 vFVG = true
@@ -1951,7 +1952,7 @@ f_zoneShown(Zone z) =>
 
 // Only zones the history view can ever draw are archived, so the archive reaches further back:
 // shown by the display settings, and within the distance window of price at some point of
-// their life (a view scrolled back to that moment ranks them there, §15 M6).
+// their life (the history window ranks them at that moment, §15 M6).
 f_archiveZone(array<Zone> arch, Zone z) =>
     bool htf = z.tf != TF_CHART
     float dist = close > z.top ? (close - z.top) / vu : close < z.bottom ? (z.bottom - close) / vu : 0.0
@@ -3247,17 +3248,17 @@ f_buildView(array<float> hc, array<float> ha, int hb, float pxLive) =>
     int iL = math.max(0, bar_index - histDepth)
     int w = iR - iL + 1
     int segs = vp ? math.max(1, math.min(SEG_MAX, int(math.ceil(w / SEG_BARS)))) : 1
-    View v = View.new(vp, true, iL, iR, segs, array.new<int>(), array.new<float>(), array.new<float>())
+    View v = View.new(vp, iL, iR, segs, array.new<int>(), array.new<float>(), array.new<float>())
     for s = 0 to segs - 1
         int e = s == segs - 1 ? iR : iL + int(math.round((s + 1) * w / segs)) - 1
         v.segEnd.push(e)
         v.segPx.push(e >= bar_index ? pxLive : f_histAt(hc, hb, e, pxLive))
         v.segAtr.push(e >= bar_index ? vu : f_histAt(ha, hb, e, vu))
-    // price span of the recent closes for tag spacing: the last 300 bars stand in for the screen
+    // price span of the recent closes for tag spacing: the last VIEW_BARS stand in for the screen
     if vp
         float lo = na
         float hi = na
-        for k = math.max(iL, iR - 300) to iR
+        for k = math.max(iL, iR - VIEW_BARS) to iR
             float c = k >= bar_index ? pxLive : f_histAt(hc, hb, k, na)
             if not na(c)
                 lo := na(lo) ? c : math.min(lo, c)
@@ -3453,15 +3454,14 @@ f_renderSetups(View v, BoxPool pb, LinePool pl, LabelPool plb, array<Setup> ss, 
             f_drawSetup(pb, pl, plb, ins, false)
             drawn.push(ins.id)
             shown += 1
-        if v.live
-            for d in array.from(1, -1)
-                Setup fs = f_focusSetup(ss, d)
-                if not na(fs) and not drawn.includes(fs.id)
-                    if pathOn
-                        f_drawPath(pl, plb, fs, false)
-                    f_drawSetup(pb, pl, plb, fs, false)
-                    drawn.push(fs.id)
-                    shown += 1
+        for d in array.from(1, -1)
+            Setup fs = f_focusSetup(ss, d)
+            if not na(fs) and not drawn.includes(fs.id)
+                if pathOn
+                    f_drawPath(pl, plb, fs, false)
+                f_drawSetup(pb, pl, plb, fs, false)
+                drawn.push(fs.id)
+                shown += 1
         int n = arch.size()
         if n > 0
             int recent = 0
@@ -3469,7 +3469,7 @@ f_renderSetups(View v, BoxPool pb, LinePool pl, LabelPool plb, array<Setup> ss, 
             for i = n - 1 to 0
                 Setup s = arch.get(i)
                 if not drawn.includes(s.id) and f_setShownDone(s)
-                    if v.live and recent < 2 and bar_index - s.endBar <= f_setDoneTtl(s)
+                    if recent < 2 and bar_index - s.endBar <= f_setDoneTtl(s)
                         if pathAll
                             f_drawPath(pl, plb, s, true)
                         f_drawSetup(pb, pl, plb, s, false)
@@ -3502,8 +3502,8 @@ f_pos(string s) =>
         "Bottom Center" => position.bottom_center
         => position.top_right
 
-f_statusText(Core c, bool liveView) =>
-    not c.warm ? "WARMING UP" : nonStdChart ? "⚠ NON-STANDARD CHART" : not liveView ? "◀ HISTORY VIEW" : ""
+f_statusText(Core c) =>
+    not c.warm ? "WARMING UP" : nonStdChart ? "⚠ NON-STANDARD CHART" : ""
 
 f_dashRow(table tb, int row, string k, string v, color vc, string tip, string sz) =>
     table.cell(tb, 0, row, k, text_color = color.new(C_TEXT, 45), text_size = sz, text_halign = text.align_left)
@@ -3518,7 +3518,7 @@ f_qualityBar(float sc) =>
     int k = int(math.round(sc))
     str.repeat("▮", k) + str.repeat("▯", 10 - k)
 
-f_setupPanel(table tb, Ctx x, Core c, bool liveView, Setup fs, Setup ins) =>
+f_setupPanel(table tb, Ctx x, Core c, Setup fs, Setup ins) =>
     if not na(tb)
         string sz = panelSz
         int row = 0
@@ -3539,7 +3539,7 @@ f_setupPanel(table tb, Ctx x, Core c, bool liveView, Setup fs, Setup ins) =>
                     row := f_dashRow(tb, row, "QUALITY", str.tostring(fs.score, "0.0") + " / 10 · " + f_gradeName(fs.grade) + "  " + f_qualityBar(fs.score), gc, fs.factors + "Score = completeness of the setup, not a win probability", sz)
                     row := f_dashRow(tb, row, "PLAN", "E " + f_px(fs.entry) + " · SL " + f_px(fs.slInit) + " · TP1 " + f_px(fs.tp1), C_SIG, f_setPlanText(fs), sz)
                     row := f_dashRow(tb, row, "INVALID", f_px(fs.inv) + " · close " + (fs.dir == 1 ? "below" : "above"), C_BEAR, "Before the entry the setup is cancelled by a close beyond this level, an opposite swing CHoCH or a broken POI", sz)
-        string stt = f_statusText(c, liveView)
+        string stt = f_statusText(c)
         if stt != ""
             row := f_dashRow(tb, row, "STATUS", stt, C_WARN, "Setups and alerts are suppressed during warm-up; the panel always describes the latest bar", sz)
         // Inspect: the setup at the chosen time, or why there was none (§17.3)
@@ -3573,7 +3573,7 @@ f_setupPanel(table tb, Ctx x, Core c, bool liveView, Setup fs, Setup ins) =>
         int nAs = assertN.get(0)
         string stxt = (nAs > 0 ? "⚠" + str.tostring(nAs) + " asserts · " : "") + "READY " + str.tostring(nz(setStats.get("READY"))) + " · ✓" + str.tostring(nz(setStats.get("WIN"))) + " ✕" + str.tostring(nz(setStats.get("SL"))) + (topV > 0 ? " · " + str.lower(topK) + " " + str.tostring(topV) : "")
         row := f_dashRow(tb, row, "STATS", stxt, C_NEUT, "Whole loaded history: setups that reached READY, trades won (✓, at least TP1) and stopped (✕), and the most frequent reason a setup ended without a trade.\n\n" + all + "\nGRADE_LOW: score below the preset's READY grade · RR_LOW: last target closer than Min RR · SL_TOO_WIDE / SL_TOO_TIGHT: stop outside the limits · NO_POI / POI_IN_PREMIUM / POI_IN_DISCOUNT: no zone of the shift leg on the right side · NO_SHIFT_IN_WINDOW: no CHoCH / BOS after the sweep · SUPERSEDED: replaced by a newer setup · TP1_BEFORE_ENTRY: price ran away (MISSED)", sz)
-        row := f_dashRow(tb, row, "CFG", str.tostring(cfgSig) + " · v" + BUILD, C_NEUT, "Settings signature: must equal the cfg number of SMC Visualizer Pro (Dashboard Expanded → MODE row). Different numbers mean the two indicators run the engines with different settings, and the setups do not match the structure on the chart.", sz)
+        row := f_dashRow(tb, row, "CFG", str.tostring(cfgSig) + " · v" + BUILD, C_NEUT, "Settings signature: must equal the cfg number of SMC Visualizer Pro (Dashboard → CFG row). Different numbers mean the two indicators run the engines with different settings, and the setups do not match the structure on the chart.", sz)
         if row <= SET_PANEL_ROWS - 1
             table.clear(tb, 0, row, 1, SET_PANEL_ROWS - 1)
     true
@@ -3603,7 +3603,7 @@ var Ctx ctx = Ctx.new()
 var array<Setup> setups = array.new<Setup>()
 var array<Setup> setupArch = array.new<Setup>()
 var float confClose = na
-// Per-bar close and ATR, so a scrolled-back view can rank objects at any past bar
+// Per-bar close and ATR, so the history window can rank objects at any past bar
 var array<float> histClose = array.new<float>()
 var array<float> histAtr = array.new<float>()
 var int histBase = 0
@@ -3753,7 +3753,7 @@ if barstate.islastconfirmedhistory or (barstate.isrealtime and barstate.isconfir
     f_finishLines(pSetLine)
     f_finishLabels(pSetLab)
     Setup focus = i_setups ? f_focusSetup(setups, 0) : na
-    f_setupPanel(tSetup, ctx, core, view.live, focus, ins)
+    f_setupPanel(tSetup, ctx, core, focus, ins)
 
 // ═══ 95 · ALERTS ════════════════════════════════════════════════════════════════
 // Static alertcondition() set (docs §12.7). Conditions are read from the event bus of the

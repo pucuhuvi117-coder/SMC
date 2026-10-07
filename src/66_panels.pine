@@ -37,8 +37,8 @@ f_pdColor(Ctx x) =>
     na(x.pd) ? C_NEUT : x.pdZone == 1 ? C_BEAR : x.pdZone == -1 ? C_BULL : C_NEUT
 
 //#endif
-f_statusText(Core c, bool liveView) =>
-    not c.warm ? "WARMING UP" : nonStdChart ? "⚠ NON-STANDARD CHART" : not liveView ? "◀ HISTORY VIEW" : ""
+f_statusText(Core c) =>
+    not c.warm ? "WARMING UP" : nonStdChart ? "⚠ NON-STANDARD CHART" : ""
 
 //#if core
 // Context Ribbon: HTF │ STR │ SESSION │ PD │ LIQ │ status
@@ -51,7 +51,7 @@ f_htfColor(Ctx x) =>
 f_htfTip(Ctx x) =>
     htfBadCfg ? "The manual higher timeframe must be above the chart timeframe; the HTF Feed is off" : not x.htfOk ? "Higher timeframe is off" : x.htfLow ? "Fewer than " + str.tostring(i_minHtfBars) + " confirmed " + htfLabel + " bars: the HTF bias is treated as unknown (A.16)" : "Higher-timeframe swing structure from confirmed " + htfLabel + " bars"
 
-f_ribbon(table tb, Ctx x, Core c, bool liveView) =>
+f_ribbon(table tb, Ctx x, Core c) =>
     if not na(tb)
         string sz = panelSz
         table.cell(tb, 0, 0, f_htfText(x), text_color = f_htfColor(x), text_size = sz, tooltip = f_htfTip(x))
@@ -69,11 +69,11 @@ f_ribbon(table tb, Ctx x, Core c, bool liveView) =>
                 int side = swept ? -le.dir : le.dir
                 s3 := (side == 1 ? "BSL" : "SSL") + (swept ? " ✕ " : " TAKEN ") + str.tostring(bar_index - le.bar) + "b"
         table.cell(tb, 4, 0, s3, text_color = s3 == "LIQ —" ? C_NEUT : C_LIQ, text_size = sz, tooltip = na(le) ? "No recent liquidity event" : le.s1 + " · " + f_px(le.price) + " · " + f_timeStr(le.t))
-        string s4 = f_statusText(c, liveView)
+        string s4 = f_statusText(c)
         if s4 == ""
             table.clear(tb, 5, 0)
         else
-            table.cell(tb, 5, 0, s4, text_color = C_WARN, text_size = sz, tooltip = not liveView ? "The chart shows history for the visible range. Ribbon and Dashboard always describe the latest bar." : "Signals and alerts are suppressed during warm-up (first " + str.tostring(warmBars) + " bars).")
+            table.cell(tb, 5, 0, s4, text_color = C_WARN, text_size = sz, tooltip = nonStdChart ? "Renko, Kagi, Point & Figure, Range or Heikin Ashi: structure is built on synthetic prices" : "Signals and alerts are suppressed during warm-up (first " + str.tostring(warmBars) + " bars).")
     true
 
 //#endif
@@ -84,7 +84,7 @@ f_dashRow(table tb, int row, string k, string v, color vc, string tip, string sz
 
 //#if core
 // Dashboard: answers instead of statistics (§14.5)
-f_dashboard(table tb, Ctx x, Core c, StructState si, Range r, bool liveView) =>
+f_dashboard(table tb, Ctx x, Core c, StructState si, Range r) =>
     if not na(tb)
         bool exp = i_dashSize == "Expanded"
         string sz = panelSz
@@ -115,7 +115,7 @@ f_dashboard(table tb, Ctx x, Core c, StructState si, Range r, bool liveView) =>
             string inT = x.inTrend == 1 ? "BULLISH" : x.inTrend == -1 ? "BEARISH" : "—"
             row := f_dashRow(tb, row, "INTERNAL", inT, f_dirColor(x.inTrend), "Internal structure trend", sz)
             row := f_dashRow(tb, row, "MODE", str.tostring(i_mode) + " · v" + BUILD, C_NEUT, "Display mode and build", sz)
-        string stt = f_statusText(c, liveView)
+        string stt = f_statusText(c)
         if stt != ""
             row := f_dashRow(tb, row, "STATUS", stt, C_WARN, "Signals and alerts are suppressed during warm-up", sz)
         row := f_dashRow(tb, row, "CFG", str.tostring(cfgSig), C_NEUT, "Settings signature of the engines: SMC Pro · Setups must show the same cfg number in its panel, otherwise its setups are built on different structure, liquidity or zone settings", sz)
@@ -150,7 +150,7 @@ f_debugTable(table tb, View v, Core c, array<Zone> zs, array<Zone> za, array<Liq
         int row = 0
         row := f_dashRow(tb, row, "BUILD", "v" + BUILD + " · " + str.tostring(i_mode) + " · cfg " + str.tostring(cfgSig), C_TEXT, "cfg: settings signature, equal in both indicators when their engine settings match", sz)
         row := f_dashRow(tb, row, "BARS", str.tostring(bar_index + 1) + (c.warm ? " · warm" : " · warming up"), c.warm ? C_TEXT : C_WARN, "Warm-up: " + str.tostring(warmBars) + " bars", sz)
-        row := f_dashRow(tb, row, "VIEW", (v.vp ? "window " : "recent ") + str.tostring(v.iL) + "–" + str.tostring(v.iR) + " · " + str.tostring(v.segs) + " seg" + (v.live ? "" : " · history"), C_TEXT, "Bar window drawn and number of time segments", sz)
+        row := f_dashRow(tb, row, "VIEW", (v.vp ? "window " : "recent ") + str.tostring(v.iL) + "–" + str.tostring(v.iR) + " · " + str.tostring(v.segs) + " seg", C_TEXT, "Bar window drawn and number of time segments", sz)
         string zFrom = za.size() > 0 ? " · from bar " + str.tostring(za.get(0).endBar) : ""
         string lFrom = la.size() > 0 ? " · from bar " + str.tostring(la.get(0).endBar) : ""
         row := f_dashRow(tb, row, "ZONES", str.tostring(zLive) + " live / " + str.tostring(zs.size()) + " · arch " + str.tostring(za.size()), C_TEXT, "Live cap " + str.tostring(ZONE_CAP) + " · archive cap " + str.tostring(ZONE_ARCH_CAP) + zFrom, sz)
@@ -176,7 +176,7 @@ f_qualityBar(float sc) =>
     int k = int(math.round(sc))
     str.repeat("▮", k) + str.repeat("▯", 10 - k)
 
-f_setupPanel(table tb, Ctx x, Core c, bool liveView, Setup fs, Setup ins) =>
+f_setupPanel(table tb, Ctx x, Core c, Setup fs, Setup ins) =>
     if not na(tb)
         string sz = panelSz
         int row = 0
@@ -197,7 +197,7 @@ f_setupPanel(table tb, Ctx x, Core c, bool liveView, Setup fs, Setup ins) =>
                     row := f_dashRow(tb, row, "QUALITY", str.tostring(fs.score, "0.0") + " / 10 · " + f_gradeName(fs.grade) + "  " + f_qualityBar(fs.score), gc, fs.factors + "Score = completeness of the setup, not a win probability", sz)
                     row := f_dashRow(tb, row, "PLAN", "E " + f_px(fs.entry) + " · SL " + f_px(fs.slInit) + " · TP1 " + f_px(fs.tp1), C_SIG, f_setPlanText(fs), sz)
                     row := f_dashRow(tb, row, "INVALID", f_px(fs.inv) + " · close " + (fs.dir == 1 ? "below" : "above"), C_BEAR, "Before the entry the setup is cancelled by a close beyond this level, an opposite swing CHoCH or a broken POI", sz)
-        string stt = f_statusText(c, liveView)
+        string stt = f_statusText(c)
         if stt != ""
             row := f_dashRow(tb, row, "STATUS", stt, C_WARN, "Setups and alerts are suppressed during warm-up; the panel always describes the latest bar", sz)
         // Inspect: the setup at the chosen time, or why there was none (§17.3)
@@ -231,7 +231,7 @@ f_setupPanel(table tb, Ctx x, Core c, bool liveView, Setup fs, Setup ins) =>
         int nAs = assertN.get(0)
         string stxt = (nAs > 0 ? "⚠" + str.tostring(nAs) + " asserts · " : "") + "READY " + str.tostring(nz(setStats.get("READY"))) + " · ✓" + str.tostring(nz(setStats.get("WIN"))) + " ✕" + str.tostring(nz(setStats.get("SL"))) + (topV > 0 ? " · " + str.lower(topK) + " " + str.tostring(topV) : "")
         row := f_dashRow(tb, row, "STATS", stxt, C_NEUT, "Whole loaded history: setups that reached READY, trades won (✓, at least TP1) and stopped (✕), and the most frequent reason a setup ended without a trade.\n\n" + all + "\nGRADE_LOW: score below the preset's READY grade · RR_LOW: last target closer than Min RR · SL_TOO_WIDE / SL_TOO_TIGHT: stop outside the limits · NO_POI / POI_IN_PREMIUM / POI_IN_DISCOUNT: no zone of the shift leg on the right side · NO_SHIFT_IN_WINDOW: no CHoCH / BOS after the sweep · SUPERSEDED: replaced by a newer setup · TP1_BEFORE_ENTRY: price ran away (MISSED)", sz)
-        row := f_dashRow(tb, row, "CFG", str.tostring(cfgSig) + " · v" + BUILD, C_NEUT, "Settings signature: must equal the cfg number of SMC Visualizer Pro (Dashboard Expanded → MODE row). Different numbers mean the two indicators run the engines with different settings, and the setups do not match the structure on the chart.", sz)
+        row := f_dashRow(tb, row, "CFG", str.tostring(cfgSig) + " · v" + BUILD, C_NEUT, "Settings signature: must equal the cfg number of SMC Visualizer Pro (Dashboard → CFG row). Different numbers mean the two indicators run the engines with different settings, and the setups do not match the structure on the chart.", sz)
         if row <= SET_PANEL_ROWS - 1
             table.clear(tb, 0, row, 1, SET_PANEL_ROWS - 1)
     true

@@ -184,13 +184,13 @@ i_showPath = input.bool(true, "Setup Path", tooltip = "① sweep → ② CHoCH /
 i_inspect = input.bool(false, "Inspect", inline = "insp", group = G_SET, display = display.none)
 i_inspectT = input.time(timestamp("01 Jan 2026 00:00 +0000"), "", inline = "insp", tooltip = "Pick a moment: the setup that was live there is drawn in full with its path and explained in the panel (INSPECT row), even if its grade is below the display filter. Without a setup, the row tells why: the attempts that ended there and their reasons, or that there was no sweep / BOS.", group = G_SET, display = display.none)
 i_setPanel = input.bool(true, "Setup panel", inline = "spn", group = G_SET, display = display.none)
+i_setPanelPos = input.string("Bottom Right", "", options = ["Bottom Right", "Top Right", "Bottom Left", "Top Left", "Bottom Center"], inline = "spn", tooltip = "Setup, quality, plan and invalidation of the focus setup, and the settings signature cfg (must match SMC Visualizer Pro).", group = G_SET, display = display.none)
 i_alertFmt = input.enum(AlertFmt.plain, "Alert message", tooltip = "For one alert \"Any alert() function call\": one message per bar close with every event that passes the filters below. Text: one readable line. JSON: envelope smcvp.event v1 for a webhook (docs §12). Re-create the alert after changing settings.", group = G_ALR, display = display.none)
 i_whScope = input.enum(WhScope.setups, "Events", inline = "whs", group = G_ALR, display = display.none)
 i_whMinTier = input.int(2, "min tier", minval = 1, maxval = 4, inline = "whs", tooltip = "Setups: setup transitions from READY on, grade ≥ Alert min grade. Setups + key events: also swing BOS / CHoCH, major sweeps, HTF bias (tier 1). All events: everything up to this tier (1 = most important).", group = G_ALR, display = display.none)
 i_whSnap = input.int(0, "Snapshot every N bars", minval = 0, maxval = 500, tooltip = "0 = off. Otherwise, on bars without events, the READY / ACTIVE setups are sent every N bars (heartbeat for the gateway).", group = G_ALR, display = display.none)
 i_whTok = input.string("", "Sender id (tok)", tooltip = "Optional id the gateway can check. Not a broker secret.", group = G_ALR, display = display.none)
 i_whMaxLen = input.int(4000, "Max message length", minval = 500, maxval = 20000, tooltip = "Events that do not fit are dropped; JSON then carries \"truncated\": true.", group = G_ALR, display = display.none)
-i_setPanelPos = input.string("Bottom Right", "", options = ["Bottom Right", "Top Right", "Bottom Left", "Top Left", "Bottom Center"], inline = "spn", tooltip = "Setup, quality, plan and invalidation of the focus setup, and the settings signature cfg (must match SMC Visualizer Pro).", group = G_SET, display = display.none)
 //#endif
 
 // ── 11 · Advanced
@@ -279,8 +279,8 @@ f_cfgSig() =>
 var int cfgSig = f_cfgSig()
 
 // Display mode ceilings (docs §15.3, §19.2). Recent view uses structEvents / sweptShow / sessions;
-// visible-range view uses the *Win caps, split evenly across time segments so the whole
-// screen is covered. Pool sizes keep every mode within the 500-object limits.
+// the history window uses the *Win caps, split evenly across time segments so the whole
+// window is covered. Pool sizes keep every mode within the 500-object limits.
 f_modeCfg(DisplayMode m) =>
     switch m
         //#if core
@@ -331,7 +331,7 @@ nMajorSide = mc.debug ? mc.majorPerSide : math.min(i_levelsPerSide, mc.majorPerS
 nMinorSide = i_reduceMinorLiq ? math.min(1, mc.minorPerSide) : mc.minorPerSide
 histDepth = i_autoHide ? math.min(i_histDepth, mc.hist) : mc.hist
 //#else
-// Setups indicator: zone filters for the (unused) history archive, and the visible-range view
+// Setups indicator: zone filters for the (unused) history archive, and the history window
 // for past setups in Analysis / Debug
 vOB = true
 vFVG = true

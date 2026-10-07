@@ -3,8 +3,8 @@
 // from the pools in priority order and hides what is left. Runs only on the last bar,
 // so historical bars draw nothing (ADR-02). Selection uses the last confirmed close at
 // the live edge, which keeps the picture stable between realtime ticks (AC-M13).
-// v0.2: everything is drawn for a View — the visible range split into time segments,
-// or the recent window — so history keeps the same density as the live edge.
+// v0.2: everything is drawn for a View — the history window split into time segments
+// (v0.6, ADR-14), or the recent window — so history keeps the same density as the live edge.
 // v0.3: each segment gets its share of every pool, and picks inside a segment are spread
 // over time slots, so the left part of the screen is never starved.
 
@@ -16,7 +16,7 @@ f_zoneLeftT(Zone z) =>
 f_zoneTip(Zone z) =>
     (z.tf != TF_CHART ? htfLabel + " " : "") + f_kindTag(z.kind) + (z.dir == 1 ? " bullish" : " bearish") + " · " + f_zoneStateName(z.state) + "\n" + f_px(z.bottom) + " – " + f_px(z.top) + "\nsince " + f_timeStr(z.t)
 
-f_drawZone(BoxPool pz, LinePool pm, array<Tag> tags, Zone z, float r, int mergeN, int rightT, bool ghostEnded, bool liveView) =>
+f_drawZone(BoxPool pz, LinePool pm, array<Tag> tags, Zone z, float r, int mergeN, int rightT, bool ghostEnded) =>
     bool liveNow = z.state < ZS_FILLED
     bool htf = z.tf != TF_CHART
     bool ghost = (mc.debug and r < mc.theta) or (not liveNow and ghostEnded)
@@ -49,7 +49,7 @@ f_drawZone(BoxPool pz, LinePool pm, array<Tag> tags, Zone z, float r, int mergeN
     bool drawn = f_box(pz, lx, rx, top, bot, fillC, bdC, htf ? 2 : 1, bst, dbg ? tag : "", color.new(hue, 0), text.align_right)
     // Tags of active zones join the right-edge column (Smart Labels) instead of sitting inside
     // the box, so they never cover the last candles, whatever the zoom
-    if drawn and liveNow and liveView and labelLvl > 0 and not dbg
+    if drawn and liveNow and labelLvl > 0 and not dbg
         tags.push(Tag.new((z.top + z.bottom) / 2, tag, color.new(hue, 0), f_zoneTip(z)))
     bool isOb = z.kind == ZK_OB or z.kind == ZK_BB or z.kind == ZK_MB
     if drawn and liveNow and ((isOb and i_obMid) or (not isOb and i_fvgCE))
@@ -71,8 +71,8 @@ f_renderZones(View v, BoxPool pz, LinePool pm, array<Tag> tags, array<Zone> live
     array<int> segIx = array.new<int>()
     array<float> anchorPx = array.new<float>()
     array<bool> ghostIx = array.new<bool>()
-    // boxes narrower than this are invisible slivers at the current zoom
-    int sliver = math.max(2, int((v.iR - v.iL) / 200))
+    // boxes narrower than this are invisible slivers at the default zoom (VIEW_BARS)
+    int sliver = math.max(2, int(VIEW_BARS / 100))
     array<int> slotIx = array.new<int>()
     for src = 0 to 1
         array<Zone> arr = src == 0 ? liveZ : archZ
@@ -82,7 +82,7 @@ f_renderZones(View v, BoxPool pz, LinePool pm, array<Tag> tags, array<Zone> live
             int endEff = liveNow ? bar_index : z.endBar
             if z.born <= v.iR and endEff >= v.iL and f_zoneShown(z) and (z.state != ZS_MITIGATED or vMitigated)
                 int seg = f_segOf(v, math.min(endEff, v.iR))
-                bool liveSeg = v.live and seg == v.segs - 1
+                bool liveSeg = seg == v.segs - 1
                 int anchor = v.segEnd.get(seg)
                 float px = v.segPx.get(seg)
                 float atr = v.segAtr.get(seg)
@@ -96,14 +96,14 @@ f_renderZones(View v, BoxPool pz, LinePool pm, array<Tag> tags, array<Zone> live
                         ghost := true
                     else
                         // finished earlier: ranked where price reached it, freshness counted from
-                        // its birth (no bias to short-lived boxes). Clean (no TTL) shows finished
-                        // zones only when the chart is scrolled back into history.
+                        // its birth (no bias to short-lived boxes). Clean (no TTL) shows no
+                        // finished zones.
                         histRank := true
                         // width in bars as drawn; for an HTF box the part before ingestion (from
                         // the HTF candle) is estimated from time
                         bool conv = z.kind == ZK_BB or z.kind == ZK_MB or z.kind == ZK_IFVG
                         int wBars = z.endBar - (conv ? z.born : z.bar) + (htf and not conv ? int((z.bornT - z.t) / barMs) : 0)
-                        ok := (mc.ttl > 0 or not v.live) and wBars >= sliver
+                        ok := mc.ttl > 0 and wBars >= sliver
                         anchor := z.born
                         px := f_histAt(hc, hb, z.endBar, px)
                         atr := f_histAt(ha, hb, z.endBar, atr)
@@ -185,7 +185,7 @@ f_renderZones(View v, BoxPool pz, LinePool pm, array<Tag> tags, array<Zone> live
     if pn2 > 0
         for q = 0 to pn2 - 1
             int oi = picked.get(q)
-            f_drawZone(pz, pm, tags, cz.get(oi), rs.get(oi), mergeN.get(q), rightT, ghostIx.get(oi), v.live)
+            f_drawZone(pz, pm, tags, cz.get(oi), rs.get(oi), mergeN.get(q), rightT, ghostIx.get(oi))
     pn2
 
 // ── Liquidity levels (§14.12): levels alive at the window's right edge
@@ -198,7 +198,7 @@ f_liqTip(Liq x) =>
     string what = x.kind == LK_SWING ? (x.touches >= 2 ? "equal " + (x.side == 1 ? "highs" : "lows") + " ×" + str.tostring(x.touches) : "swing " + (x.side == 1 ? "high" : "low")) : x.tag
     (x.tf != TF_CHART ? htfLabel + " " : "") + (x.side == 1 ? "Buy-side liquidity · " : "Sell-side liquidity · ") + what + "\n" + f_px(x.price) + (x.state == LS_PENDING ? " · closed beyond, waiting for reclaim" : "") + "\nsince " + f_timeStr(x.t)
 
-f_drawLevel(LinePool pl, array<Tag> tags, Liq x, float r, bool major, int rightT, bool liveView) =>
+f_drawLevel(LinePool pl, array<Tag> tags, Liq x, float r, bool major, int rightT) =>
     bool aliveNow = x.state == LS_ACTIVE or x.state == LS_PENDING
     bool key = x.kind != LK_SWING
     bool htf = x.tf != TF_CHART
@@ -207,7 +207,7 @@ f_drawLevel(LinePool pl, array<Tag> tags, Liq x, float r, bool major, int rightT
     int tr = major ? f_tr(OP_STRONG, r) : OP_FAINT
     int x2 = aliveNow ? rightT : x.endT
     f_line(pl, x.t, x.price, x2, x.price, color.new(C_LIQ, tr), st, w)
-    if liveView and aliveNow and (major or mc.debug)
+    if aliveNow and (major or mc.debug)
         string tx = f_liqTag(x)
         if mc.debug and i_showIds
             tx := "#" + str.tostring(x.id) + " " + tx + " R" + str.tostring(r, "0.00")
@@ -271,7 +271,7 @@ f_renderLevels(View v, LinePool pl, array<Tag> tags, array<Liq> liveL, array<Liq
                     minUp += up ? 1 : 0
                     minDn += up ? 0 : 1
             if take
-                f_drawLevel(pl, tags, x, rs.get(oi), major, rightT, v.live)
+                f_drawLevel(pl, tags, x, rs.get(oi), major, rightT)
                 shown += 1
     shown
 
@@ -374,29 +374,24 @@ f_renderBreaks(View v, LinePool pl, LabelPool pb, array<Brk> brks, int cap, bool
             base := txt
         color tc = color.new(hue, internal ? OP_MEDIUM : recent or htf ? OP_SOLID : 15)
         string sz = internal ? size.tiny : size.small
-        // Placement (VIS-11). Text width is estimated in bars for a ~1300 px plot. Chart-TF labels
+        // Placement (VIS-11). Text width is estimated in bars at the default zoom (VIEW_BARS). Chart-TF labels
         // run from the pivot toward the break (the side of the level the leg had not reached), or
         // left of the pivot over its own clear bars; the longest text that fits is used (full,
-        // short, arrow), and a label that fits nowhere leaves only the line. Anchors are clamped
-        // to the left edge of the visible range, so breaks near it keep their labels.
+        // short, arrow), and a label that fits nowhere leaves only the line.
         if htf
             int lx = int((b.swingT + b.t) / 2)
-            bool hc = not na(v.tL) and lx < v.tL
-            if hc
-                lx := v.tL
-            string hst = hc ? (b.dir == 1 ? label.style_label_lower_left : label.style_label_upper_left) : b.dir == 1 ? label.style_label_down : label.style_label_up
+            string hst = b.dir == 1 ? label.style_label_down : label.style_label_up
             f_label(pb, lx, b.price, txt, tc, hst, sz, f_brkTip(b), yloc.price)
         else
-            bool clamp = v.vp and not na(v.tL) and not na(b.swingBar) and b.swingBar < v.iL
-            int x0 = clamp ? v.iL : nz(b.swingBar, b.bar)
-            int lx = clamp ? v.tL : b.swingT
+            int x0 = nz(b.swingBar, b.bar)
+            int lx = b.swingT
             string show = txt
             bool right = true
             if v.vp
-                float bpp = (v.iR - v.iL + 1) / 1300.0
+                float bpp = VIEW_BARS / 1300.0
                 float chW = internal ? 6.0 : 7.5
                 float spanR = b.bar - x0
-                float spanL = clamp ? 0.0 : float(internal ? inLen : swLen)
+                float spanL = float(internal ? inLen : swLen)
                 show := ""
                 for tx in array.from(txt, base, f_arrow(b.dir))
                     float need = (str.length(tx) + 1) * chW * bpp
@@ -459,7 +454,7 @@ f_renderRange(View v, BoxPool prb, LinePool prl, LabelPool pb, array<Tag> tags, 
     if vPd > 0
         // Range active at the window's right edge gets EQ + OTE; older ranges get EQ only, spread over time
         if curOk and r.b0 <= v.iR
-            f_drawRangeBody(prb, prl, tags, r.dir, r.hi, r.lo, r.t0, rightT, r.state == 1, v.live)
+            f_drawRangeBody(prb, prl, tags, r.dir, r.hi, r.lo, r.t0, rightT, r.state == 1, true)
             drawn := true
         int n = arch.size()
         if v.vp and n > 0
@@ -485,7 +480,7 @@ f_renderRange(View v, BoxPool prb, LinePool prl, LabelPool pb, array<Tag> tags, 
                 RangeSnap s = cand.get(k)
                 float eq = (s.hi + s.lo) / 2
                 f_line(prl, s.t0, eq, s.t1, eq, color.new(C_NEUT, OP_SOFT), line.style_dotted, 1)
-    if curOk and vGauge and v.live
+    if curOk and vGauge
         float span = r.hi - r.lo
         float eq = (r.hi + r.lo) / 2
         // two bars right of the last candle (§14.13); its value joins the right-edge tags
@@ -503,7 +498,7 @@ f_renderRange(View v, BoxPool prb, LinePool prl, LabelPool pb, array<Tag> tags, 
 
 // ── Sessions: colored range boxes with a clear border; the name sits above the session high,
 // off the candles (§14.14). Fill transparency comes from the settings. A history session gets
-// its name only when it is wide enough at the current zoom; the colour identifies it otherwise.
+// its name only when it is wide enough at the default zoom; the colour identifies it otherwise.
 f_drawSession(BoxPool pw, LabelPool pb, string code, float hi, float lo, int t0, int t1, bool current, bool withLabel) =>
     color c = f_sesColor(code)
     int ft = math.min(100, i_sesFill + (current ? 0 : 4))
@@ -517,10 +512,9 @@ f_renderSessions(View v, BoxPool pw, LabelPool pb, array<SessBox> hist, Sess sa,
     int q = v.vp ? f_quota(v, cap) : cap
     int shown = 0
     if vSessN > 0
-        if v.live
-            for s in array.from(sa, sl, sn)
-                if s.on
-                    f_drawSession(pw, pb, s.code, s.hi, s.lo, s.t0, time, true, true)
+        for s in array.from(sa, sl, sn)
+            if s.on
+                f_drawSession(pw, pb, s.code, s.hi, s.lo, s.t0, time, true, true)
         int n = hist.size()
         if n > 0 and q > 0
             array<SessBox> cand = array.new<SessBox>()
@@ -536,9 +530,8 @@ f_renderSessions(View v, BoxPool pw, LabelPool pb, array<SessBox> hist, Sess sa,
                     xs.push(xe)
                     sg.push(v.vp ? f_segOf(v, xe) : 0)
             array<int> sel = f_spreadPick(v, xs, sg, q, v.vp ? q * v.segs : 1)
-            int w = v.iR - v.iL + 1
             for k in sel
                 SessBox b = cand.get(k)
-                f_drawSession(pw, pb, b.code, b.hi, b.lo, b.t0, b.t1, false, (b.b1 - b.b0 + 1) * 30 >= w)
+                f_drawSession(pw, pb, b.code, b.hi, b.lo, b.t0, b.t1, false, (b.b1 - b.b0 + 1) * 30 >= VIEW_BARS)
             shown := sel.size()
     shown
