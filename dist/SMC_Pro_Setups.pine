@@ -1,6 +1,6 @@
 //@version=6
 // ═══════════════════════════════════════════════════════════════════════════════
-//  SMC Pro · Setups · build 0.8.1 · 2026-10-07
+//  SMC Pro · Setups · build 0.8.2 · 2026-10-07
 //  Companion of SMC Visualizer Pro: same engines and settings, plus the setup engine (ADR-13).
 //  Generated from /src by build/build.py. Do not edit dist/ by hand.
 //  Architecture: docs/02-architecture.md · Detectors: docs/appendix-a-detection-spec.md
@@ -8,7 +8,7 @@
 indicator("SMC Pro · Setups", shorttitle = "SMC Setups", overlay = true, max_boxes_count = 100, max_lines_count = 250, max_labels_count = 150)
 
 // ═══ 01 · CONSTANTS ═════════════════════════════════════════════════════════════
-BUILD = "0.8.1"
+BUILD = "0.8.2"
 
 // Timeframe slots (docs §8.2). v0.1 computes the chart TF only; HTF arrives with the HTF Feed (P5).
 TF_CHART = 0
@@ -546,6 +546,7 @@ type Setup
     float rrFinal
     bool drawLiq = false
     string drawTxt = ""
+    float drawPx
     // score
     float score = 0.0
     int grade = 0
@@ -648,7 +649,7 @@ i_preset = input.enum(StructPreset.intraday, "Structure preset", tooltip = "Pivo
 i_swLen = input.int(10, "Swing / internal length", minval = 2, maxval = 50, inline = "len", group = G_STR, display = display.none)
 i_inLen = input.int(3, "", minval = 2, maxval = 20, inline = "len", tooltip = "Manual preset only. Internal is forced below swing.", group = G_STR, display = display.none)
 i_brk = input.enum(BreakSrc.onClose, "Break confirmation", tooltip = "Close: a candle must close beyond the swing (default). Wick: any trade beyond counts.", group = G_STR, display = display.none)
-i_eqTol = input.float(0.10, "Equal H/L tolerance (×ATR)", minval = 0.0, maxval = 1.0, step = 0.01, group = G_STR, display = display.none)
+i_eqTol = input.float(0.10, "Equal H/L tolerance (×ATR)", minval = 0.0, maxval = 1.0, step = 0.01, tooltip = "Two swing highs (lows) closer than this are labelled EQH (EQL) instead of HH / LH (HL / LL).", group = G_STR, display = display.none)
 i_kLeg = input.float(1.5, "MSS min leg displacement (×ATR)", minval = 0.5, maxval = 5.0, step = 0.1, tooltip = "A CHoCH becomes MSS when its leg moved at least this much and left a fair value gap.", group = G_STR, display = display.none)
 
 // ── 3 · Liquidity
@@ -656,9 +657,9 @@ i_maxSweepPen = input.float(1.0, "Max sweep penetration (×ATR)", minval = 0.1, 
 i_reclaimBars = input.int(2, "Reclaim window (bars)", minval = 1, maxval = 10, tooltip = "After a close beyond the level, a close back inside within this many bars makes it a reclaim sweep.", group = G_LIQ, display = display.none)
 i_oldAge = input.int(50, "Old level age (bars)", minval = 5, maxval = 500, tooltip = "Single swing levels older than this become major liquidity.", group = G_LIQ, display = display.none)
 i_liqTol = input.float(0.15, "Equal levels tolerance (×ATR)", minval = 0.01, maxval = 1.0, step = 0.01, inline = "eq", group = G_LIQ, display = display.none)
-i_eqMaxBars = input.int(100, "within bars", minval = 10, maxval = 1000, inline = "eq", group = G_LIQ, display = display.none)
+i_eqMaxBars = input.int(100, "within bars", minval = 10, maxval = 1000, inline = "eq", tooltip = "Swing levels closer than the tolerance and at most this many bars apart form one equal highs / lows pool (BSL ≡2, ≡3 …).", group = G_LIQ, display = display.none)
 i_tsMinAge = input.int(20, "Turtle soup: level age ≥", minval = 5, maxval = 200, inline = "ts", group = G_LIQ, display = display.none)
-i_tsWindow = input.int(10, "CHoCH within", minval = 3, maxval = 50, inline = "ts", group = G_LIQ, display = display.none)
+i_tsWindow = input.int(10, "CHoCH within", minval = 3, maxval = 50, inline = "ts", tooltip = "A swept level counts as a turtle soup when it was at least this old and an internal CHoCH against the run follows within this many bars.", group = G_LIQ, display = display.none)
 i_keyDay = input.bool(true, "PDH/PDL", inline = "key", group = G_LIQ, display = display.none)
 i_keyWeek = input.bool(true, "PWH/PWL", inline = "key", group = G_LIQ, display = display.none)
 i_keySess = input.bool(true, "Session H/L", inline = "key", tooltip = "Key levels: previous day/week high-low (intraday charts) and Asia/London/NY session high-low.", group = G_LIQ, display = display.none)
@@ -666,20 +667,20 @@ i_keySess = input.bool(true, "Session H/L", inline = "key", tooltip = "Key level
 // ── 4 · Order blocks
 i_obZone = input.enum(ObZone.bodyWick, "OB zone", tooltip = "Full: high–low of the OB candle. Body+Wick: body edge to the far wick. Body: body only. Oversized zones fall back to Body.", group = G_OB, display = display.none)
 i_obReqDisp = input.bool(true, "Require displacement", inline = "obd", group = G_OB, display = display.none)
-i_obDispMin = input.float(1.0, "min ×ATR", minval = 0.0, maxval = 5.0, step = 0.1, inline = "obd", group = G_OB, display = display.none)
+i_obDispMin = input.float(1.0, "min ×ATR", minval = 0.0, maxval = 5.0, step = 0.1, inline = "obd", tooltip = "An order block is created only if the leg that broke structure moved at least this far (×ATR).", group = G_OB, display = display.none)
 i_obMin = input.float(0.25, "Size ×ATR  min", minval = 0.0, maxval = 2.0, step = 0.05, inline = "obs", group = G_OB, display = display.none)
-i_obMax = input.float(3.0, "max", minval = 0.5, maxval = 10.0, step = 0.1, inline = "obs", group = G_OB, display = display.none)
+i_obMax = input.float(3.0, "max", minval = 0.5, maxval = 10.0, step = 0.1, inline = "obs", tooltip = "Order blocks shorter or taller than this (×ATR) are skipped.", group = G_OB, display = display.none)
 i_volFilter = input.bool(false, "Volume filter", inline = "vol", group = G_OB, display = display.none)
 i_volMult = input.float(1.5, "× SMA20", minval = 1.0, maxval = 5.0, step = 0.1, inline = "vol", tooltip = "Peak volume of the impulse must exceed SMA(volume, 20) × multiplier. Ignored when the symbol has no volume.", group = G_OB, display = display.none)
 i_mitRule = input.enum(MitRule.half, "Mitigation rule", tooltip = "When an order block counts as mitigated: first touch, 50% (mean threshold) or full depth.", group = G_OB, display = display.none)
 i_breakers = input.bool(true, "Breaker & Mitigation Block", tooltip = "A broken OB flips polarity: Breaker if its leg swept external liquidity, Mitigation Block otherwise.", group = G_OB, display = display.none)
-i_obInternal = input.bool(false, "OB from internal breaks", group = G_OB, display = display.none)
+i_obInternal = input.bool(false, "OB from internal breaks", tooltip = "Also create order blocks from internal structure breaks: more and smaller zones.", group = G_OB, display = display.none)
 
 // ── 5 · Fair value gaps
-i_fvgMin = input.float(0.30, "Min size (×ATR)", minval = 0.0, maxval = 2.0, step = 0.05, group = G_FVG, display = display.none)
-i_fillRule = input.enum(FillRule.wick, "Fill rule", group = G_FVG, display = display.none)
+i_fvgMin = input.float(0.30, "Min size (×ATR)", minval = 0.0, maxval = 2.0, step = 0.05, tooltip = "Gaps smaller than this (×ATR) are ignored.", group = G_FVG, display = display.none)
+i_fillRule = input.enum(FillRule.wick, "Fill rule", tooltip = "When an FVG counts as filled: a wick reaches its far edge, a close beyond its far edge, or price reaches its CE (50%).", group = G_FVG, display = display.none)
 i_ignoreGaps = input.bool(true, "Ignore session gaps", tooltip = "Skip gaps created by overnight or weekend openings on intraday charts.", group = G_FVG, display = display.none)
-i_fvgMidDir = input.bool(true, "Require middle candle direction", group = G_FVG, display = display.none)
+i_fvgMidDir = input.bool(true, "Require middle candle direction", tooltip = "The middle candle of the three must close in the direction of the gap.", group = G_FVG, display = display.none)
 i_ifvg = input.bool(true, "Inversion (IFVG)", tooltip = "A gap closed through by a body flips polarity.", group = G_FVG, display = display.none)
 
 // ── 6 · Dealing range
@@ -690,11 +691,11 @@ i_oteHi = input.float(0.79, "–", minval = 0.5, maxval = 0.95, step = 0.005, in
 i_tz = input.string("America/New_York", "Session timezone", tooltip = "IANA timezone. Daylight saving time is handled automatically.", group = G_SES, display = display.none)
 i_sesPreset = input.enum(SesPreset.ictNy, "Preset", tooltip = "ICT (NY): Asia 20:00–00:00, London KZ 02:00–05:00, NY AM KZ 07:00–10:00 in New York time.\nOriginal (UTC): v1 spec windows in UTC; they drift against New York and London when DST changes.\nCustom: the windows below, in the session timezone.", group = G_SES, display = display.none)
 i_asiaOn = input.bool(true, "Asia", inline = "as", group = G_SES, display = display.none)
-i_asiaS = input.session("2000-0000", "", inline = "as", group = G_SES, display = display.none)
+i_asiaS = input.session("2000-0000", "", inline = "as", tooltip = "On / off. The time window is used only with Preset = Custom, in the session timezone.", group = G_SES, display = display.none)
 i_lonOn = input.bool(true, "London KZ", inline = "lo", group = G_SES, display = display.none)
-i_lonS = input.session("0200-0500", "", inline = "lo", group = G_SES, display = display.none)
+i_lonS = input.session("0200-0500", "", inline = "lo", tooltip = "On / off. The time window is used only with Preset = Custom. London and NY AM are the killzones setups score.", group = G_SES, display = display.none)
 i_nyOn = input.bool(true, "NY AM KZ", inline = "ny", group = G_SES, display = display.none)
-i_nyS = input.session("0700-1000", "", inline = "ny", group = G_SES, display = display.none)
+i_nyS = input.session("0700-1000", "", inline = "ny", tooltip = "On / off. The time window is used only with Preset = Custom. London and NY AM are the killzones setups score.", group = G_SES, display = display.none)
 i_sesCustom = false
 i_sesColAsia = #B39DDB
 i_sesColLon = #4FC3F7
@@ -707,7 +708,7 @@ i_htfLen = input.int(5, "HTF swing length", minval = 2, maxval = 20, tooltip = "
 i_minHtfBars = input.int(100, "Min HTF bars for bias", minval = 20, maxval = 1000, tooltip = "With fewer confirmed higher-timeframe bars the HTF bias is treated as unknown (A.16) and the Ribbon shows ⚠.", group = G_MTF, display = display.none)
 i_htfOB = true
 i_htfFVG = false
-i_htfLiq = input.bool(true, "HTF liquidity", inline = "hv", group = G_MTF, display = display.none)
+i_htfLiq = input.bool(true, "HTF liquidity", inline = "hv", tooltip = "HTF structure / OB / FVG: higher-timeframe objects on the chart (◆ prefix, 2 px). HTF liquidity: HTF levels join the liquidity map and setup targets.", group = G_MTF, display = display.none)
 
 // ── 9 · Setups (analytical: drawn and alerted, never executed)
 i_setups = input.bool(true, "Setup engine", tooltip = "Sweep Reversal and Continuation setups with Entry / SL / TP, confluence score and grade. Analytical only: no orders are placed.", group = G_SET, display = display.none)
@@ -728,8 +729,8 @@ i_spread = input.int(0, "Spread (ticks)", minval = 0, maxval = 100, inline = "ex
 i_nShift = input.int(20, "Shift window (bars)", minval = 3, maxval = 100, inline = "sh", group = G_SET, display = display.none)
 i_shiftDisp = input.float(1.0, "min leg ×ATR", minval = 0.0, maxval = 5.0, step = 0.1, inline = "sh", tooltip = "Sweep Reversal: the CHoCH/BOS against the sweep must come within this many bars, with a leg of at least this size starting at the sweep. Continuation: minimum leg of the BOS.", group = G_SET, display = display.none)
 i_maxSlAtr = input.float(3.0, "Max SL ×ATR", minval = 0.5, maxval = 10.0, step = 0.1, inline = "slr", group = G_SET, display = display.none)
-i_minSlTicks = input.int(5, "Min SL ticks", minval = 1, maxval = 100, inline = "slr", group = G_SET, display = display.none)
-i_beAfterTp1 = input.bool(true, "Move SL to entry after TP1", group = G_SET, display = display.none)
+i_minSlTicks = input.int(5, "Min SL ticks", minval = 1, maxval = 100, inline = "slr", tooltip = "A plan is rejected when its stop is wider than Max SL ×ATR (SL_TOO_WIDE) or tighter than Min SL ticks (SL_TOO_TIGHT).", group = G_SET, display = display.none)
+i_beAfterTp1 = input.bool(true, "Move SL to entry after TP1", tooltip = "After TP1 the stop moves to the entry, so the rest of the position exits flat if price comes back.", group = G_SET, display = display.none)
 i_showPlan = input.bool(true, "Show Entry/SL/TP", inline = "sp", group = G_SET, display = display.none)
 i_priceMarkers = input.bool(false, "Price-scale markers", inline = "sp", tooltip = "Entry, SL and TP1 of the focus setup as values on the price scale.", group = G_SET, display = display.none)
 i_alertGrade = input.enum(GradeOpt.a, "Alert min grade", tooltip = "Setup READY alerts fire only from this grade.", group = G_SET, display = display.none)
@@ -748,7 +749,7 @@ i_whMaxLen = input.int(4000, "Max message length", minval = 500, maxval = 20000,
 // ── 11 · Advanced
 i_atrLen = input.int(14, "ATR length", minval = 5, maxval = 200, tooltip = "Volatility unit for every threshold expressed in ×ATR.", group = G_ADV, display = display.none)
 i_kBody = input.float(1.0, "Displacement body ×ATR", minval = 0.3, maxval = 3.0, step = 0.1, inline = "disp", group = G_ADV, display = display.none)
-i_minBodyRatio = input.float(0.6, "body/range", minval = 0.3, maxval = 0.95, step = 0.05, inline = "disp", group = G_ADV, display = display.none)
+i_minBodyRatio = input.float(0.6, "body/range", minval = 0.3, maxval = 0.95, step = 0.05, inline = "disp", tooltip = "Displacement candle: body at least this many ATR and body / range at least this ratio.", group = G_ADV, display = display.none)
 i_log = input.bool(false, "Debug: log events to Pine Logs", tooltip = "One CSV-like line per event. Used for golden-journal regression (docs §27.5).", group = G_ADV, display = display.none)
 
 // ── Effective configuration (Config Resolver, docs §4.4)
@@ -2384,6 +2385,7 @@ f_setPlan(Setup s, array<Liq> lv) =>
     s.nTp := 0
     s.drawLiq := false
     s.drawTxt := ""
+    s.drawPx := na
     if fail == ""
         // opposite liquidity beyond the entry, nearest first; the shift range extreme is the weak high / low
         array<float> px = array.new<float>()
@@ -2426,6 +2428,7 @@ f_setPlan(Setup s, array<Liq> lv) =>
                 // draw on liquidity: a major opposite target at least 2R away (§9.5)
                 if not s.drawLiq and maj.get(k) and dd >= 2 * risk
                     s.drawLiq := true
+                    s.drawPx := px.get(k)
                     s.drawTxt := tg.get(k) + " " + f_px(px.get(k)) + " (" + str.tostring(dd / risk, "0.0") + "R)"
         if i_tpMode == TpMode.rr
             s.tp1 := e + d * risk
@@ -3354,6 +3357,14 @@ f_drawSetup(BoxPool pb, LinePool pl, LabelPool plb, Setup s, bool past) =>
             f_line(pl, x0, s.inv, x1, s.inv, color.new(C_BEAR, OP_SOFT), line.style_dotted, 1)
         if not na(s.trigT)
             f_label(plb, s.trigT, e, "●", color.new(sig, done ? OP_SOFT : OP_SOLID), label.style_label_center, size.small, "Entry " + f_px(e) + " · " + f_timeStr(s.trigT), yloc.price)
+    // Analysis / Debug (§17.1): the runner-up zone of the leg as a dotted "alt" outline until the entry,
+    // and an arrow from the entry to the draw on liquidity (a major target at least 2R away)
+    if not past and not done and mc.labelLevel >= 3
+        Zone az = s.poiAlt
+        if s.state <= SS_READY and not s.combo and not na(az) and az.state < ZS_FILLED
+            f_box(pb, x0, x1, az.top, az.bottom, color(na), color.new(C_SIG, OP_SOFT), 1, line.style_dotted, "alt", color.new(C_SIG, OP_SOFT), text.align_right)
+        if planned and vPlan and not na(s.drawPx)
+            f_line(pl, x0, s.entry, x1, s.drawPx, color.new(C_LIQ, OP_SOFT), line.style_arrow_right, 1)
     // card: direction, grade and score, chain, RR / SL size; outcome when done
     float risk = planned ? (s.entry - s.slInit) * d : na
     string head = done ? f_setOutcome(s) : f_sideName(d) + (forming ? " — FORMING" : " · " + f_gradeName(s.grade) + " " + str.tostring(s.score, "0.0") + (active ? " · ACTIVE" : ""))

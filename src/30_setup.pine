@@ -183,6 +183,7 @@ f_setPlan(Setup s, array<Liq> lv) =>
     s.nTp := 0
     s.drawLiq := false
     s.drawTxt := ""
+    s.drawPx := na
     if fail == ""
         // opposite liquidity beyond the entry, nearest first; the shift range extreme is the weak high / low
         array<float> px = array.new<float>()
@@ -225,6 +226,7 @@ f_setPlan(Setup s, array<Liq> lv) =>
                 // draw on liquidity: a major opposite target at least 2R away (§9.5)
                 if not s.drawLiq and maj.get(k) and dd >= 2 * risk
                     s.drawLiq := true
+                    s.drawPx := px.get(k)
                     s.drawTxt := tg.get(k) + " " + f_px(px.get(k)) + " (" + str.tostring(dd / risk, "0.0") + "R)"
         if i_tpMode == TpMode.rr
             s.tp1 := e + d * risk

@@ -394,6 +394,7 @@ type Setup
     float rrFinal
     bool drawLiq = false
     string drawTxt = ""
+    float drawPx
     // score
     float score = 0.0
     int grade = 0

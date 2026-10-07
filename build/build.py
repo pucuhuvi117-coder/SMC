@@ -41,13 +41,21 @@ ROOT = Path(__file__).resolve().parent.parent
 SRC = ROOT / "src"
 TARGETS = ROOT / "build" / "targets.json"
 
-# Compile budget per target (risk T-01, ADR-13). Measured in TradingView: ~30k tokens
-# compile in about a minute, ~40k tokens hit "Pine compilation was timed out" (2 min).
-# Compile time grows faster than linearly with size, so each indicator stays well below.
+# Compile budget per target (risk T-01, ADR-13), in code tokens: a string literal counts as one
+# token, whatever its length (v0.8.1; text was ~12% of the earlier word count). Measured in
+# TradingView: v0.3.0 = 26.7k code tokens compiled in about a minute, v0.4.0 = 35.1k hit
+# "Pine compilation was timed out" (2 min). Compile time grows faster than linearly with size,
+# so each indicator stays well below.
 WARN_LINES = 4000
-WARN_TOKENS = 34000
+WARN_TOKENS = 30000
 
 TOKEN_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_.]*|\d+\.?\d*|==|!=|<=|>=|:=|=>|[^\s\w]")
+STRING_RE = re.compile(r'"(?:[^"\\]|\\.)*"')
+
+
+def code_tokens(body: str) -> int:
+    """Tokens the compiler works on: comments dropped, each string literal one token."""
+    return sum(len(TOKEN_RE.findall(STRING_RE.sub("S", strip_comment(l)))) for l in body.splitlines())
 
 
 def read_version() -> str:
@@ -185,6 +193,7 @@ def lint_inputs(body: str) -> list[str]:
     prev_inline = prev_group = None
     seen_inline: set[str] = set()
     seen_group: set[str] = set()
+    row_tip: list[list] = []  # [inline id, has tooltip, first line] per settings row (AC-38)
     for n, raw in enumerate(body.splitlines(), 1):
         code = strip_comment(raw)
         if not re.match(r"^\w+\s*=\s*input\.\w+\(", code):
@@ -197,11 +206,19 @@ def lint_inputs(body: str) -> list[str]:
             issues.append(f"dist:{n}: input row inline=\"{il}\" is split by other inputs; declare its inputs one after another")
         if gr is not None and gr != prev_group and gr in seen_group:
             issues.append(f"dist:{n}: input group {gr} is split by other groups; declare its inputs one after another")
+        tip = re.search(r"\btooltip\s*=", code) is not None
+        if il is not None and row_tip and row_tip[-1][0] == il:
+            row_tip[-1][1] = row_tip[-1][1] or tip
+        else:
+            row_tip.append([il, tip, n])
         if il is not None:
             seen_inline.add(il)
         if gr is not None:
             seen_group.add(gr)
         prev_inline, prev_group = il, gr
+    for il, tip, n in row_tip:
+        if not tip:
+            issues.append(f"dist:{n}: settings row without a tooltip (AC-38); add tooltip = \"…\" to one input of the row")
     return issues
 
 
@@ -286,8 +303,8 @@ def syntax_check(path: Path) -> tuple[bool, str]:
 def build_target(target: str, check: bool) -> bool:
     out, body, issues = assemble(target)
     lines = body.count("\n")
-    tokens = sum(len(TOKEN_RE.findall(strip_comment(l))) for l in body.splitlines())
-    print(f"[{target}] built {out.relative_to(ROOT)}  v{read_version()}  lines={lines}  ~tokens={tokens}")
+    tokens = code_tokens(body)
+    print(f"[{target}] built {out.relative_to(ROOT)}  v{read_version()}  lines={lines}  code tokens={tokens} / {WARN_TOKENS}")
     if lines > WARN_LINES or tokens > WARN_TOKENS:
         print(f"[{target}] WARNING: above the compile budget (lines>{WARN_LINES} or tokens>{WARN_TOKENS}): TradingView may time out (risk T-01, ADR-13)")
 

@@ -85,6 +85,14 @@ f_drawSetup(BoxPool pb, LinePool pl, LabelPool plb, Setup s, bool past) =>
             f_line(pl, x0, s.inv, x1, s.inv, color.new(C_BEAR, OP_SOFT), line.style_dotted, 1)
         if not na(s.trigT)
             f_label(plb, s.trigT, e, "●", color.new(sig, done ? OP_SOFT : OP_SOLID), label.style_label_center, size.small, "Entry " + f_px(e) + " · " + f_timeStr(s.trigT), yloc.price)
+    // Analysis / Debug (§17.1): the runner-up zone of the leg as a dotted "alt" outline until the entry,
+    // and an arrow from the entry to the draw on liquidity (a major target at least 2R away)
+    if not past and not done and mc.labelLevel >= 3
+        Zone az = s.poiAlt
+        if s.state <= SS_READY and not s.combo and not na(az) and az.state < ZS_FILLED
+            f_box(pb, x0, x1, az.top, az.bottom, color(na), color.new(C_SIG, OP_SOFT), 1, line.style_dotted, "alt", color.new(C_SIG, OP_SOFT), text.align_right)
+        if planned and vPlan and not na(s.drawPx)
+            f_line(pl, x0, s.entry, x1, s.drawPx, color.new(C_LIQ, OP_SOFT), line.style_arrow_right, 1)
     // card: direction, grade and score, chain, RR / SL size; outcome when done
     float risk = planned ? (s.entry - s.slInit) * d : na
     string head = done ? f_setOutcome(s) : f_sideName(d) + (forming ? " — FORMING" : " · " + f_gradeName(s.grade) + " " + str.tostring(s.score, "0.0") + (active ? " · ACTIVE" : ""))

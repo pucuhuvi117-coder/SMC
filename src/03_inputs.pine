@@ -35,10 +35,10 @@ i_reduceMinorLiq = input.bool(true, "Reduce Minor Liquidity", tooltip = "At most
 i_reduceMinorFvg = input.bool(true, "Reduce Minor FVG", inline = "rm", group = G_VIS, display = display.none)
 i_reduceMinorOb = input.bool(true, "Reduce Minor OB", inline = "rm", tooltip = "Hide weak FVGs (no displacement, small) and fallback OBs (no opposite candle found).", group = G_VIS, display = display.none)
 i_showRibbon = input.bool(true, "Show Context Ribbon", inline = "rib", group = G_VIS, display = display.none)
-i_ribbonPos = input.string("Bottom Center", "", options = ["Bottom Center", "Top Center", "Bottom Left", "Bottom Right"], inline = "rib", group = G_VIS, display = display.none)
+i_ribbonPos = input.string("Bottom Center", "", options = ["Bottom Center", "Top Center", "Bottom Left", "Bottom Right"], inline = "rib", tooltip = "One line: HTF bias, structure, session, premium / discount, the last liquidity event and warnings.", group = G_VIS, display = display.none)
 i_showDash = input.bool(true, "Show Dashboard", inline = "dash", group = G_VIS, display = display.none)
 i_dashPos = input.string("Top Right", "", options = ["Top Right", "Top Left", "Bottom Right", "Bottom Left"], inline = "dash", tooltip = "Hidden in Clean mode: the Ribbon carries the context there. Use Custom mode to combine a clean chart with the Dashboard.", group = G_VIS, display = display.none)
-i_dashSize = input.string("Compact", "Dashboard size", options = ["Compact", "Expanded"], group = G_VIS, display = display.none)
+i_dashSize = input.string("Compact", "Dashboard size", options = ["Compact", "Expanded"], tooltip = "Compact: market, HTF, structure, session, location, liquidity, nearest targets, cfg. Expanded adds the internal trend and mode, and in Analysis / Debug the last swing events.", group = G_VIS, display = display.none)
 //#else
 // Setups indicator: no zones or history are drawn; display filters read by the shared engines are fixed
 i_smartLabels = true
@@ -55,7 +55,7 @@ i_preset = input.enum(StructPreset.intraday, "Structure preset", tooltip = "Pivo
 i_swLen = input.int(10, "Swing / internal length", minval = 2, maxval = 50, inline = "len", group = G_STR, display = display.none)
 i_inLen = input.int(3, "", minval = 2, maxval = 20, inline = "len", tooltip = "Manual preset only. Internal is forced below swing.", group = G_STR, display = display.none)
 i_brk = input.enum(BreakSrc.onClose, "Break confirmation", tooltip = "Close: a candle must close beyond the swing (default). Wick: any trade beyond counts.", group = G_STR, display = display.none)
-i_eqTol = input.float(0.10, "Equal H/L tolerance (×ATR)", minval = 0.0, maxval = 1.0, step = 0.01, group = G_STR, display = display.none)
+i_eqTol = input.float(0.10, "Equal H/L tolerance (×ATR)", minval = 0.0, maxval = 1.0, step = 0.01, tooltip = "Two swing highs (lows) closer than this are labelled EQH (EQL) instead of HH / LH (HL / LL).", group = G_STR, display = display.none)
 i_kLeg = input.float(1.5, "MSS min leg displacement (×ATR)", minval = 0.5, maxval = 5.0, step = 0.1, tooltip = "A CHoCH becomes MSS when its leg moved at least this much and left a fair value gap.", group = G_STR, display = display.none)
 //#if core
 i_showSwingStruct = input.bool(true, "Swing BOS/CHoCH", inline = "sd", group = G_STR, display = display.none)
@@ -68,46 +68,46 @@ i_maxSweepPen = input.float(1.0, "Max sweep penetration (×ATR)", minval = 0.1, 
 i_reclaimBars = input.int(2, "Reclaim window (bars)", minval = 1, maxval = 10, tooltip = "After a close beyond the level, a close back inside within this many bars makes it a reclaim sweep.", group = G_LIQ, display = display.none)
 i_oldAge = input.int(50, "Old level age (bars)", minval = 5, maxval = 500, tooltip = "Single swing levels older than this become major liquidity.", group = G_LIQ, display = display.none)
 i_liqTol = input.float(0.15, "Equal levels tolerance (×ATR)", minval = 0.01, maxval = 1.0, step = 0.01, inline = "eq", group = G_LIQ, display = display.none)
-i_eqMaxBars = input.int(100, "within bars", minval = 10, maxval = 1000, inline = "eq", group = G_LIQ, display = display.none)
+i_eqMaxBars = input.int(100, "within bars", minval = 10, maxval = 1000, inline = "eq", tooltip = "Swing levels closer than the tolerance and at most this many bars apart form one equal highs / lows pool (BSL ≡2, ≡3 …).", group = G_LIQ, display = display.none)
 i_tsMinAge = input.int(20, "Turtle soup: level age ≥", minval = 5, maxval = 200, inline = "ts", group = G_LIQ, display = display.none)
-i_tsWindow = input.int(10, "CHoCH within", minval = 3, maxval = 50, inline = "ts", group = G_LIQ, display = display.none)
+i_tsWindow = input.int(10, "CHoCH within", minval = 3, maxval = 50, inline = "ts", tooltip = "A swept level counts as a turtle soup when it was at least this old and an internal CHoCH against the run follows within this many bars.", group = G_LIQ, display = display.none)
 i_keyDay = input.bool(true, "PDH/PDL", inline = "key", group = G_LIQ, display = display.none)
 i_keyWeek = input.bool(true, "PWH/PWL", inline = "key", group = G_LIQ, display = display.none)
 i_keySess = input.bool(true, "Session H/L", inline = "key", tooltip = "Key levels: previous day/week high-low (intraday charts) and Asia/London/NY session high-low.", group = G_LIQ, display = display.none)
 //#if core
 i_showLevels = input.bool(true, "Levels", inline = "ld", group = G_LIQ, display = display.none)
 i_showSweeps = input.bool(true, "Sweeps", inline = "ld", group = G_LIQ, display = display.none)
-i_showSwept = input.bool(true, "Swept history", inline = "ld", group = G_LIQ, display = display.none)
-i_levelsPerSide = input.int(2, "Major levels per side", minval = 1, maxval = 10, group = G_LIQ, display = display.none)
+i_showSwept = input.bool(true, "Swept history", inline = "ld", tooltip = "Levels: active BSL / SSL lines. Sweeps: ✕ on swept levels. Swept history: past swept levels inside the history window.", group = G_LIQ, display = display.none)
+i_levelsPerSide = input.int(2, "Major levels per side", minval = 1, maxval = 10, tooltip = "Major liquidity levels drawn above and below price. Capped by the display mode.", group = G_LIQ, display = display.none)
 //#endif
 
 // ── 4 · Order blocks
 i_obZone = input.enum(ObZone.bodyWick, "OB zone", tooltip = "Full: high–low of the OB candle. Body+Wick: body edge to the far wick. Body: body only. Oversized zones fall back to Body.", group = G_OB, display = display.none)
 i_obReqDisp = input.bool(true, "Require displacement", inline = "obd", group = G_OB, display = display.none)
-i_obDispMin = input.float(1.0, "min ×ATR", minval = 0.0, maxval = 5.0, step = 0.1, inline = "obd", group = G_OB, display = display.none)
+i_obDispMin = input.float(1.0, "min ×ATR", minval = 0.0, maxval = 5.0, step = 0.1, inline = "obd", tooltip = "An order block is created only if the leg that broke structure moved at least this far (×ATR).", group = G_OB, display = display.none)
 i_obMin = input.float(0.25, "Size ×ATR  min", minval = 0.0, maxval = 2.0, step = 0.05, inline = "obs", group = G_OB, display = display.none)
-i_obMax = input.float(3.0, "max", minval = 0.5, maxval = 10.0, step = 0.1, inline = "obs", group = G_OB, display = display.none)
+i_obMax = input.float(3.0, "max", minval = 0.5, maxval = 10.0, step = 0.1, inline = "obs", tooltip = "Order blocks shorter or taller than this (×ATR) are skipped.", group = G_OB, display = display.none)
 i_volFilter = input.bool(false, "Volume filter", inline = "vol", group = G_OB, display = display.none)
 i_volMult = input.float(1.5, "× SMA20", minval = 1.0, maxval = 5.0, step = 0.1, inline = "vol", tooltip = "Peak volume of the impulse must exceed SMA(volume, 20) × multiplier. Ignored when the symbol has no volume.", group = G_OB, display = display.none)
 i_mitRule = input.enum(MitRule.half, "Mitigation rule", tooltip = "When an order block counts as mitigated: first touch, 50% (mean threshold) or full depth.", group = G_OB, display = display.none)
 i_breakers = input.bool(true, "Breaker & Mitigation Block", tooltip = "A broken OB flips polarity: Breaker if its leg swept external liquidity, Mitigation Block otherwise.", group = G_OB, display = display.none)
-i_obInternal = input.bool(false, "OB from internal breaks", group = G_OB, display = display.none)
+i_obInternal = input.bool(false, "OB from internal breaks", tooltip = "Also create order blocks from internal structure breaks: more and smaller zones.", group = G_OB, display = display.none)
 //#if core
 i_showOB = input.bool(true, "Order Blocks", inline = "obv", group = G_OB, display = display.none)
 i_obMid = input.bool(true, "Midline", inline = "obv", group = G_OB, display = display.none)
-i_showMitigated = input.bool(true, "Mitigated", inline = "obv", group = G_OB, display = display.none)
+i_showMitigated = input.bool(true, "Mitigated", inline = "obv", tooltip = "Order Blocks: OB, Breaker and Mitigation Blocks. Midline: the 50% line. Mitigated: keep showing blocks after mitigation.", group = G_OB, display = display.none)
 //#endif
 
 // ── 5 · Fair value gaps
-i_fvgMin = input.float(0.30, "Min size (×ATR)", minval = 0.0, maxval = 2.0, step = 0.05, group = G_FVG, display = display.none)
-i_fillRule = input.enum(FillRule.wick, "Fill rule", group = G_FVG, display = display.none)
+i_fvgMin = input.float(0.30, "Min size (×ATR)", minval = 0.0, maxval = 2.0, step = 0.05, tooltip = "Gaps smaller than this (×ATR) are ignored.", group = G_FVG, display = display.none)
+i_fillRule = input.enum(FillRule.wick, "Fill rule", tooltip = "When an FVG counts as filled: a wick reaches its far edge, a close beyond its far edge, or price reaches its CE (50%).", group = G_FVG, display = display.none)
 i_ignoreGaps = input.bool(true, "Ignore session gaps", tooltip = "Skip gaps created by overnight or weekend openings on intraday charts.", group = G_FVG, display = display.none)
-i_fvgMidDir = input.bool(true, "Require middle candle direction", group = G_FVG, display = display.none)
+i_fvgMidDir = input.bool(true, "Require middle candle direction", tooltip = "The middle candle of the three must close in the direction of the gap.", group = G_FVG, display = display.none)
 i_ifvg = input.bool(true, "Inversion (IFVG)", tooltip = "A gap closed through by a body flips polarity.", group = G_FVG, display = display.none)
 //#if core
 i_showFVG = input.bool(true, "FVG", inline = "fv", group = G_FVG, display = display.none)
 i_fvgCE = input.bool(true, "CE line", inline = "fv", group = G_FVG, display = display.none)
-i_shrink = input.bool(true, "Shrink on fill", inline = "fv", group = G_FVG, display = display.none)
+i_shrink = input.bool(true, "Shrink on fill", inline = "fv", tooltip = "FVG: fair value gaps. CE line: the 50% line. Shrink on fill: the box keeps only the part not filled yet.", group = G_FVG, display = display.none)
 //#endif
 
 // ── 6 · Dealing range
@@ -121,11 +121,11 @@ i_pdView = input.enum(PdView.eqOte, "PD view", tooltip = "Off / Equilibrium only
 i_tz = input.string("America/New_York", "Session timezone", tooltip = "IANA timezone. Daylight saving time is handled automatically.", group = G_SES, display = display.none)
 i_sesPreset = input.enum(SesPreset.ictNy, "Preset", tooltip = "ICT (NY): Asia 20:00–00:00, London KZ 02:00–05:00, NY AM KZ 07:00–10:00 in New York time.\nOriginal (UTC): v1 spec windows in UTC; they drift against New York and London when DST changes.\nCustom: the windows below, in the session timezone.", group = G_SES, display = display.none)
 i_asiaOn = input.bool(true, "Asia", inline = "as", group = G_SES, display = display.none)
-i_asiaS = input.session("2000-0000", "", inline = "as", group = G_SES, display = display.none)
+i_asiaS = input.session("2000-0000", "", inline = "as", tooltip = "On / off. The time window is used only with Preset = Custom, in the session timezone.", group = G_SES, display = display.none)
 i_lonOn = input.bool(true, "London KZ", inline = "lo", group = G_SES, display = display.none)
-i_lonS = input.session("0200-0500", "", inline = "lo", group = G_SES, display = display.none)
+i_lonS = input.session("0200-0500", "", inline = "lo", tooltip = "On / off. The time window is used only with Preset = Custom. London and NY AM are the killzones setups score.", group = G_SES, display = display.none)
 i_nyOn = input.bool(true, "NY AM KZ", inline = "ny", group = G_SES, display = display.none)
-i_nyS = input.session("0700-1000", "", inline = "ny", group = G_SES, display = display.none)
+i_nyS = input.session("0700-1000", "", inline = "ny", tooltip = "On / off. The time window is used only with Preset = Custom. London and NY AM are the killzones setups score.", group = G_SES, display = display.none)
 //#if core
 i_sesFill = input.int(80, "Session fill transparency", minval = 0, maxval = 100, tooltip = "0 = solid, 100 = invisible. Borders and names always stay clearly visible.", group = G_SES, display = display.none)
 i_sesCustom = input.bool(false, "Custom colors", inline = "sc", group = G_SES, display = display.none)
@@ -153,7 +153,7 @@ i_htfFVG = input.bool(false, "HTF FVG", inline = "hv", group = G_MTF, display = 
 i_htfOB = true
 i_htfFVG = false
 //#endif
-i_htfLiq = input.bool(true, "HTF liquidity", inline = "hv", group = G_MTF, display = display.none)
+i_htfLiq = input.bool(true, "HTF liquidity", inline = "hv", tooltip = "HTF structure / OB / FVG: higher-timeframe objects on the chart (◆ prefix, 2 px). HTF liquidity: HTF levels join the liquidity map and setup targets.", group = G_MTF, display = display.none)
 
 // ── 9 · Setups (analytical: drawn and alerted, never executed)
 //#if setups
@@ -175,8 +175,8 @@ i_spread = input.int(0, "Spread (ticks)", minval = 0, maxval = 100, inline = "ex
 i_nShift = input.int(20, "Shift window (bars)", minval = 3, maxval = 100, inline = "sh", group = G_SET, display = display.none)
 i_shiftDisp = input.float(1.0, "min leg ×ATR", minval = 0.0, maxval = 5.0, step = 0.1, inline = "sh", tooltip = "Sweep Reversal: the CHoCH/BOS against the sweep must come within this many bars, with a leg of at least this size starting at the sweep. Continuation: minimum leg of the BOS.", group = G_SET, display = display.none)
 i_maxSlAtr = input.float(3.0, "Max SL ×ATR", minval = 0.5, maxval = 10.0, step = 0.1, inline = "slr", group = G_SET, display = display.none)
-i_minSlTicks = input.int(5, "Min SL ticks", minval = 1, maxval = 100, inline = "slr", group = G_SET, display = display.none)
-i_beAfterTp1 = input.bool(true, "Move SL to entry after TP1", group = G_SET, display = display.none)
+i_minSlTicks = input.int(5, "Min SL ticks", minval = 1, maxval = 100, inline = "slr", tooltip = "A plan is rejected when its stop is wider than Max SL ×ATR (SL_TOO_WIDE) or tighter than Min SL ticks (SL_TOO_TIGHT).", group = G_SET, display = display.none)
+i_beAfterTp1 = input.bool(true, "Move SL to entry after TP1", tooltip = "After TP1 the stop moves to the entry, so the rest of the position exits flat if price comes back.", group = G_SET, display = display.none)
 i_showPlan = input.bool(true, "Show Entry/SL/TP", inline = "sp", group = G_SET, display = display.none)
 i_priceMarkers = input.bool(false, "Price-scale markers", inline = "sp", tooltip = "Entry, SL and TP1 of the focus setup as values on the price scale.", group = G_SET, display = display.none)
 i_alertGrade = input.enum(GradeOpt.a, "Alert min grade", tooltip = "Setup READY alerts fire only from this grade.", group = G_SET, display = display.none)
@@ -196,10 +196,10 @@ i_whMaxLen = input.int(4000, "Max message length", minval = 500, maxval = 20000,
 // ── 11 · Advanced
 i_atrLen = input.int(14, "ATR length", minval = 5, maxval = 200, tooltip = "Volatility unit for every threshold expressed in ×ATR.", group = G_ADV, display = display.none)
 i_kBody = input.float(1.0, "Displacement body ×ATR", minval = 0.3, maxval = 3.0, step = 0.1, inline = "disp", group = G_ADV, display = display.none)
-i_minBodyRatio = input.float(0.6, "body/range", minval = 0.3, maxval = 0.95, step = 0.05, inline = "disp", group = G_ADV, display = display.none)
+i_minBodyRatio = input.float(0.6, "body/range", minval = 0.3, maxval = 0.95, step = 0.05, inline = "disp", tooltip = "Displacement candle: body at least this many ATR and body / range at least this ratio.", group = G_ADV, display = display.none)
 //#if core
-i_showIds = input.bool(true, "Debug: IDs, states and R on objects", group = G_ADV, display = display.none)
-i_debugTable = input.bool(true, "Debug: budget table", group = G_ADV, display = display.none)
+i_showIds = input.bool(true, "Debug: IDs, states and R on objects", tooltip = "Debug mode only: object IDs, states and relevance R on the chart.", group = G_ADV, display = display.none)
+i_debugTable = input.bool(true, "Debug: budget table", tooltip = "Debug mode only: table with pool use, registries and data health.", group = G_ADV, display = display.none)
 //#endif
 i_log = input.bool(false, "Debug: log events to Pine Logs", tooltip = "One CSV-like line per event. Used for golden-journal regression (docs §27.5).", group = G_ADV, display = display.none)
 

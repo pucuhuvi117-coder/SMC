@@ -151,6 +151,12 @@ if barstate.isconfirmed
 plot(i_priceMarkers ? pmE : na, "Setup entry", color = C_SIG, display = display.price_scale, editable = false)
 plot(i_priceMarkers ? pmSL : na, "Setup SL", color = C_BEAR, display = display.price_scale, editable = false)
 plot(i_priceMarkers ? pmTP : na, "Setup TP1", color = C_BULL, display = display.price_scale, editable = false)
+//#else
+// Displacement candles (§17.1): outline markers in Analysis / Debug, on closed bars only. They are
+// plots, so they cost no drawing budget and can be hidden in the Style tab.
+bool dispMk = mc.labelLevel >= 3 and barstate.isconfirmed
+plotchar(dispMk and isDispUp, "Displacement ↑", "△", location.belowbar, color.new(C_BULL, OP_MEDIUM), size = size.tiny, display = display.pane)
+plotchar(dispMk and isDispDn, "Displacement ↓", "▽", location.abovebar, color.new(C_BEAR, OP_MEDIUM), size = size.tiny, display = display.pane)
 //#endif
 
 // ── Visual pools (created once; creation order = z-order, §13.13)

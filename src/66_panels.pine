@@ -125,8 +125,8 @@ f_dashboard(table tb, Ctx x, Core c, StructState si, Range r) =>
             if nh > 0
                 for i = nh - 1 to 0
                     Event e = c.history.get(i)
-                    if shown < 5 and row < DASH_ROWS - 1 and (e.typ == EV_BOS or e.typ == EV_CHOCH or e.typ == EV_LIQ_SWEPT) and (e.typ == EV_LIQ_SWEPT or e.v1 == LV_SWG)
-                        string et = e.typ == EV_LIQ_SWEPT ? f_liqText(e) : f_structText(e)
+                    if shown < 8 and row < DASH_ROWS - 1 and (e.typ == EV_BOS or e.typ == EV_CHOCH or e.typ == EV_LIQ_SWEPT) and (e.typ == EV_LIQ_SWEPT or e.v1 == LV_SWG)
+                        string et = f_htfPrefix(e.tf) + (e.typ == EV_LIQ_SWEPT ? f_liqText(e) : f_structText(e))
                         row := f_dashRow(tb, row, str.format_time(e.t, "MM-dd HH:mm", sesTz), et + " · " + f_px(e.price), e.typ == EV_LIQ_SWEPT ? C_LIQ : f_dirColor(e.dir), e.s1, sz)
                         shown += 1
         if row <= DASH_ROWS - 1
