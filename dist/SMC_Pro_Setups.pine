@@ -1,6 +1,6 @@
 //@version=6
 // ═══════════════════════════════════════════════════════════════════════════════
-//  SMC Pro · Setups · build 0.7.0 · 2026-10-07
+//  SMC Pro · Setups · build 0.8.4 · 2026-10-07
 //  Companion of SMC Visualizer Pro: same engines and settings, plus the setup engine (ADR-13).
 //  Generated from /src by build/build.py. Do not edit dist/ by hand.
 //  Architecture: docs/02-architecture.md · Detectors: docs/appendix-a-detection-spec.md
@@ -8,7 +8,7 @@
 indicator("SMC Pro · Setups", shorttitle = "SMC Setups", overlay = true, max_boxes_count = 100, max_lines_count = 250, max_labels_count = 150)
 
 // ═══ 01 · CONSTANTS ═════════════════════════════════════════════════════════════
-BUILD = "0.7.0"
+BUILD = "0.8.4"
 
 // Timeframe slots (docs §8.2). v0.1 computes the chart TF only; HTF arrives with the HTF Feed (P5).
 TF_CHART = 0
@@ -140,9 +140,12 @@ RANGE_ARCH_CAP = 600
 SESS_CAP = 1200
 BRK_CAP = 3000
 SWING_CAP = 3000
-// Visible-range rendering: a wide view is split into time segments with their own anchor
+// History window rendering: a wide window is split into time segments with their own anchor
 SEG_BARS = 150
 SEG_MAX = 6
+// Bars on a ~1300 px screen at the default zoom. The visible range is not read (ADR-14), so
+// label widths, slivers and tag spacing are estimated for this zoom, not for the whole window.
+VIEW_BARS = 200
 HIST_CAP = 90000
 // History buffer for dynamic offsets and the guard that keeps every lookback below it
 MAXBACK = 600
@@ -421,6 +424,8 @@ type Range
     float lo
     int hiBar
     int loBar
+    int hiT
+    int loT
     int t0
     int b0
     int pdZone = 0
@@ -543,6 +548,7 @@ type Setup
     float rrFinal
     bool drawLiq = false
     string drawTxt = ""
+    float drawPx
     // score
     float score = 0.0
     int grade = 0
@@ -563,40 +569,13 @@ type Setup
     float rReal = 0.0
     string reason = ""
 
-// Display mode ceilings (§15.3, §19.2)
+// Display mode ceilings (§15.3, §19.2). SMC Pro · Setups gets a short type with only the
+// fields it reads: the full rows cost it ~600 tokens of compile budget (ADR-13).
 type ModeCfg
-    int structEvents
-    int internalEvents
-    bool swingLabels
-    int zonesPerSide
-    int majorPerSide
-    int minorPerSide
-    int sweptShow
     float distMax
-    float theta
-    int ttl
     int hist
-    bool mitigated
-    int pdCap
-    bool gauge
-    int sessions
-    bool dashboard
     int labelLevel
     bool debug
-    int structWin
-    int internalWin
-    int swingLabelWin
-    int sweepWin
-    int sessWin
-    int rangeWin
-    int poolZone
-    int poolWash
-    int poolLvl
-    int poolStr
-    int poolLab
-    int htfStructEvents
-    int htfStructWin
-    int keyCap
     int gradeFloor = 1
     int setupPast = 0
     int poolSetBox = 8
@@ -605,10 +584,9 @@ type ModeCfg
 
 // What the render pass draws: a bar window, split into time segments. Each segment ranks
 // objects against its own anchor (close and ATR at the segment's last bar), so a wide or
-// scrolled-back view keeps the same density as the live edge (docs §15, AC-M16).
+// window keeps the same density as the live edge (docs §15, ADR-14).
 type View
     bool vp
-    bool live
     int iL
     int iR
     int segs = 1
@@ -617,7 +595,6 @@ type View
     array<float> segAtr
     float winLo
     float winHi
-    int tL
 
 // Visual pools: drawings are created once and reused (§4.9)
 type BoxPool
@@ -674,7 +651,7 @@ i_preset = input.enum(StructPreset.intraday, "Structure preset", tooltip = "Pivo
 i_swLen = input.int(10, "Swing / internal length", minval = 2, maxval = 50, inline = "len", group = G_STR, display = display.none)
 i_inLen = input.int(3, "", minval = 2, maxval = 20, inline = "len", tooltip = "Manual preset only. Internal is forced below swing.", group = G_STR, display = display.none)
 i_brk = input.enum(BreakSrc.onClose, "Break confirmation", tooltip = "Close: a candle must close beyond the swing (default). Wick: any trade beyond counts.", group = G_STR, display = display.none)
-i_eqTol = input.float(0.10, "Equal H/L tolerance (×ATR)", minval = 0.0, maxval = 1.0, step = 0.01, group = G_STR, display = display.none)
+i_eqTol = input.float(0.10, "Equal H/L tolerance (×ATR)", minval = 0.0, maxval = 1.0, step = 0.01, tooltip = "Two swing highs (lows) closer than this are labelled EQH (EQL) instead of HH / LH (HL / LL).", group = G_STR, display = display.none)
 i_kLeg = input.float(1.5, "MSS min leg displacement (×ATR)", minval = 0.5, maxval = 5.0, step = 0.1, tooltip = "A CHoCH becomes MSS when its leg moved at least this much and left a fair value gap.", group = G_STR, display = display.none)
 
 // ── 3 · Liquidity
@@ -682,9 +659,9 @@ i_maxSweepPen = input.float(1.0, "Max sweep penetration (×ATR)", minval = 0.1, 
 i_reclaimBars = input.int(2, "Reclaim window (bars)", minval = 1, maxval = 10, tooltip = "After a close beyond the level, a close back inside within this many bars makes it a reclaim sweep.", group = G_LIQ, display = display.none)
 i_oldAge = input.int(50, "Old level age (bars)", minval = 5, maxval = 500, tooltip = "Single swing levels older than this become major liquidity.", group = G_LIQ, display = display.none)
 i_liqTol = input.float(0.15, "Equal levels tolerance (×ATR)", minval = 0.01, maxval = 1.0, step = 0.01, inline = "eq", group = G_LIQ, display = display.none)
-i_eqMaxBars = input.int(100, "within bars", minval = 10, maxval = 1000, inline = "eq", group = G_LIQ, display = display.none)
+i_eqMaxBars = input.int(100, "within bars", minval = 10, maxval = 1000, inline = "eq", tooltip = "Swing levels closer than the tolerance and at most this many bars apart form one equal highs / lows pool (BSL ≡2, ≡3 …).", group = G_LIQ, display = display.none)
 i_tsMinAge = input.int(20, "Turtle soup: level age ≥", minval = 5, maxval = 200, inline = "ts", group = G_LIQ, display = display.none)
-i_tsWindow = input.int(10, "CHoCH within", minval = 3, maxval = 50, inline = "ts", group = G_LIQ, display = display.none)
+i_tsWindow = input.int(10, "CHoCH within", minval = 3, maxval = 50, inline = "ts", tooltip = "A swept level counts as a turtle soup when it was at least this old and an internal CHoCH against the run follows within this many bars.", group = G_LIQ, display = display.none)
 i_keyDay = input.bool(true, "PDH/PDL", inline = "key", group = G_LIQ, display = display.none)
 i_keyWeek = input.bool(true, "PWH/PWL", inline = "key", group = G_LIQ, display = display.none)
 i_keySess = input.bool(true, "Session H/L", inline = "key", tooltip = "Key levels: previous day/week high-low (intraday charts) and Asia/London/NY session high-low.", group = G_LIQ, display = display.none)
@@ -692,20 +669,20 @@ i_keySess = input.bool(true, "Session H/L", inline = "key", tooltip = "Key level
 // ── 4 · Order blocks
 i_obZone = input.enum(ObZone.bodyWick, "OB zone", tooltip = "Full: high–low of the OB candle. Body+Wick: body edge to the far wick. Body: body only. Oversized zones fall back to Body.", group = G_OB, display = display.none)
 i_obReqDisp = input.bool(true, "Require displacement", inline = "obd", group = G_OB, display = display.none)
-i_obDispMin = input.float(1.0, "min ×ATR", minval = 0.0, maxval = 5.0, step = 0.1, inline = "obd", group = G_OB, display = display.none)
+i_obDispMin = input.float(1.0, "min ×ATR", minval = 0.0, maxval = 5.0, step = 0.1, inline = "obd", tooltip = "An order block is created only if the leg that broke structure moved at least this far (×ATR).", group = G_OB, display = display.none)
 i_obMin = input.float(0.25, "Size ×ATR  min", minval = 0.0, maxval = 2.0, step = 0.05, inline = "obs", group = G_OB, display = display.none)
-i_obMax = input.float(3.0, "max", minval = 0.5, maxval = 10.0, step = 0.1, inline = "obs", group = G_OB, display = display.none)
+i_obMax = input.float(3.0, "max", minval = 0.5, maxval = 10.0, step = 0.1, inline = "obs", tooltip = "Order blocks shorter or taller than this (×ATR) are skipped.", group = G_OB, display = display.none)
 i_volFilter = input.bool(false, "Volume filter", inline = "vol", group = G_OB, display = display.none)
 i_volMult = input.float(1.5, "× SMA20", minval = 1.0, maxval = 5.0, step = 0.1, inline = "vol", tooltip = "Peak volume of the impulse must exceed SMA(volume, 20) × multiplier. Ignored when the symbol has no volume.", group = G_OB, display = display.none)
 i_mitRule = input.enum(MitRule.half, "Mitigation rule", tooltip = "When an order block counts as mitigated: first touch, 50% (mean threshold) or full depth.", group = G_OB, display = display.none)
 i_breakers = input.bool(true, "Breaker & Mitigation Block", tooltip = "A broken OB flips polarity: Breaker if its leg swept external liquidity, Mitigation Block otherwise.", group = G_OB, display = display.none)
-i_obInternal = input.bool(false, "OB from internal breaks", group = G_OB, display = display.none)
+i_obInternal = input.bool(false, "OB from internal breaks", tooltip = "Also create order blocks from internal structure breaks: more and smaller zones.", group = G_OB, display = display.none)
 
 // ── 5 · Fair value gaps
-i_fvgMin = input.float(0.30, "Min size (×ATR)", minval = 0.0, maxval = 2.0, step = 0.05, group = G_FVG, display = display.none)
-i_fillRule = input.enum(FillRule.wick, "Fill rule", group = G_FVG, display = display.none)
+i_fvgMin = input.float(0.30, "Min size (×ATR)", minval = 0.0, maxval = 2.0, step = 0.05, tooltip = "Gaps smaller than this (×ATR) are ignored.", group = G_FVG, display = display.none)
+i_fillRule = input.enum(FillRule.wick, "Fill rule", tooltip = "When an FVG counts as filled: a wick reaches its far edge, a close beyond its far edge, or price reaches its CE (50%).", group = G_FVG, display = display.none)
 i_ignoreGaps = input.bool(true, "Ignore session gaps", tooltip = "Skip gaps created by overnight or weekend openings on intraday charts.", group = G_FVG, display = display.none)
-i_fvgMidDir = input.bool(true, "Require middle candle direction", group = G_FVG, display = display.none)
+i_fvgMidDir = input.bool(true, "Require middle candle direction", tooltip = "The middle candle of the three must close in the direction of the gap.", group = G_FVG, display = display.none)
 i_ifvg = input.bool(true, "Inversion (IFVG)", tooltip = "A gap closed through by a body flips polarity.", group = G_FVG, display = display.none)
 
 // ── 6 · Dealing range
@@ -716,11 +693,11 @@ i_oteHi = input.float(0.79, "–", minval = 0.5, maxval = 0.95, step = 0.005, in
 i_tz = input.string("America/New_York", "Session timezone", tooltip = "IANA timezone. Daylight saving time is handled automatically.", group = G_SES, display = display.none)
 i_sesPreset = input.enum(SesPreset.ictNy, "Preset", tooltip = "ICT (NY): Asia 20:00–00:00, London KZ 02:00–05:00, NY AM KZ 07:00–10:00 in New York time.\nOriginal (UTC): v1 spec windows in UTC; they drift against New York and London when DST changes.\nCustom: the windows below, in the session timezone.", group = G_SES, display = display.none)
 i_asiaOn = input.bool(true, "Asia", inline = "as", group = G_SES, display = display.none)
-i_asiaS = input.session("2000-0000", "", inline = "as", group = G_SES, display = display.none)
+i_asiaS = input.session("2000-0000", "", inline = "as", tooltip = "On / off. The time window is used only with Preset = Custom, in the session timezone.", group = G_SES, display = display.none)
 i_lonOn = input.bool(true, "London KZ", inline = "lo", group = G_SES, display = display.none)
-i_lonS = input.session("0200-0500", "", inline = "lo", group = G_SES, display = display.none)
+i_lonS = input.session("0200-0500", "", inline = "lo", tooltip = "On / off. The time window is used only with Preset = Custom. London and NY AM are the killzones setups score.", group = G_SES, display = display.none)
 i_nyOn = input.bool(true, "NY AM KZ", inline = "ny", group = G_SES, display = display.none)
-i_nyS = input.session("0700-1000", "", inline = "ny", group = G_SES, display = display.none)
+i_nyS = input.session("0700-1000", "", inline = "ny", tooltip = "On / off. The time window is used only with Preset = Custom. London and NY AM are the killzones setups score.", group = G_SES, display = display.none)
 i_sesCustom = false
 i_sesColAsia = #B39DDB
 i_sesColLon = #4FC3F7
@@ -733,7 +710,7 @@ i_htfLen = input.int(5, "HTF swing length", minval = 2, maxval = 20, tooltip = "
 i_minHtfBars = input.int(100, "Min HTF bars for bias", minval = 20, maxval = 1000, tooltip = "With fewer confirmed higher-timeframe bars the HTF bias is treated as unknown (A.16) and the Ribbon shows ⚠.", group = G_MTF, display = display.none)
 i_htfOB = true
 i_htfFVG = false
-i_htfLiq = input.bool(true, "HTF liquidity", inline = "hv", group = G_MTF, display = display.none)
+i_htfLiq = input.bool(true, "HTF liquidity", inline = "hv", tooltip = "HTF structure / OB / FVG: higher-timeframe objects on the chart (◆ prefix, 2 px). HTF liquidity: HTF levels join the liquidity map and setup targets.", group = G_MTF, display = display.none)
 
 // ── 9 · Setups (analytical: drawn and alerted, never executed)
 i_setups = input.bool(true, "Setup engine", tooltip = "Sweep Reversal and Continuation setups with Entry / SL / TP, confluence score and grade. Analytical only: no orders are placed.", group = G_SET, display = display.none)
@@ -754,8 +731,8 @@ i_spread = input.int(0, "Spread (ticks)", minval = 0, maxval = 100, inline = "ex
 i_nShift = input.int(20, "Shift window (bars)", minval = 3, maxval = 100, inline = "sh", group = G_SET, display = display.none)
 i_shiftDisp = input.float(1.0, "min leg ×ATR", minval = 0.0, maxval = 5.0, step = 0.1, inline = "sh", tooltip = "Sweep Reversal: the CHoCH/BOS against the sweep must come within this many bars, with a leg of at least this size starting at the sweep. Continuation: minimum leg of the BOS.", group = G_SET, display = display.none)
 i_maxSlAtr = input.float(3.0, "Max SL ×ATR", minval = 0.5, maxval = 10.0, step = 0.1, inline = "slr", group = G_SET, display = display.none)
-i_minSlTicks = input.int(5, "Min SL ticks", minval = 1, maxval = 100, inline = "slr", group = G_SET, display = display.none)
-i_beAfterTp1 = input.bool(true, "Move SL to entry after TP1", group = G_SET, display = display.none)
+i_minSlTicks = input.int(5, "Min SL ticks", minval = 1, maxval = 100, inline = "slr", tooltip = "A plan is rejected when its stop is wider than Max SL ×ATR (SL_TOO_WIDE) or tighter than Min SL ticks (SL_TOO_TIGHT).", group = G_SET, display = display.none)
+i_beAfterTp1 = input.bool(true, "Move SL to entry after TP1", tooltip = "After TP1 the stop moves to the entry, so the rest of the position exits flat if price comes back.", group = G_SET, display = display.none)
 i_showPlan = input.bool(true, "Show Entry/SL/TP", inline = "sp", group = G_SET, display = display.none)
 i_priceMarkers = input.bool(false, "Price-scale markers", inline = "sp", tooltip = "Entry, SL and TP1 of the focus setup as values on the price scale.", group = G_SET, display = display.none)
 i_alertGrade = input.enum(GradeOpt.a, "Alert min grade", tooltip = "Setup READY alerts fire only from this grade.", group = G_SET, display = display.none)
@@ -763,18 +740,18 @@ i_showPath = input.bool(true, "Setup Path", tooltip = "① sweep → ② CHoCH /
 i_inspect = input.bool(false, "Inspect", inline = "insp", group = G_SET, display = display.none)
 i_inspectT = input.time(timestamp("01 Jan 2026 00:00 +0000"), "", inline = "insp", tooltip = "Pick a moment: the setup that was live there is drawn in full with its path and explained in the panel (INSPECT row), even if its grade is below the display filter. Without a setup, the row tells why: the attempts that ended there and their reasons, or that there was no sweep / BOS.", group = G_SET, display = display.none)
 i_setPanel = input.bool(true, "Setup panel", inline = "spn", group = G_SET, display = display.none)
+i_setPanelPos = input.string("Bottom Right", "", options = ["Bottom Right", "Top Right", "Bottom Left", "Top Left", "Bottom Center"], inline = "spn", tooltip = "Setup, quality, plan and invalidation of the focus setup, and the settings signature cfg (must match SMC Visualizer Pro).", group = G_SET, display = display.none)
 i_alertFmt = input.enum(AlertFmt.plain, "Alert message", tooltip = "For one alert \"Any alert() function call\": one message per bar close with every event that passes the filters below. Text: one readable line. JSON: envelope smcvp.event v1 for a webhook (docs §12). Re-create the alert after changing settings.", group = G_ALR, display = display.none)
 i_whScope = input.enum(WhScope.setups, "Events", inline = "whs", group = G_ALR, display = display.none)
 i_whMinTier = input.int(2, "min tier", minval = 1, maxval = 4, inline = "whs", tooltip = "Setups: setup transitions from READY on, grade ≥ Alert min grade. Setups + key events: also swing BOS / CHoCH, major sweeps, HTF bias (tier 1). All events: everything up to this tier (1 = most important).", group = G_ALR, display = display.none)
 i_whSnap = input.int(0, "Snapshot every N bars", minval = 0, maxval = 500, tooltip = "0 = off. Otherwise, on bars without events, the READY / ACTIVE setups are sent every N bars (heartbeat for the gateway).", group = G_ALR, display = display.none)
 i_whTok = input.string("", "Sender id (tok)", tooltip = "Optional id the gateway can check. Not a broker secret.", group = G_ALR, display = display.none)
 i_whMaxLen = input.int(4000, "Max message length", minval = 500, maxval = 20000, tooltip = "Events that do not fit are dropped; JSON then carries \"truncated\": true.", group = G_ALR, display = display.none)
-i_setPanelPos = input.string("Bottom Right", "", options = ["Bottom Right", "Top Right", "Bottom Left", "Top Left", "Bottom Center"], inline = "spn", tooltip = "Setup, quality, plan and invalidation of the focus setup, and the settings signature cfg (must match SMC Visualizer Pro).", group = G_SET, display = display.none)
 
 // ── 11 · Advanced
 i_atrLen = input.int(14, "ATR length", minval = 5, maxval = 200, tooltip = "Volatility unit for every threshold expressed in ×ATR.", group = G_ADV, display = display.none)
 i_kBody = input.float(1.0, "Displacement body ×ATR", minval = 0.3, maxval = 3.0, step = 0.1, inline = "disp", group = G_ADV, display = display.none)
-i_minBodyRatio = input.float(0.6, "body/range", minval = 0.3, maxval = 0.95, step = 0.05, inline = "disp", group = G_ADV, display = display.none)
+i_minBodyRatio = input.float(0.6, "body/range", minval = 0.3, maxval = 0.95, step = 0.05, inline = "disp", tooltip = "Displacement candle: body at least this many ATR and body / range at least this ratio.", group = G_ADV, display = display.none)
 i_log = input.bool(false, "Debug: log events to Pine Logs", tooltip = "One CSV-like line per event. Used for golden-journal regression (docs §27.5).", group = G_ADV, display = display.none)
 
 // ── Effective configuration (Config Resolver, docs §4.4)
@@ -795,6 +772,8 @@ oteHi = math.max(i_oteLo, i_oteHi)
 obMin = math.min(i_obMin, i_obMax)
 obMax = math.max(i_obMin, i_obMax)
 sesTz = i_sesPreset == SesPreset.originalUtc ? "UTC" : i_tz
+// Settings the resolver had to correct; the panels show them as ⚠ CONFIG (AC-38)
+cfgWarn = (i_preset == StructPreset.manual and i_inLen >= i_swLen ? "internal length must be below swing length: using " + str.tostring(inLen) + "\n" : "") + (i_oteLo > i_oteHi ? "OTE band reversed: using " + str.tostring(oteLo) + " – " + str.tostring(oteHi) + "\n" : "") + (i_obMin > i_obMax ? "OB size min above max: swapped\n" : "")
 
 f_sesSpec(string ict, string utc, string custom) =>
     string s = i_sesPreset == SesPreset.ictNy ? ict : i_sesPreset == SesPreset.originalUtc ? utc : custom
@@ -853,15 +832,15 @@ f_cfgSig() =>
 var int cfgSig = f_cfgSig()
 
 // Display mode ceilings (docs §15.3, §19.2). Recent view uses structEvents / sweptShow / sessions;
-// visible-range view uses the *Win caps, split evenly across time segments so the whole
-// screen is covered. Pool sizes keep every mode within the 500-object limits.
+// the history window uses the *Win caps, split evenly across time segments so the whole
+// window is covered. Pool sizes keep every mode within the 500-object limits.
 f_modeCfg(DisplayMode m) =>
     switch m
-        DisplayMode.clean => ModeCfg.new(structEvents = 1, internalEvents = 0, swingLabels = false, zonesPerSide = 1, majorPerSide = 1, minorPerSide = 0, sweptShow = 1, distMax = 3.0, theta = 0.55, ttl = 0, hist = 500, mitigated = false, pdCap = 1, gauge = false, sessions = 0, dashboard = false, labelLevel = 1, debug = false, structWin = 6, internalWin = 0, swingLabelWin = 0, sweepWin = 6, sessWin = 0, rangeWin = 1, poolZone = 24, poolWash = 4, poolLvl = 30, poolStr = 14, poolLab = 40, htfStructEvents = 1, htfStructWin = 3, keyCap = 2, gradeFloor = 2, setupPast = 0, poolSetBox = 4, poolSetLine = 8, poolSetLab = 8)
-        DisplayMode.normal => ModeCfg.new(structEvents = 3, internalEvents = 0, swingLabels = false, zonesPerSide = 2, majorPerSide = 2, minorPerSide = 1, sweptShow = 3, distMax = 6.0, theta = 0.40, ttl = 10, hist = 1500, mitigated = true, pdCap = 2, gauge = true, sessions = 4, dashboard = true, labelLevel = 2, debug = false, structWin = 36, internalWin = 0, swingLabelWin = 0, sweepWin = 30, sessWin = 60, rangeWin = 6, poolZone = 64, poolWash = 64, poolLvl = 100, poolStr = 56, poolLab = 190, htfStructEvents = 2, htfStructWin = 8, keyCap = 3, gradeFloor = 1, setupPast = 6, poolSetBox = 40, poolSetLine = 100, poolSetLab = 60)
-        DisplayMode.analysis => ModeCfg.new(structEvents = 15, internalEvents = 15, swingLabels = true, zonesPerSide = 6, majorPerSide = 6, minorPerSide = 4, sweptShow = 15, distMax = 12.0, theta = 0.25, ttl = 50, hist = 5000, mitigated = true, pdCap = 2, gauge = true, sessions = 20, dashboard = true, labelLevel = 3, debug = false, structWin = 80, internalWin = 60, swingLabelWin = 60, sweepWin = 60, sessWin = 80, rangeWin = 12, poolZone = 140, poolWash = 90, poolLvl = 150, poolStr = 160, poolLab = 400, htfStructEvents = 6, htfStructWin = 16, keyCap = 4, gradeFloor = 0, setupPast = 10, poolSetBox = 60, poolSetLine = 160, poolSetLab = 100)
-        DisplayMode.debug => ModeCfg.new(structEvents = 30, internalEvents = 30, swingLabels = true, zonesPerSide = 20, majorPerSide = 20, minorPerSide = 20, sweptShow = 30, distMax = 1000.0, theta = 0.0, ttl = 100000, hist = 100000, mitigated = true, pdCap = 3, gauge = true, sessions = 30, dashboard = true, labelLevel = 3, debug = true, structWin = 80, internalWin = 60, swingLabelWin = 60, sweepWin = 80, sessWin = 80, rangeWin = 12, poolZone = 180, poolWash = 90, poolLvl = 150, poolStr = 160, poolLab = 460, htfStructEvents = 10, htfStructWin = 20, keyCap = 10, gradeFloor = 0, setupPast = 10, poolSetBox = 60, poolSetLine = 160, poolSetLab = 100)
-        => ModeCfg.new(structEvents = 15, internalEvents = 15, swingLabels = true, zonesPerSide = 6, majorPerSide = 6, minorPerSide = 4, sweptShow = 15, distMax = 12.0, theta = 0.25, ttl = 50, hist = 5000, mitigated = true, pdCap = 3, gauge = true, sessions = 20, dashboard = true, labelLevel = 3, debug = false, structWin = 80, internalWin = 60, swingLabelWin = 60, sweepWin = 60, sessWin = 80, rangeWin = 12, poolZone = 140, poolWash = 90, poolLvl = 150, poolStr = 160, poolLab = 400, htfStructEvents = 6, htfStructWin = 16, keyCap = 4, gradeFloor = 0, setupPast = 10, poolSetBox = 60, poolSetLine = 160, poolSetLab = 100)
+        DisplayMode.clean => ModeCfg.new(distMax = 3.0, hist = 500, labelLevel = 1, debug = false, gradeFloor = 2, setupPast = 0, poolSetBox = 4, poolSetLine = 8, poolSetLab = 8)
+        DisplayMode.normal => ModeCfg.new(distMax = 6.0, hist = 1500, labelLevel = 2, debug = false, gradeFloor = 1, setupPast = 6, poolSetBox = 40, poolSetLine = 100, poolSetLab = 60)
+        DisplayMode.analysis => ModeCfg.new(distMax = 12.0, hist = 5000, labelLevel = 3, debug = false, gradeFloor = 0, setupPast = 10, poolSetBox = 60, poolSetLine = 160, poolSetLab = 100)
+        DisplayMode.debug => ModeCfg.new(distMax = 1000.0, hist = 100000, labelLevel = 3, debug = true, gradeFloor = 0, setupPast = 10, poolSetBox = 60, poolSetLine = 160, poolSetLab = 100)
+        => ModeCfg.new(distMax = 12.0, hist = 5000, labelLevel = 3, debug = false, gradeFloor = 0, setupPast = 10, poolSetBox = 60, poolSetLine = 160, poolSetLab = 100)
 
 var ModeCfg mc = f_modeCfg(i_mode)
 
@@ -871,7 +850,7 @@ verbLevel = switch i_verb
     Verbosity.brief => 1
     => 3
 labelLvl = math.min(verbLevel, mc.labelLevel)
-// Setups indicator: zone filters for the (unused) history archive, and the visible-range view
+// Setups indicator: zone filters for the (unused) history archive, and the history window
 // for past setups in Analysis / Debug
 vOB = true
 vFVG = true
@@ -1978,7 +1957,7 @@ f_zoneShown(Zone z) =>
 
 // Only zones the history view can ever draw are archived, so the archive reaches further back:
 // shown by the display settings, and within the distance window of price at some point of
-// their life (a view scrolled back to that moment ranks them there, §15 M6).
+// their life (the history window ranks them at that moment, §15 M6).
 f_archiveZone(array<Zone> arch, Zone z) =>
     bool htf = z.tf != TF_CHART
     float dist = close > z.top ? (close - z.top) / vu : close < z.bottom ? (z.bottom - close) / vu : 0.0
@@ -2060,8 +2039,10 @@ f_rangeStep(Core c, Range r, StructState sw, array<RangeSnap> arch) =>
         r.state := 1
         r.lo := bu.legExt0
         r.loBar := bu.origBar
+        r.loT := bu.origT
         r.hi := bu.legExt1
         r.hiBar := bar_index
+        r.hiT := time
         r.t0 := bu.origT
         r.b0 := bu.origBar
         r.inOte := false
@@ -2072,8 +2053,10 @@ f_rangeStep(Core c, Range r, StructState sw, array<RangeSnap> arch) =>
         r.state := 1
         r.hi := bd.legExt0
         r.hiBar := bd.origBar
+        r.hiT := bd.origT
         r.lo := bd.legExt1
         r.loBar := bar_index
+        r.loT := time
         r.t0 := bd.origT
         r.b0 := bd.origBar
         r.inOte := false
@@ -2082,9 +2065,11 @@ f_rangeStep(Core c, Range r, StructState sw, array<RangeSnap> arch) =>
         if high > r.hi and r.dir == 1
             r.hi := high
             r.hiBar := bar_index
+            r.hiT := time
         if low < r.lo and r.dir == -1
             r.lo := low
             r.loBar := bar_index
+            r.loT := time
         if r.state == 1
             Swing nh = sw.newHigh
             Swing nl = sw.newLow
@@ -2195,6 +2180,20 @@ f_htfBreak(Core c, array<Brk> hb, int dir, int kind, float px, int swT, int brkT
     b.evId := e.id
     b
 
+// ═══ 26 · DEBUG SELF-CHECKS ═════════════════════════════════════════════════════
+// P11: invariants of the engines, checked on confirmed bars in Debug mode only (no cost otherwise).
+// A violation is written to Pine Logs as `ASSERT|time|what` and counted; the count is shown in the
+// Debug table (SMC Visualizer Pro) and in the STATS row (SMC Pro · Setups). Read-only. Engine checks
+// run in SMC Visualizer Pro only: the engines are the same code in both indicators (ADR-13).
+
+var array<int> assertN = array.new<int>(1, 0)
+
+f_assert(bool ok, string what) =>
+    if not ok
+        assertN.set(0, assertN.get(0) + 1)
+        log.error("ASSERT|" + f_timeStr(time) + "|" + what)
+    ok
+
 // ═══ 30 · SETUP ENGINE ══════════════════════════════════════════════════════════
 // Setup automaton (§7.7) for the models SWEEP_REVERSAL and CONTINUATION (A.18), POI selection
 // (§9.4), the DRAFT TradePlan (§10), risk checks (§11.3) and the explainable confluence score
@@ -2207,6 +2206,19 @@ var map<string, int> setStats = map.new<string, int>()
 
 f_statAdd(string k) =>
     setStats.put(k, nz(setStats.get(k)) + 1)
+
+// Closed trades by grade (index GR_C 0 … GR_AP 3) and by model (4 Reversal, 5 Continuation):
+// count, wins (at least TP1) and the sum of realised R — does a higher grade really pay more (§20.4)?
+var array<float> outN = array.new<float>(6, 0.0)
+var array<float> outW = array.new<float>(6, 0.0)
+var array<float> outR = array.new<float>(6, 0.0)
+
+f_outcome(Setup s) =>
+    for k in array.from(s.grade, s.model == SM_REV ? 4 : 5)
+        outN.set(k, outN.get(k) + 1)
+        outW.set(k, outW.get(k) + (s.tpHit > 0 ? 1 : 0))
+        outR.set(k, outR.get(k) + s.rReal)
+    true
 
 // Ring of the last ATT_CAP attempts that ended without a trade (with or without a POI), for Inspect
 // ("why was there no setup here", §17.3): start and end time, and a one-line reason
@@ -2380,6 +2392,7 @@ f_setPlan(Setup s, array<Liq> lv) =>
     s.nTp := 0
     s.drawLiq := false
     s.drawTxt := ""
+    s.drawPx := na
     if fail == ""
         // opposite liquidity beyond the entry, nearest first; the shift range extreme is the weak high / low
         array<float> px = array.new<float>()
@@ -2422,6 +2435,7 @@ f_setPlan(Setup s, array<Liq> lv) =>
                 // draw on liquidity: a major opposite target at least 2R away (§9.5)
                 if not s.drawLiq and maj.get(k) and dd >= 2 * risk
                     s.drawLiq := true
+                    s.drawPx := px.get(k)
                     s.drawTxt := tg.get(k) + " " + f_px(px.get(k)) + " (" + str.tostring(dd / risk, "0.0") + "R)"
         if i_tpMode == TpMode.rr
             s.tp1 := e + d * risk
@@ -2532,7 +2546,16 @@ f_setScore(Setup s, Ctx x, array<Zone> zs) =>
     if s.model == SM_CONT and x.ranging
         pen -= 0.5
         f := f_fac(f, "Ranging regime", -0.5)
-    s.score := math.max(0.0, math.min(10.0, gC + gL + gS + gP + gT + gR + pen))
+    // v0.8: without killzones (chart above 1H, or London and NY off) the Time factor cannot be earned;
+    // the other factors are scaled to the reachable maximum, so 4H / D setups are graded on the same
+    // 0–10 scale as intraday ones (Aggressive already reaches 10 without it)
+    float pos = gC + gL + gS + gP + gT + gR
+    float reach = math.min(10.0, agg ? 10.0 : 9.5)
+    if (not sesOk or not (i_lonOn or i_nyOn)) and reach < 10.0
+        float k = 10.0 / reach
+        pos := pos * k
+        f := f + "· no killzones on this timeframe: factors ×" + str.tostring(k, "0.00") + "\n"
+    s.score := math.max(0.0, math.min(10.0, pos + pen))
     s.grade := f_gradeFor(s.score)
     s.factors := f
     s.score
@@ -2737,6 +2760,7 @@ f_setAdvance(Core c, Setup s, StructState sw, StructState si, array<Liq> lv, arr
             s.state := s.tpHit > 0 ? SS_WIN : SS_SL
             s.reason := s.be ? "BE" : "SL"
             f_statAdd(s.tpHit > 0 ? "WIN" : "SL")
+            f_outcome(s)
             s.endBar := bar_index
             s.endT := time
             f_setEmit(c, s, EV_SETUP_SL, s.sl, rSl, s.rReal)
@@ -2755,6 +2779,7 @@ f_setAdvance(Core c, Setup s, StructState sw, StructState si, array<Liq> lv, arr
                 f_statAdd("WIN")
                 s.state := SS_WIN
                 s.reason := "TP" + str.tostring(s.nTp)
+                f_outcome(s)
                 s.endBar := bar_index
                 s.endT := time
             else if s.tpHit > 0
@@ -2828,6 +2853,25 @@ f_setupStep(Core c, array<Setup> ss, array<Setup> arch, StructState sw, StructSt
                         arch.push(done)
                         if arch.size() > SETUP_ARCH_CAP
                             arch.shift()
+    true
+
+// Debug self-checks (P11): a planned setup that is still READY or ACTIVE must have its stop on the
+// other side of the entry, the entry inside the POI, targets beyond the entry in order, and RR ≥ Min RR
+f_setupChecks(array<Setup> ss) =>
+    for s in ss
+        if not na(s.readyBar) and s.state <= SS_TP2
+            int d = s.dir
+            string id = "setup #" + str.tostring(s.id) + " "
+            float tick = syminfo.mintick
+            f_assert((s.entry - s.slInit) * d > 0, id + "stop not beyond the entry")
+            f_assert(s.entry >= s.entryBot - tick and s.entry <= s.entryTop + tick, id + "entry outside the POI")
+            f_assert((s.tp1 - s.entry) * d > 0, id + "TP1 not beyond the entry")
+            f_assert(s.nTp < 2 or (s.tp2 - s.tp1) * d > 0, id + "TP2 not beyond TP1")
+            f_assert(s.nTp < 3 or (s.tp3 - s.tp2) * d > 0, id + "TP3 not beyond TP2")
+            f_assert(s.rrFinal >= i_minRR - 0.01, id + "RR below Min RR")
+            f_assert(s.readyBar >= s.bornBar and s.stageBar >= s.readyBar, id + "stage bars out of order")
+    f_assert(outN.get(0) + outN.get(1) + outN.get(2) + outN.get(3) == outN.get(4) + outN.get(5), "trade counts by grade and by model differ")
+    f_assert(outN.get(4) + outN.get(5) == nz(setStats.get("WIN")) + nz(setStats.get("SL")), "trade counts differ from WIN + SL")
     true
 
 // Focus setup for the Ribbon, the Dashboard and the price-scale markers: the most advanced
@@ -3112,11 +3156,16 @@ f_fillLabelPool(LabelPool p, int n) =>
             p.items.push(label.new(int(na), float(na), "", xloc = xloc.bar_time, color = color(na), textcolor = color(na), style = label.style_none))
     p.items.size()
 
+// Objects not drawn in the current render pass because their pool was full (Debug table DROPPED)
+var array<int> drawMiss = array.new<int>(1, 0)
+
 method takeBox(BoxPool this) =>
     box b = na
     if this.used < this.items.size()
         b := this.items.get(this.used)
         this.used := this.used + 1
+    else
+        drawMiss.set(0, drawMiss.get(0) + 1)
     b
 
 method takeLine(LinePool this) =>
@@ -3124,6 +3173,8 @@ method takeLine(LinePool this) =>
     if this.used < this.items.size()
         ln := this.items.get(this.used)
         this.used := this.used + 1
+    else
+        drawMiss.set(0, drawMiss.get(0) + 1)
     ln
 
 method takeLabel(LabelPool this) =>
@@ -3131,6 +3182,8 @@ method takeLabel(LabelPool this) =>
     if this.used < this.items.size()
         lb := this.items.get(this.used)
         this.used := this.used + 1
+    else
+        drawMiss.set(0, drawMiss.get(0) + 1)
     lb
 
 f_finishBoxes(BoxPool p) =>
@@ -3218,17 +3271,17 @@ f_buildView(array<float> hc, array<float> ha, int hb, float pxLive) =>
     int iL = math.max(0, bar_index - histDepth)
     int w = iR - iL + 1
     int segs = vp ? math.max(1, math.min(SEG_MAX, int(math.ceil(w / SEG_BARS)))) : 1
-    View v = View.new(vp, true, iL, iR, segs, array.new<int>(), array.new<float>(), array.new<float>())
+    View v = View.new(vp, iL, iR, segs, array.new<int>(), array.new<float>(), array.new<float>())
     for s = 0 to segs - 1
         int e = s == segs - 1 ? iR : iL + int(math.round((s + 1) * w / segs)) - 1
         v.segEnd.push(e)
         v.segPx.push(e >= bar_index ? pxLive : f_histAt(hc, hb, e, pxLive))
         v.segAtr.push(e >= bar_index ? vu : f_histAt(ha, hb, e, vu))
-    // price span of the recent closes for tag spacing: the last 300 bars stand in for the screen
+    // price span of the recent closes for tag spacing: the last VIEW_BARS stand in for the screen
     if vp
         float lo = na
         float hi = na
-        for k = math.max(iL, iR - 300) to iR
+        for k = math.max(iL, iR - VIEW_BARS) to iR
             float c = k >= bar_index ? pxLive : f_histAt(hc, hb, k, na)
             if not na(c)
                 lo := na(lo) ? c : math.min(lo, c)
@@ -3324,6 +3377,14 @@ f_drawSetup(BoxPool pb, LinePool pl, LabelPool plb, Setup s, bool past) =>
             f_line(pl, x0, s.inv, x1, s.inv, color.new(C_BEAR, OP_SOFT), line.style_dotted, 1)
         if not na(s.trigT)
             f_label(plb, s.trigT, e, "●", color.new(sig, done ? OP_SOFT : OP_SOLID), label.style_label_center, size.small, "Entry " + f_px(e) + " · " + f_timeStr(s.trigT), yloc.price)
+    // Analysis / Debug (§17.1): the runner-up zone of the leg as a dotted "alt" outline until the entry,
+    // and an arrow from the entry to the draw on liquidity (a major target at least 2R away)
+    if not past and not done and mc.labelLevel >= 3
+        Zone az = s.poiAlt
+        if s.state <= SS_READY and not s.combo and not na(az) and az.state < ZS_FILLED
+            f_box(pb, x0, x1, az.top, az.bottom, color(na), color.new(C_SIG, OP_SOFT), 1, line.style_dotted, "alt", color.new(C_SIG, OP_SOFT), text.align_right)
+        if planned and vPlan and not na(s.drawPx)
+            f_line(pl, x0, s.entry, x1, s.drawPx, color.new(C_LIQ, OP_SOFT), line.style_arrow_right, 1)
     // card: direction, grade and score, chain, RR / SL size; outcome when done
     float risk = planned ? (s.entry - s.slInit) * d : na
     string head = done ? f_setOutcome(s) : f_sideName(d) + (forming ? " — FORMING" : " · " + f_gradeName(s.grade) + " " + str.tostring(s.score, "0.0") + (active ? " · ACTIVE" : ""))
@@ -3424,15 +3485,14 @@ f_renderSetups(View v, BoxPool pb, LinePool pl, LabelPool plb, array<Setup> ss, 
             f_drawSetup(pb, pl, plb, ins, false)
             drawn.push(ins.id)
             shown += 1
-        if v.live
-            for d in array.from(1, -1)
-                Setup fs = f_focusSetup(ss, d)
-                if not na(fs) and not drawn.includes(fs.id)
-                    if pathOn
-                        f_drawPath(pl, plb, fs, false)
-                    f_drawSetup(pb, pl, plb, fs, false)
-                    drawn.push(fs.id)
-                    shown += 1
+        for d in array.from(1, -1)
+            Setup fs = f_focusSetup(ss, d)
+            if not na(fs) and not drawn.includes(fs.id)
+                if pathOn
+                    f_drawPath(pl, plb, fs, false)
+                f_drawSetup(pb, pl, plb, fs, false)
+                drawn.push(fs.id)
+                shown += 1
         int n = arch.size()
         if n > 0
             int recent = 0
@@ -3440,7 +3500,7 @@ f_renderSetups(View v, BoxPool pb, LinePool pl, LabelPool plb, array<Setup> ss, 
             for i = n - 1 to 0
                 Setup s = arch.get(i)
                 if not drawn.includes(s.id) and f_setShownDone(s)
-                    if v.live and recent < 2 and bar_index - s.endBar <= f_setDoneTtl(s)
+                    if recent < 2 and bar_index - s.endBar <= f_setDoneTtl(s)
                         if pathAll
                             f_drawPath(pl, plb, s, true)
                         f_drawSetup(pb, pl, plb, s, false)
@@ -3473,8 +3533,11 @@ f_pos(string s) =>
         "Bottom Center" => position.bottom_center
         => position.top_right
 
-f_statusText(Core c, bool liveView) =>
-    not c.warm ? "WARMING UP" : nonStdChart ? "⚠ NON-STANDARD CHART" : not liveView ? "◀ HISTORY VIEW" : ""
+f_statusText(Core c) =>
+    not c.warm ? "WARMING UP" : nonStdChart ? "⚠ NON-STANDARD CHART" : cfgWarn != "" ? "⚠ CONFIG" : ""
+
+f_statusTip(Core c) =>
+    not c.warm ? "Signals and alerts are suppressed during warm-up (first " + str.tostring(warmBars) + " bars)." : nonStdChart ? "Renko, Kagi, Point & Figure, Range or Heikin Ashi: structure is built on synthetic prices" : "Settings corrected:\n" + cfgWarn
 
 f_dashRow(table tb, int row, string k, string v, color vc, string tip, string sz) =>
     table.cell(tb, 0, row, k, text_color = color.new(C_TEXT, 45), text_size = sz, text_halign = text.align_left)
@@ -3489,7 +3552,13 @@ f_qualityBar(float sc) =>
     int k = int(math.round(sc))
     str.repeat("▮", k) + str.repeat("▯", 10 - k)
 
-f_setupPanel(table tb, Ctx x, Core c, bool liveView, Setup fs, Setup ins) =>
+// One line of the trade table: count · share won · average realised R per trade
+f_outLine(string nm, int k) =>
+    float n = outN.get(k)
+    float r = n > 0 ? outR.get(k) / n : 0.0
+    n > 0 ? nm + "  " + str.tostring(n, "#") + " · " + str.tostring(100 * outW.get(k) / n, "#") + "% won · " + (r >= 0 ? "+" : "") + str.tostring(r, "0.00") + "R\n" : ""
+
+f_setupPanel(table tb, Ctx x, Core c, Setup fs, Setup ins) =>
     if not na(tb)
         string sz = panelSz
         int row = 0
@@ -3510,9 +3579,9 @@ f_setupPanel(table tb, Ctx x, Core c, bool liveView, Setup fs, Setup ins) =>
                     row := f_dashRow(tb, row, "QUALITY", str.tostring(fs.score, "0.0") + " / 10 · " + f_gradeName(fs.grade) + "  " + f_qualityBar(fs.score), gc, fs.factors + "Score = completeness of the setup, not a win probability", sz)
                     row := f_dashRow(tb, row, "PLAN", "E " + f_px(fs.entry) + " · SL " + f_px(fs.slInit) + " · TP1 " + f_px(fs.tp1), C_SIG, f_setPlanText(fs), sz)
                     row := f_dashRow(tb, row, "INVALID", f_px(fs.inv) + " · close " + (fs.dir == 1 ? "below" : "above"), C_BEAR, "Before the entry the setup is cancelled by a close beyond this level, an opposite swing CHoCH or a broken POI", sz)
-        string stt = f_statusText(c, liveView)
+        string stt = f_statusText(c)
         if stt != ""
-            row := f_dashRow(tb, row, "STATUS", stt, C_WARN, "Setups and alerts are suppressed during warm-up; the panel always describes the latest bar", sz)
+            row := f_dashRow(tb, row, "STATUS", stt, C_WARN, f_statusTip(c), sz)
         // Inspect: the setup at the chosen time, or why there was none (§17.3)
         if i_inspect
             string it = f_timeStr(i_inspectT)
@@ -3541,9 +3610,14 @@ f_setupPanel(table tb, Ctx x, Core c, bool liveView, Setup fs, Setup ins) =>
             if k != "READY" and k != "WIN" and k != "SL" and v > topV
                 topK := k
                 topV := v
-        string stxt = "READY " + str.tostring(nz(setStats.get("READY"))) + " · ✓" + str.tostring(nz(setStats.get("WIN"))) + " ✕" + str.tostring(nz(setStats.get("SL"))) + (topV > 0 ? " · " + str.lower(topK) + " " + str.tostring(topV) : "")
-        row := f_dashRow(tb, row, "STATS", stxt, C_NEUT, "Whole loaded history: setups that reached READY, trades won (✓, at least TP1) and stopped (✕), and the most frequent reason a setup ended without a trade.\n\n" + all + "\nGRADE_LOW: score below the preset's READY grade · RR_LOW: last target closer than Min RR · SL_TOO_WIDE / SL_TOO_TIGHT: stop outside the limits · NO_POI / POI_IN_PREMIUM / POI_IN_DISCOUNT: no zone of the shift leg on the right side · NO_SHIFT_IN_WINDOW: no CHoCH / BOS after the sweep · SUPERSEDED: replaced by a newer setup · TP1_BEFORE_ENTRY: price ran away (MISSED)", sz)
-        row := f_dashRow(tb, row, "CFG", str.tostring(cfgSig) + " · v" + BUILD, C_NEUT, "Settings signature: must equal the cfg number of SMC Visualizer Pro (Dashboard Expanded → MODE row). Different numbers mean the two indicators run the engines with different settings, and the setups do not match the structure on the chart.", sz)
+        int nAs = assertN.get(0)
+        float nT = outN.get(4) + outN.get(5)
+        float rT = nT > 0 ? (outR.get(4) + outR.get(5)) / nT : 0.0
+        string avgT = nT > 0 ? " " + (rT >= 0 ? "+" : "") + str.tostring(rT, "0.0") + "R" : ""
+        string trd = nT > 0 ? "Closed trades (count · won · average R per trade):\n" + f_outLine("A+", 3) + f_outLine("A", 2) + f_outLine("B", 1) + f_outLine("C", 0) + f_outLine("Reversal", 4) + f_outLine("Continuation", 5) + "\n" : ""
+        string stxt = (nAs > 0 ? "⚠" + str.tostring(nAs) + " asserts · " : "") + "READY " + str.tostring(nz(setStats.get("READY"))) + " · ✓" + str.tostring(nz(setStats.get("WIN"))) + " ✕" + str.tostring(nz(setStats.get("SL"))) + avgT + (topV > 0 ? " · " + str.lower(topK) + " " + str.tostring(topV) : "")
+        row := f_dashRow(tb, row, "STATS", stxt, C_NEUT, trd + "Whole loaded history: setups that reached READY, trades won (✓, at least TP1) and stopped (✕), their average realised R, and the most frequent reason a setup ended without a trade. Analytical: entries at the plan price, no slippage or fees.\n\n" + all + "\nGRADE_LOW: score below the preset's READY grade · RR_LOW: last target closer than Min RR · SL_TOO_WIDE / SL_TOO_TIGHT: stop outside the limits · NO_POI / POI_IN_PREMIUM / POI_IN_DISCOUNT: no zone of the shift leg on the right side · NO_SHIFT_IN_WINDOW: no CHoCH / BOS after the sweep · SUPERSEDED: replaced by a newer setup · TP1_BEFORE_ENTRY: price ran away (MISSED)", sz)
+        row := f_dashRow(tb, row, "CFG", str.tostring(cfgSig) + " · v" + BUILD, C_NEUT, "Settings signature: must equal the cfg number of SMC Visualizer Pro (Dashboard → CFG row). Different numbers mean the two indicators run the engines with different settings, and the setups do not match the structure on the chart.", sz)
         if row <= SET_PANEL_ROWS - 1
             table.clear(tb, 0, row, 1, SET_PANEL_ROWS - 1)
     true
@@ -3573,7 +3647,7 @@ var Ctx ctx = Ctx.new()
 var array<Setup> setups = array.new<Setup>()
 var array<Setup> setupArch = array.new<Setup>()
 var float confClose = na
-// Per-bar close and ATR, so a scrolled-back view can rank objects at any past bar
+// Per-bar close and ATR, so the history window can rank objects at any past bar
 var array<float> histClose = array.new<float>()
 var array<float> histAtr = array.new<float>()
 var int histBase = 0
@@ -3674,6 +3748,10 @@ if cf
     // Setups (P7): never during warm-up (AC-08)
     if i_setups and core.warm
         f_setupStep(core, setups, setupArch, stS, stI, liqs, zones, ctx, sLon.on or sNy.on)
+    // Debug self-checks (P11): the engines in SMC Visualizer Pro (they run identically in both
+    // indicators, ADR-13), the live setups and trade counters in SMC Pro · Setups
+    if mc.debug
+        f_setupChecks(setups)
     if i_log
         f_logEvents(core)
 
@@ -3710,6 +3788,7 @@ var table tSetup = i_setups and i_setPanel ? table.new(f_pos(i_setPanelPos), 2, 
 if barstate.islastconfirmedhistory or (barstate.isrealtime and barstate.isconfirmed)
     float px = na(confClose) ? close : confClose
     View view = f_buildView(histClose, histAtr, histBase, px)
+    drawMiss.set(0, 0)
     pSetBox.used := 0
     pSetLine.used := 0
     pSetLab.used := 0
@@ -3719,15 +3798,15 @@ if barstate.islastconfirmedhistory or (barstate.isrealtime and barstate.isconfir
     f_finishLines(pSetLine)
     f_finishLabels(pSetLab)
     Setup focus = i_setups ? f_focusSetup(setups, 0) : na
-    f_setupPanel(tSetup, ctx, core, view.live, focus, ins)
+    f_setupPanel(tSetup, ctx, core, focus, ins)
 
 // ═══ 95 · ALERTS ════════════════════════════════════════════════════════════════
 // Static alertcondition() set (docs §12.7). Conditions are read from the event bus of the
 // confirmed bar — the alert engine never recomputes detector logic (A-03). No alerts
 // during warm-up (AC-08). Chart-TF structure alerts ignore HTF events (separate conditions).
 // Sweep, OB-touch and FVG-fill alerts also fire for HTF objects: those happen on chart bars,
-// and their events carry tf = HTF1 for logs and the P9 webhook.
-// Setup alerts also send a detailed alert() message; the batched JSON webhook arrives with P9.
+// and their events carry tf = HTF1 for logs and the webhook.
+// SMC Pro · Setups also sends one alert() message per bar close (Text or the JSON envelope, 50_webhook).
 // SMC Visualizer Pro carries the structure / liquidity / zone conditions, SMC Pro · Setups the
 // setup conditions (ADR-13).
 bool alertOk = barstate.isconfirmed and core.warm and core.barEvents.size() > 0
@@ -3745,6 +3824,8 @@ Event evInv = alertOk and i_setups ? f_setupEv(core, EV_SETUP_INVALID, setAlertG
 bool aSetReady = not na(evReady)
 bool aSetTrig = not na(evTrig)
 bool aSetInv = not na(evInv)
+bool aSetReadyL = aSetReady and evReady.dir == 1
+bool aSetReadyS = aSetReady and evReady.dir == -1
 
 // One message per bar close for the alert "Any alert() function call" (§12.7, ADR-08): text or the
 // JSON webhook envelope (50_webhook). Alerts fire only in realtime, so the message is built there;
@@ -3763,5 +3844,7 @@ if barstate.isconfirmed and core.warm and (barstate.isrealtime or whLog)
 
 
 alertcondition(aSetReady, "Setup READY", "SMC Pro · {{ticker}} {{interval}} · setup READY (grade ≥ alert min grade) · close {{close}}")
+alertcondition(aSetReadyL, "Setup READY LONG", "SMC Pro · {{ticker}} {{interval}} · LONG setup READY (grade ≥ alert min grade) · close {{close}}")
+alertcondition(aSetReadyS, "Setup READY SHORT", "SMC Pro · {{ticker}} {{interval}} · SHORT setup READY (grade ≥ alert min grade) · close {{close}}")
 alertcondition(aSetTrig, "Setup TRIGGERED", "SMC Pro · {{ticker}} {{interval}} · setup entry reached · close {{close}}")
 alertcondition(aSetInv, "Setup INVALID", "SMC Pro · {{ticker}} {{interval}} · setup invalidated before entry · close {{close}}")

@@ -210,7 +210,7 @@ f_zoneShown(Zone z) =>
 
 // Only zones the history view can ever draw are archived, so the archive reaches further back:
 // shown by the display settings, and within the distance window of price at some point of
-// their life (a view scrolled back to that moment ranks them there, §15 M6).
+// their life (the history window ranks them at that moment, §15 M6).
 f_archiveZone(array<Zone> arch, Zone z) =>
     bool htf = z.tf != TF_CHART
     float dist = close > z.top ? (close - z.top) / vu : close < z.bottom ? (z.bottom - close) / vu : 0.0

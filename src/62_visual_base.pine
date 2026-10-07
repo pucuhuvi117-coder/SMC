@@ -23,11 +23,16 @@ f_fillLabelPool(LabelPool p, int n) =>
             p.items.push(label.new(int(na), float(na), "", xloc = xloc.bar_time, color = color(na), textcolor = color(na), style = label.style_none))
     p.items.size()
 
+// Objects not drawn in the current render pass because their pool was full (Debug table DROPPED)
+var array<int> drawMiss = array.new<int>(1, 0)
+
 method takeBox(BoxPool this) =>
     box b = na
     if this.used < this.items.size()
         b := this.items.get(this.used)
         this.used := this.used + 1
+    else
+        drawMiss.set(0, drawMiss.get(0) + 1)
     b
 
 method takeLine(LinePool this) =>
@@ -35,6 +40,8 @@ method takeLine(LinePool this) =>
     if this.used < this.items.size()
         ln := this.items.get(this.used)
         this.used := this.used + 1
+    else
+        drawMiss.set(0, drawMiss.get(0) + 1)
     ln
 
 method takeLabel(LabelPool this) =>
@@ -42,6 +49,8 @@ method takeLabel(LabelPool this) =>
     if this.used < this.items.size()
         lb := this.items.get(this.used)
         this.used := this.used + 1
+    else
+        drawMiss.set(0, drawMiss.get(0) + 1)
     lb
 
 f_finishBoxes(BoxPool p) =>
@@ -159,17 +168,17 @@ f_buildView(array<float> hc, array<float> ha, int hb, float pxLive) =>
     int iL = math.max(0, bar_index - histDepth)
     int w = iR - iL + 1
     int segs = vp ? math.max(1, math.min(SEG_MAX, int(math.ceil(w / SEG_BARS)))) : 1
-    View v = View.new(vp, true, iL, iR, segs, array.new<int>(), array.new<float>(), array.new<float>())
+    View v = View.new(vp, iL, iR, segs, array.new<int>(), array.new<float>(), array.new<float>())
     for s = 0 to segs - 1
         int e = s == segs - 1 ? iR : iL + int(math.round((s + 1) * w / segs)) - 1
         v.segEnd.push(e)
         v.segPx.push(e >= bar_index ? pxLive : f_histAt(hc, hb, e, pxLive))
         v.segAtr.push(e >= bar_index ? vu : f_histAt(ha, hb, e, vu))
-    // price span of the recent closes for tag spacing: the last 300 bars stand in for the screen
+    // price span of the recent closes for tag spacing: the last VIEW_BARS stand in for the screen
     if vp
         float lo = na
         float hi = na
-        for k = math.max(iL, iR - 300) to iR
+        for k = math.max(iL, iR - VIEW_BARS) to iR
             float c = k >= bar_index ? pxLive : f_histAt(hc, hb, k, na)
             if not na(c)
                 lo := na(lo) ? c : math.min(lo, c)

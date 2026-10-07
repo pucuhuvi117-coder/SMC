@@ -3,7 +3,7 @@
 // Components: H (timeframe), P (proximity), F (freshness), A (activity), S (strength),
 // L (liquidity importance), U (setup relevance — 0 until the Setup Engine lands in P7).
 // v0.2: R is measured at an anchor (a segment's last bar, its close and ATR), so a
-// scrolled-back view ranks objects as they mattered at that moment.
+// history window ranks objects as they mattered at that moment.
 
 f_zoneDistAt(Zone z, float px, float atr) =>
     px > z.top ? (px - z.top) / atr : px < z.bottom ? (z.bottom - px) / atr : 0.0

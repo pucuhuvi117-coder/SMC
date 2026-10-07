@@ -25,7 +25,7 @@ var array<Setup> setups = array.new<Setup>()
 var array<Setup> setupArch = array.new<Setup>()
 //#endif
 var float confClose = na
-// Per-bar close and ATR, so a scrolled-back view can rank objects at any past bar
+// Per-bar close and ATR, so the history window can rank objects at any past bar
 var array<float> histClose = array.new<float>()
 var array<float> histAtr = array.new<float>()
 var int histBase = 0
@@ -128,6 +128,14 @@ if cf
     if i_setups and core.warm
         f_setupStep(core, setups, setupArch, stS, stI, liqs, zones, ctx, sLon.on or sNy.on)
     //#endif
+    // Debug self-checks (P11): the engines in SMC Visualizer Pro (they run identically in both
+    // indicators, ADR-13), the live setups and trade counters in SMC Pro · Setups
+    if mc.debug
+        //#if core
+        f_engineChecks(core, zones, liqs, stS, stI)
+        //#else
+        f_setupChecks(setups)
+        //#endif
     if i_log
         f_logEvents(core)
 
@@ -145,6 +153,12 @@ if barstate.isconfirmed
 plot(i_priceMarkers ? pmE : na, "Setup entry", color = C_SIG, display = display.price_scale, editable = false)
 plot(i_priceMarkers ? pmSL : na, "Setup SL", color = C_BEAR, display = display.price_scale, editable = false)
 plot(i_priceMarkers ? pmTP : na, "Setup TP1", color = C_BULL, display = display.price_scale, editable = false)
+//#else
+// Displacement candles (§17.1): outline markers in Analysis / Debug, on closed bars only. They are
+// plots, so they cost no drawing budget and can be hidden in the Style tab.
+bool dispMk = mc.labelLevel >= 3 and barstate.isconfirmed
+plotchar(dispMk and isDispUp, "Displacement ↑", "△", location.belowbar, color.new(C_BULL, OP_MEDIUM), size = size.tiny, display = display.pane)
+plotchar(dispMk and isDispDn, "Displacement ↓", "▽", location.abovebar, color.new(C_BEAR, OP_MEDIUM), size = size.tiny, display = display.pane)
 //#endif
 
 // ── Visual pools (created once; creation order = z-order, §13.13)
@@ -192,6 +206,7 @@ var table tSetup = i_setups and i_setPanel ? table.new(f_pos(i_setPanelPos), 2, 
 if barstate.islastconfirmedhistory or (barstate.isrealtime and barstate.isconfirmed)
     float px = na(confClose) ? close : confClose
     View view = f_buildView(histClose, histAtr, histBase, px)
+    drawMiss.set(0, 0)
     //#if core
     int rightT = time + i_rightExt * barMs
     pWash.used := 0
@@ -211,10 +226,9 @@ if barstate.islastconfirmedhistory or (barstate.isrealtime and barstate.isconfir
         f_renderBreaks(view, pStr, pLab, stS.breaks, view.vp ? mc.structWin : mc.structEvents, false)
     f_renderSwept(view, pLvl, pLab, liqs, liqArch)
     f_renderRange(view, pRngBox, pRngLine, pLab, tags, rng, rangeArch, close, rightT)
-    if view.live
-        // tag spacing follows the zoom of the visible range (Recent only: fixed 0.35 ATR)
-        float sep = view.vp and not na(view.winHi) ? math.max(0.35 * vu, 0.025 * (view.winHi - view.winLo)) : 0.35 * vu
-        f_drawTags(pLab, tags, rightT + barMs, sep)
+    // tag spacing follows the price span of the last VIEW_BARS bars (Recent only: fixed 0.35 ATR)
+    float sep = view.vp and not na(view.winHi) ? math.max(0.35 * vu, 0.025 * (view.winHi - view.winLo)) : 0.35 * vu
+    f_drawTags(pLab, tags, rightT + barMs, sep)
     f_renderSessions(view, pWash, pLab, sessHist, sAsia, sLon, sNy)
     if vInternal
         f_renderBreaks(view, pStr, pLab, stI.breaks, view.vp ? mc.internalWin : mc.internalEvents, true)
@@ -228,8 +242,8 @@ if barstate.islastconfirmedhistory or (barstate.isrealtime and barstate.isconfir
     f_finishLines(pLvl)
     f_finishLines(pStr)
     f_finishLabels(pLab)
-    f_ribbon(tRibbon, ctx, core, view.live)
-    f_dashboard(tDash, ctx, core, stI, rng, view.live)
+    f_ribbon(tRibbon, ctx, core)
+    f_dashboard(tDash, ctx, core, stI, rng)
     f_debugTable(tDebug, view, core, zones, zoneArch, liqs, liqArch, pZone, pWash, pRngBox, pMid, pLvl, pStr, pRngLine, pLab)
     //#else
     pSetBox.used := 0
@@ -241,5 +255,5 @@ if barstate.islastconfirmedhistory or (barstate.isrealtime and barstate.isconfir
     f_finishLines(pSetLine)
     f_finishLabels(pSetLab)
     Setup focus = i_setups ? f_focusSetup(setups, 0) : na
-    f_setupPanel(tSetup, ctx, core, view.live, focus, ins)
+    f_setupPanel(tSetup, ctx, core, focus, ins)
     //#endif

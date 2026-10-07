@@ -131,9 +131,12 @@ RANGE_ARCH_CAP = 600
 SESS_CAP = 1200
 BRK_CAP = 3000
 SWING_CAP = 3000
-// Visible-range rendering: a wide view is split into time segments with their own anchor
+// History window rendering: a wide window is split into time segments with their own anchor
 SEG_BARS = 150
 SEG_MAX = 6
+// Bars on a ~1300 px screen at the default zoom. The visible range is not read (ADR-14), so
+// label widths, slivers and tag spacing are estimated for this zoom, not for the whole window.
+VIEW_BARS = 200
 HIST_CAP = 90000
 // History buffer for dynamic offsets and the guard that keeps every lookback below it
 MAXBACK = 600

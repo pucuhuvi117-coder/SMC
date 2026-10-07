@@ -4,6 +4,28 @@
 > Чек-лист для команды разработки и QA. Пункт закрывается только при выполнении DoD фазы (`06-roadmap-plan.md` §21.9).
 > Обозначения: **[A]** Dev A (Core), **[B]** Dev B (Visual/Integration), **[Q]** QA, **[A+B]** совместно.
 
+## Статус реализации на v0.8.4
+
+Пункты разработки (`[A]`, `[B]`, `[A+B]`) фаз P0–P10 сверены с кодом. QA-пункты (`[Q]`), Gate 0, P11 и P12 ждут проверки в TradingView и данных с графиков. «Снято» — пункт заменён более поздним решением (ADR-13, ADR-14).
+
+| Фаза | Сделано | Частично | Нет | Снято |
+|---|---:|---:|---:|---:|
+| P0 · Foundations & Spikes | 10 | 10 | 0 | 5 |
+| P1 · Structure Engine | 8 | 2 | 0 | 0 |
+| P2 · Liquidity Engine | 5 | 4 | 0 | 0 |
+| P3 · Zone Engine | 10 | 3 | 0 | 0 |
+| P4 · Context Engine | 6 | 3 | 1 | 0 |
+| P5 · HTF Feed | 4 | 2 | 1 | 0 |
+| P6a · Visual Foundation | 4 | 2 | 1 | 2 |
+| P6b · Visual Intelligence | 3 | 7 | 0 | 0 |
+| P7 · Setup / Confluence / Signal / Risk | 9 | 3 | 1 | 0 |
+| P8 · Setup Composer · Dashboard · Ribbon · Gauge | 7 | 0 | 1 | 0 |
+| P9 · Alerts & Webhook | 4 | 3 | 0 | 0 |
+| P10 · Analysis & Debug Tooling | 3 | 4 | 0 | 0 |
+| **Итого** | **73** | **43** | **5** | **7** |
+
+Главное из «частично» и «нет» — кандидаты на v1.1 и v2.0: HTF2, MOP и minor-уровни из internal, отдельные Signal и TradePlan с цепочкой `causeId`, лог в CSV §19.1, локализация интерфейса, гистерезис и HTF-доминирование в Anti-Clutter.
+
 ---
 
 ## 0. Перед стартом (Gate 0)
@@ -18,35 +40,35 @@
 ## P0 · Foundations & Spikes
 
 **Инфраструктура**
-- [ ] [A] Репозиторий: `/src`, `/build`, `/dist`, `/tests`, `/docs`, `CHANGELOG.md`.
-- [ ] [A] Build-скрипт: конкатенация по `targets`, подстановка версии, отчёт о размере.
-- [ ] [A] Шаблон заголовка модуля: назначение, зависимости, публичные функции.
-- [ ] [A] Соглашения по именованию (префиксы модулей, enums, UDT).
+- [x] [A] Репозиторий: `/src`, `/build`, `/dist`, `/tests`, `/docs`, `CHANGELOG.md`.
+- [x] [A] Build-скрипт: конкатенация по `targets`, подстановка версии, отчёт о размере.
+- [ ] [A] Шаблон заголовка модуля: назначение, зависимости, публичные функции. — **частично:** у каждого модуля есть шапка с назначением; зависимостей и списка публичных функций нет
+- [ ] [A] Соглашения по именованию (префиксы модулей, enums, UDT). — **частично:** соблюдаются на практике (f_ / i_ / EV_ / ZK_ / LS_, UDT и enum в PascalCase), lint запрещает зарезервированные имена; отдельного документа нет
 
 **Спайки**
-- [ ] [A] S-1 HTF Feed: кортеж `[1]` + `lookahead_on`, смена HTF-бара, Bar Replay diff.
-- [ ] [A] S-2 Глубина HTF-истории, fallback-пивоты.
-- [ ] [B] S-3 Full render 450 объектов, rollback на тиках, стоимость инкремента.
-- [ ] [B] S-4 Smart Labels: высота строки, abovebar/belowbar, коллизии.
-- [ ] [B] S-5 `behind_chart`, `text_formatting`, размер текста в pt, `style_text_outline`, z-order.
-- [ ] [B] S-6 Setup Path: lines vs polyline, `xloc.bar_time`, проекция в будущее.
-- [ ] [A] S-7 Лимиты компиляции на синтетическом монолите.
-- [ ] [A] S-8 Алерты: размер сообщения, Content-Type, троттлинг батча на M1.
-- [ ] [B] S-9 Стоимость viewport-aware рендера.
-- [ ] [A+B] Протокол спайков, обновлённые ADR (§4.13), обновлённый реестр рисков (§24).
+- [ ] [A] S-1 HTF Feed: кортеж `[1]` + `lookahead_on`, смена HTF-бара, Bar Replay diff. — **частично:** идиома `[1]` + `lookahead_on` и смена HTF-бара — §4.7 «Реализация v0.3»; diff в Bar Replay не записан
+- [ ] [A] S-2 Глубина HTF-истории, fallback-пивоты. — **частично:** детекция внутри `request.security` даёт всю HTF-историю, `htfReliable`; таблицы «ТФ × HTF → баров» нет
+- [x] [B] ~~S-3 Full render 450 объектов, rollback на тиках, стоимость инкремента.~~ — **снято:** отрисовка на тиках и инкременты сняты ADR-14
+- [x] [B] ~~S-4 Smart Labels: высота строки, abovebar/belowbar, коллизии.~~ — **снято:** протокола нет; Smart Labels сделаны по месту (теги у правого края)
+- [x] [B] ~~S-5 `behind_chart`, `text_formatting`, размер текста в pt, `style_text_outline`, z-order.~~ — **снято:** протокола нет; `behind_chart` / `text_formatting` не используются (риски T-08, T-09)
+- [x] [B] ~~S-6 Setup Path: lines vs polyline, `xloc.bar_time`, проекция в будущее.~~ — **снято:** протокола нет; используются линии (`f_drawPath`)
+- [x] [A] S-7 Лимиты компиляции на синтетическом монолите. — замер на реальной сборке: T-01, ADR-13, бюджет в `build.py`
+- [x] [A] ~~S-8 Алерты: размер сообщения, Content-Type, троттлинг батча на M1.~~ — **снято:** протокола нет; лимит сообщения задаётся «Max message length», усечение с `truncated`
+- [x] [B] S-9 Стоимость viewport-aware рендера. — ADR-14: ≈1,7 с на 10 тыс. баров при каждой прокрутке → отказ от видимой области
+- [ ] [A+B] Протокол спайков, обновлённые ADR (§4.13), обновлённый реестр рисков (§24). — **частично:** ADR-13 / ADR-14 и T-01 обновлены; протокола спайков нет
 
 **Ядро-каркас**
-- [ ] [A] `02_types`: все enums (§8.2) и UDT (§8.3–8.4).
-- [ ] [A] `01_config`: inputs по §14.4 с группами, inline, tooltip, `display.none`.
-- [ ] [A] Display Profiles и правило ADR-09 (`mode.allows AND user.show`).
-- [ ] [A] Пресеты структуры (Scalp / Intraday / Swing / Manual) и сессий (ICT NY / Original UTC / Custom).
-- [ ] [A] Авто-HTF (§4.7) и валидация конфигурации (§14.4).
-- [ ] [A] `03_registry_bus`: Registry с ёмкостями и вытеснением (§8.5), ключи (ADR-12).
-- [ ] [A] Event Bus: `barEvents`, `history`, `lastByType`, ordinal, запрет эмиссии на неподтверждённом баре.
-- [ ] [A] `10_data_engine`: ATR, геометрия, `isDispBar`, `volRatio` (+ авто-деградация), `isGapBar`, сессионные часы, тип графика.
-- [ ] [A] Warm-up guard (§4.8).
-- [ ] [B] Debug-таблица: effective config, размеры реестров, `isWarm`.
-- [ ] [A] `log.info`-формат журнала событий (§19.1).
+- [ ] [A] `02_types`: все enums (§8.2) и UDT (§8.3–8.4). — **частично:** enums входов и UDT есть; состояния и TF slot — int-константы в `01_constants`; нет ObjMeta, Signal, TradePlan, TPTarget, RenderSpec
+- [x] [A] `01_config`: inputs по §14.4 с группами, inline, tooltip, `display.none`. — `03_inputs`: группы, inline, подсказки у каждой строки и `display.none` проверяет lint
+- [x] [A] Display Profiles и правило ADR-09 (`mode.allows AND user.show`).
+- [x] [A] Пресеты структуры (Scalp / Intraday / Swing / Manual) и сессий (ICT NY / Original UTC / Custom).
+- [ ] [A] Авто-HTF (§4.7) и валидация конфигурации (§14.4). — **частично:** авто-HTF есть; исправленные настройки показываются как ⚠ CONFIG (v0.8.4); формат сессий проверяет сам TradingView
+- [ ] [A] `03_registry_bus`: Registry с ёмкостями и вытеснением (§8.5), ключи (ADR-12). — **частично:** ёмкости и вытеснение старейших (FIFO), а не по приоритету §8.5; ключи по времени — только в webhook
+- [ ] [A] Event Bus: `barEvents`, `history`, `lastByType`, ordinal, запрет эмиссии на неподтверждённом баре. — **частично:** barEvents + кольцо истории; lastByType — только последние структура / HTF / ликвидность; порядкового номера в баре нет
+- [x] [A] `10_data_engine`: ATR, геометрия, `isDispBar`, `volRatio` (+ авто-деградация), `isGapBar`, сессионные часы, тип графика.
+- [x] [A] Warm-up guard (§4.8).
+- [x] [B] Debug-таблица: effective config, размеры реестров, `isWarm`.
+- [ ] [A] `log.info`-формат журнала событий (§19.1). — **частично:** формат `EV|id|type|time|tf|dir…`, а не CSV §19.1 со стабильным ключом
 
 **QA**
 - [ ] [Q] Ручная golden-разметка, два разметчика, decision log.
@@ -55,150 +77,150 @@
 
 ## P1 · Structure Engine
 
-- [ ] [A] Пивоты по правилу A.2 (internal и swing независимо).
-- [ ] [A] HH/HL/LH/LL, EQH/EQL с `tolEQ` (A.3).
-- [ ] [A] Автомат структуры (§7.1): UNDEFINED / BULLISH / BEARISH.
-- [ ] [A] BOS / CHoCH / BOS initial, один пробой на пивот (A.4).
-- [ ] [A] Break source Close / Wick.
-- [ ] [A] Нога пробоя, `dispStrength`, `legHasFvg`, MSS.
-- [ ] [A] Protected levels, weak high/low, опция CHoCH reference (A.5).
-- [ ] [A] Флаг `shadowed` для дублей internal/swing.
-- [ ] [A] События SWING, BOS, CHOCH с `causeId`.
-- [ ] [A] Ассерты: один пробой на пивот, валидные переходы автомата.
+- [x] [A] Пивоты по правилу A.2 (internal и swing независимо).
+- [x] [A] HH/HL/LH/LL, EQH/EQL с `tolEQ` (A.3).
+- [x] [A] Автомат структуры (§7.1): UNDEFINED / BULLISH / BEARISH.
+- [x] [A] BOS / CHoCH / BOS initial, один пробой на пивот (A.4).
+- [x] [A] Break source Close / Wick.
+- [x] [A] Нога пробоя, `dispStrength`, `legHasFvg`, MSS.
+- [ ] [A] Protected levels, weak high/low, опция CHoCH reference (A.5). — **частично:** protected levels есть; Strong / Weak High / Low показываются на диапазоне (v0.8.4); опции «CHoCH reference» нет
+- [x] [A] Флаг `shadowed` для дублей internal/swing.
+- [x] [A] События SWING, BOS, CHOCH с `causeId`.
+- [ ] [A] Ассерты: один пробой на пивот, валидные переходы автомата. — **частично:** тренд в допустимых пределах, порядок id событий, один пробой на пивот (v0.8.4); проверки переходов автомата нет
 - [ ] [Q] Golden diff ≥ 95% (AC-11), наборы длин 5 / 10 / 20 (AC-12).
 - [ ] [Q] Bar Replay: 0 расхождений (AC-06, частично).
 
 ## P2 · Liquidity Engine
 
-- [ ] [A] Уровни из swing-пивотов (major-кандидаты) и internal (minor, опц.).
-- [ ] [A] EQ-кластеры: `liqTol`, `eqMaxBars`, touches, цена кластера, `LIQ_EQ`.
-- [ ] [A] Key Levels: PDH/PDL, PWH/PWL (D/W-фиды по идиоме `[1]`), граница дня Exchange / NY midnight.
-- [ ] [A] Session H/L → Key Levels (AH/AL, LOH/LOL, NYH/NYL), MOP.
-- [ ] [A] `isMajor` (A.12), expiry.
-- [ ] [A] Автомат уровня (§7.2): SWEPT (WICK / RECLAIM), PENDING_RECLAIM, TAKEN, EXPIRED, ARCHIVED.
-- [ ] [A] Turtle Soup-классификация (A.13 п.6).
-- [ ] [A] Несколько свипов на баре: порядок событий, приоритет важности.
-- [ ] [A] События LIQ_*, KEYLEVEL_SET.
+- [ ] [A] Уровни из swing-пивотов (major-кандидаты) и internal (minor, опц.). — **частично:** уровни только из swing-пивотов; minor из internal нет
+- [x] [A] EQ-кластеры: `liqTol`, `eqMaxBars`, touches, цена кластера, `LIQ_EQ`.
+- [ ] [A] Key Levels: PDH/PDL, PWH/PWL (D/W-фиды по идиоме `[1]`), граница дня Exchange / NY midnight. — **частично:** граница дня — биржевая; варианта NY midnight нет
+- [ ] [A] Session H/L → Key Levels (AH/AL, LOH/LOL, NYH/NYL), MOP. — **частично:** Session H/L есть; MOP (открытие NY 00:00) нет
+- [x] [A] `isMajor` (A.12), expiry.
+- [x] [A] Автомат уровня (§7.2): SWEPT (WICK / RECLAIM), PENDING_RECLAIM, TAKEN, EXPIRED, ARCHIVED.
+- [x] [A] Turtle Soup-классификация (A.13 п.6).
+- [ ] [A] Несколько свипов на баре: порядок событий, приоритет важности. — **частично:** одно событие на уровень; приоритета по важности (A.13) нет
+- [x] [A] События LIQ_*, KEYLEVEL_SET.
 - [ ] [Q] Синтетика sweep / taken 100% (AC-14), golden ≥ 95%.
 - [ ] [Q] Key Levels сверены с D/W-барами (AC-16).
 
 ## P3 · Zone Engine
 
-- [ ] [A] Единая модель `Zone` (kind, state, геометрия, атрибуты качества).
-- [ ] [A] OB: окно поиска, последняя противоположная свеча, fallback (A.7).
-- [ ] [A] Режимы зоны Full / Body+Wick / Body. Опция «Extend to leg low».
-- [ ] [A] Фильтры: размер (авто-Body), displacement, объём (авто-деградация), целостность.
-- [ ] [A] Дедупликация OB internal/swing.
-- [ ] [A] Lifecycle OB (§7.3), правила mitigation Touch / 50% / Full.
-- [ ] [A] Конверсия BB / MB по флагу снятия ликвидности (A.8).
-- [ ] [A] FVG: паттерн, размер, средняя свеча, сессионные гэпы, displacement-тег (A.10).
-- [ ] [A] Lifecycle FVG (§7.4), fill rules, незаполненный остаток.
-- [ ] [A] IFVG.
-- [ ] [A] Strength (A.7 п.8), аннотация `htfContainerId`.
-- [ ] [A] Вытеснение зон по политике §8.5.
-- [ ] [A] События ZONE_*.
+- [x] [A] Единая модель `Zone` (kind, state, геометрия, атрибуты качества).
+- [x] [A] OB: окно поиска, последняя противоположная свеча, fallback (A.7).
+- [ ] [A] Режимы зоны Full / Body+Wick / Body. Опция «Extend to leg low». — **частично:** режимы Full / Body+Wick / Body есть; «Extend to leg low» нет
+- [x] [A] Фильтры: размер (авто-Body), displacement, объём (авто-деградация), целостность.
+- [x] [A] Дедупликация OB internal/swing.
+- [x] [A] Lifecycle OB (§7.3), правила mitigation Touch / 50% / Full.
+- [x] [A] Конверсия BB / MB по флагу снятия ликвидности (A.8).
+- [x] [A] FVG: паттерн, размер, средняя свеча, сессионные гэпы, displacement-тег (A.10).
+- [x] [A] Lifecycle FVG (§7.4), fill rules, незаполненный остаток.
+- [x] [A] IFVG.
+- [ ] [A] Strength (A.7 п.8), аннотация `htfContainerId`. — **частично:** Strength есть; `htfContainerId` нет
+- [ ] [A] Вытеснение зон по политике §8.5. — **частично:** вытесняются старейшие, а не «сначала MITIGATED, затем дальние FRESH»
+- [x] [A] События ZONE_*.
 - [ ] [Q] OB-определение 100% (AC-17), FVG и гэпы (AC-18), ассерты lifecycle (AC-19), конверсия (AC-20), объём (AC-21).
 
 ## P4 · Context Engine
 
-- [ ] [A] Dealing range: построение, DEVELOPING → ESTABLISHED → SUPERSEDED (A.14, §7.5).
-- [ ] [A] `pd%`, PREMIUM / DISCOUNT / EQ с `eqBand`.
-- [ ] [A] OTE-полоса и sweet spot для бычьего и медвежьего диапазона.
-- [ ] [A] Сессии в таймзоне сессий с DST, пресеты, `minutesLeft` (A.15).
-- [ ] [A] Отключение сессий на ТФ > 1H.
-- [ ] [A] HTF bias, `htfReliable`, HTF2-подтверждение (A.16).
-- [ ] [A] Режим RANGING / TRENDING (A.17), MARKET bias.
-- [ ] [A] `MarketContext` (§8.3) на каждом подтверждённом баре.
-- [ ] [A] Аннотация `pdLocation` для зон.
-- [ ] [A] События RANGE_NEW, PD_ENTER, OTE_ENTER, SESSION_*, HTF_BIAS, REGIME.
+- [x] [A] Dealing range: построение, DEVELOPING → ESTABLISHED → SUPERSEDED (A.14, §7.5).
+- [x] [A] `pd%`, PREMIUM / DISCOUNT / EQ с `eqBand`.
+- [x] [A] OTE-полоса и sweet spot для бычьего и медвежьего диапазона.
+- [x] [A] Сессии в таймзоне сессий с DST, пресеты, `minutesLeft` (A.15).
+- [x] [A] Отключение сессий на ТФ > 1H.
+- [ ] [A] HTF bias, `htfReliable`, HTF2-подтверждение (A.16). — **частично:** HTF bias и `htfReliable` есть; HTF2 нет
+- [x] [A] Режим RANGING / TRENDING (A.17), MARKET bias.
+- [ ] [A] `MarketContext` (§8.3) на каждом подтверждённом баре. — **частично:** считается на каждом подтверждённом баре; nextBSL / SSL — только на последних барах
+- [ ] [A] Аннотация `pdLocation` для зон. — **нет:** у Zone нет поля pdLocation
+- [ ] [A] События RANGE_NEW, PD_ENTER, OTE_ENTER, SESSION_*, HTF_BIAS, REGIME. — **частично:** всё, кроме REGIME
 - [ ] [Q] DST-кейсы (AC-23), формулы PD/OTE (AC-22), режимы (AC-24).
 
 ## P5 · HTF Feed
 
-- [ ] [B] Один `request.security` на HTF: кортеж OHLCV + time + ATR подтверждённого бара.
-- [ ] [B] Детекция закрытия HTF-бара, буфер HTF-баров.
-- [ ] [B] Прогон Structure / Liquidity / Zone с TF slot = HTF1 (общий код).
-- [ ] [B] HTF2-фид для bias (опц.).
-- [ ] [B] Контроль глубины, ⚠ `HTF history low`, fallback S-2.
-- [ ] [B] HTF ≤ chart TF → off + ⚠ (AC-26).
-- [ ] [B] Бюджет `request.*`: ≤ 4 вызова в v1.0.
+- [ ] [B] Один `request.security` на HTF: кортеж OHLCV + time + ATR подтверждённого бара. — **частично:** один вызов, но возвращает результат детекции `f_htfState`, а не OHLCV + ATR (отклонение от ADR-03, задокументировано)
+- [x] [B] Детекция закрытия HTF-бара, буфер HTF-баров.
+- [ ] [B] Прогон Structure / Liquidity / Zone с TF slot = HTF1 (общий код). — **частично:** детекция HTF — компактный повтор в `f_htfState`; общий код — только жизненный цикл (`24_htf_ingest`)
+- [ ] [B] HTF2-фид для bias (опц.). — **нет:** HTF2 нет
+- [x] [B] Контроль глубины, ⚠ `HTF history low`, fallback S-2.
+- [x] [B] HTF ≤ chart TF → off + ⚠ (AC-26).
+- [x] [B] Бюджет `request.*`: ≤ 4 вызова в v1.0. — 3 вызова: D, W, HTF
 - [ ] [Q] History vs Bar Replay HTF-события 100% (AC-25), низкая история (AC-27).
 
 ## P6a · Visual Foundation
 
-- [ ] [B] `60_visual_tokens`: палитры Standard и CVD, opacity, линии, типографика (§13).
-- [ ] [B] Theme Resolver: Auto по яркости `chart.bg_color`, ручное переопределение.
-- [ ] [B] Пулы box / line / label по z-слоям (§13.13).
-- [ ] [B] `ViewHandle`, `renderHash`, dirty-check.
-- [ ] [B] Full render на `barstate.islastconfirmedhistory`, инкремент на подтверждённом realtime-баре, live-слой на тиках.
-- [ ] [B] Координаты: `xloc.bar_time` для истории, проекция вправо ≤ 25 баров.
-- [ ] [B] Правый край зон — общая вертикаль `now + 5`.
-- [ ] [B] Базовые рендереры: структура, уровни, зоны (по §13.8, §13.12).
-- [ ] [B] `behind_chart` и прочее по итогам S-5.
+- [ ] [B] `60_visual_tokens`: палитры Standard и CVD, opacity, линии, типографика (§13). — **частично:** палитры и прозрачности — токены; стили и толщины линий, размеры текста — в рендерерах
+- [x] [B] Theme Resolver: Auto по яркости `chart.bg_color`, ручное переопределение.
+- [x] [B] Пулы box / line / label по z-слоям (§13.13).
+- [x] [B] ~~`ViewHandle`, `renderHash`, dirty-check.~~ — **снято:** пулы без dirty-check; частота отрисовки задана ADR-14
+- [x] [B] ~~Full render на `barstate.islastconfirmedhistory`, инкремент на подтверждённом realtime-баре, live-слой на тиках.~~ — **снято:** заменено ADR-14: один проход на последнем историческом баре и на закрытии каждого realtime-бара
+- [ ] [B] Координаты: `xloc.bar_time` для истории, проекция вправо ≤ 25 баров. — **частично:** везде `xloc.bar_time`; «Extend right» допускает до 100 баров
+- [x] [B] Правый край зон — общая вертикаль `now + 5`.
+- [x] [B] Базовые рендереры: структура, уровни, зоны (по §13.8, §13.12).
+- [ ] [B] `behind_chart` и прочее по итогам S-5. — **нет:** `behind_chart` / `text_formatting` не используются
 
 ## P6b · Visual Intelligence
 
-- [ ] [B] Relevance Score: компоненты H/P/F/A/S/L/U, веса по видам (§16.2–16.3).
-- [ ] [B] Маппинг R → класс → RenderSpec (§16.4), смещения по режимам.
-- [ ] [B] Pinning объектов цепочки активного сетапа.
-- [ ] [B] Конвейер Anti-Clutter (§15.2): фильтр режима, история, дистанция, слияние, кластеризация, HTF-доминирование, Nearest-N, бюджет, гистерезис.
-- [ ] [B] TTL отработанных объектов по режимам.
-- [ ] [B] Затухание структурных меток (AC-M14).
-- [ ] [B] Smart Labels: якоря, коллизии (слияние / сдвиг / скрытие), стопка правых тегов (§14.7).
-- [ ] [B] Уровни текста L0–L3, тултипы у всех меток.
-- [ ] [B] Режимы Clean / Normal / Analysis / Debug / Custom по матрице §19.2.
-- [ ] [B] Draw Budget Manager, ассерт превышения.
+- [ ] [B] Relevance Score: компоненты H/P/F/A/S/L/U, веса по видам (§16.2–16.3). — **частично:** `f_zoneRAt` / `f_liqRAt`; U всегда 0; для структуры и сессий R нет
+- [ ] [B] Маппинг R → класс → RenderSpec (§16.4), смещения по режимам. — **частично:** порог θ по режиму и приглушение ±6; классов и RenderSpec нет
+- [ ] [B] Pinning объектов цепочки активного сетапа. — **частично:** сетап в другом индикаторе (ADR-13); цепочку показывает Setup Path
+- [ ] [B] Конвейер Anti-Clutter (§15.2): фильтр режима, история, дистанция, слияние, кластеризация, HTF-доминирование, Nearest-N, бюджет, гистерезис. — **частично:** фильтр режима, глубина и дистанция, слияние, Nearest-N, бюджет есть; HTF-доминирования (M8) и гистерезиса (M13) нет
+- [x] [B] TTL отработанных объектов по режимам.
+- [ ] [B] Затухание структурных меток (AC-M14). — **частично:** последний слом ярче, старые тусклее (Recent); в окне истории — до structWin
+- [ ] [B] Smart Labels: якоря, коллизии (слияние / сдвиг / скрытие), стопка правых тегов (§14.7). — **частично:** слияние правых тегов, подписи BOS «влезла или скрыта»; сдвига тегов нет
+- [x] [B] Уровни текста L0–L3, тултипы у всех меток.
+- [x] [B] Режимы Clean / Normal / Analysis / Debug / Custom по матрице §19.2.
+- [ ] [B] Draw Budget Manager, ассерт превышения. — **частично:** пулы по режимам, занятость в Debug-таблице, счётчик DROPPED (v0.8.4); ассерта нет — переполнение в Debug ожидаемо
 - [ ] [Q] VAC dry-run: VAC-1, 2, 3, 4, 6, 7, 17.
 
 ## P7 · Setup / Confluence / Signal / Risk
 
-- [ ] [A] Автомат сетапа (§7.7), стадии UI (FORMING / READY / ACTIVE / DONE).
-- [ ] [A] SWEEP_REVERSAL по A.18.
-- [ ] [A] CONTINUATION по A.18.
-- [ ] [A] Выбор POI (§9.4), альтернативный POI.
-- [ ] [A] Конкуренция и замещение сетапов (§9.3).
-- [ ] [A] Confluence: факторы, штрафы, clamp, грейды (§9.5), пресеты (§9.6).
-- [ ] [A] `chain` и `chainText` строго из `causeId`.
-- [ ] [A] Signal Engine: мин. грейд, сессионный фильтр, кулдаун, дедупликация.
-- [ ] [A] Risk Engine: режимы SL и буферы, цели TP (§10.4–10.5), RR, проверки (§11.3).
-- [ ] [A] TradePlan (DRAFT): все поля §10.2, `cancelRules`.
-- [ ] [A] Execution Adapter: интерфейс, no-op.
-- [ ] [A] Отслеживание TP/SL после входа с политикой §20.3 (для визуальных состояний).
-- [ ] [A] Причины завершения (reason) и «почему нет сетапа» (guards).
+- [x] [A] Автомат сетапа (§7.7), стадии UI (FORMING / READY / ACTIVE / DONE).
+- [x] [A] SWEEP_REVERSAL по A.18.
+- [x] [A] CONTINUATION по A.18.
+- [x] [A] Выбор POI (§9.4), альтернативный POI.
+- [x] [A] Конкуренция и замещение сетапов (§9.3).
+- [x] [A] Confluence: факторы, штрафы, clamp, грейды (§9.5), пресеты (§9.6).
+- [ ] [A] `chain` и `chainText` строго из `causeId`. — **частично:** цепочка — строка из полей сетапа, а не массив `causeId`; у событий SETUP_* cause = na
+- [ ] [A] Signal Engine: мин. грейд, сессионный фильтр, кулдаун, дедупликация. — **частично:** отдельного Signal нет; пороги грейда, «Require killzone», один сетап на модель × направление; кулдауна нет
+- [x] [A] Risk Engine: режимы SL и буферы, цели TP (§10.4–10.5), RR, проверки (§11.3). — внутри `f_setPlan` (`30_setup`), не отдельным модулем
+- [ ] [A] TradePlan (DRAFT): все поля §10.2, `cancelRules`. — **частично:** поля плана — в Setup; в JSON нет rrWeighted, slBuffer, mgmt; правила отмены фиксированы
+- [ ] [A] Execution Adapter: интерфейс, no-op. — **нет:** план v2.0 (`41_execution_adapter`)
+- [x] [A] Отслеживание TP/SL после входа с политикой §20.3 (для визуальных состояний).
+- [x] [A] Причины завершения (reason) и «почему нет сетапа» (guards).
 - [ ] [Q] Цепочки (AC-28), инвалидация / экспирация / MISSED (AC-29), риск (AC-30), скоринг (AC-31), конкуренция (AC-32).
 
 ## P8 · Setup Composer · Dashboard · Ribbon · Gauge
 
-- [ ] [B] Композиция сетапа: entry-зона, E / SL / TP-линии, reward/risk-боксы, карточка (§14.8).
-- [ ] [B] Визуальные состояния композиции (FORMING … EXPIRED).
-- [ ] [B] Price-scale markers (служебные plot'ы, опц.).
-- [ ] [B] Dashboard Compact / Expanded (§14.5), схлопывание строк, тултипы.
-- [ ] [B] Context Ribbon (§14.6), сегмент ⚠.
-- [ ] [B] Range Gauge (§14.13).
-- [ ] [B] Позиции панелей только в углах / по краям, проверка VAC-11.
-- [ ] [B] Словарь текстов (EN), каркас для RU/ES.
+- [x] [B] Композиция сетапа: entry-зона, E / SL / TP-линии, reward/risk-боксы, карточка (§14.8).
+- [x] [B] Визуальные состояния композиции (FORMING … EXPIRED).
+- [x] [B] Price-scale markers (служебные plot'ы, опц.).
+- [x] [B] Dashboard Compact / Expanded (§14.5), схлопывание строк, тултипы. — строки сетапа — в панели Setup (ADR-13)
+- [x] [B] Context Ribbon (§14.6), сегмент ⚠. — сегмент SETUP — в панели Setup (ADR-13)
+- [x] [B] Range Gauge (§14.13).
+- [x] [B] Позиции панелей только в углах / по краям, проверка VAC-11.
+- [ ] [B] Словарь текстов (EN), каркас для RU/ES. — **нет:** тексты — английские литералы в коде; языка интерфейса нет
 - [ ] [Q] VAC-2, 9, 10, 11, 12.
 
 ## P9 · Alerts & Webhook
 
-- [ ] [A] 15 `alertcondition()` с константными сообщениями (§12.7).
-- [ ] [A] Батч-`alert()`: не более одного вызова на бар, только на закрытии бара.
-- [ ] [A] Форматы Text / JSON, фильтры событий, мин. tier и грейд.
-- [ ] [A] Сериализация по схеме v1 (§12.2–12.5): числа, `null`, экранирование, время.
-- [ ] [A] `msg_id`, `build`, `cfg_hash`, `seq`.
-- [ ] [A] SNAPSHOT-heartbeat.
-- [ ] [A] Усечение по Tier при превышении размера (по итогам S-8).
+- [ ] [A] 15 `alertcondition()` с константными сообщениями (§12.7). — **частично:** 13 в Core + 5 в Setups (READY, READY LONG / SHORT с v0.8.4, TRIGGERED, INVALID)
+- [x] [A] Батч-`alert()`: не более одного вызова на бар, только на закрытии бара.
+- [x] [A] Форматы Text / JSON, фильтры событий, мин. tier и грейд.
+- [ ] [A] Сериализация по схеме v1 (§12.2–12.5): числа, `null`, экранирование, время. — **частично:** null, экранирование, время в мс — по схеме; RR / ATR с 4 знаками; отклонения — §12.8
+- [x] [A] `msg_id`, `build`, `cfg_hash`, `seq`.
+- [x] [A] SNAPSHOT-heartbeat.
+- [ ] [A] Усечение по Tier при превышении размера (по итогам S-8). — **частично:** не поместившиеся события отбрасываются в порядке эмиссии + `truncated`; порядка «сначала Tier 1» нет
 - [ ] [Q] Тестовый приёмник с JSON Schema-валидацией (AC-33…AC-36), 24 ч на M1.
 
 ## P10 · Analysis & Debug Tooling
 
-- [ ] [B] Setup Path: маркеры ①…⑨, стрелки, тултипы (§17.2).
-- [ ] [B] Event Timeline в Dashboard Expanded.
-- [ ] [B] Focus latest setup, Inspect at time (`input.time` с `confirm`).
-- [ ] [B] Прошлые сетапы (до 10) с итогом.
-- [ ] [B] Draw on Liquidity, альтернативный POI.
-- [ ] [B] Debug: ID-аннотации, ghost-объекты с причиной, Budget table, effective config.
-- [ ] [A] Debug: `log.info`-поток, ассерты `log.error`, «почему нет сетапа».
+- [ ] [B] Setup Path: маркеры ①…⑨, стрелки, тултипы (§17.2). — **частично:** 4 шага ①–④, пунктирные связи без стрелок, из полей сетапа
+- [x] [B] Event Timeline в Dashboard Expanded. — 8 событий, ◆TF (v0.8.2)
+- [ ] [B] Focus latest setup, Inspect at time (`input.time` с `confirm`). — **частично:** Inspect без `confirm` (иначе TradingView просит щёлкнуть по графику при каждом добавлении); приглушения «Focus latest» нет
+- [x] [B] Прошлые сетапы (до 10) с итогом.
+- [x] [B] Draw on Liquidity, альтернативный POI. — стрелка сплошная (v0.8.2)
+- [ ] [B] Debug: ID-аннотации, ghost-объекты с причиной, Budget table, effective config. — **частично:** ID и R, Debug-таблица; ghost — только для R < θ, без причины скрытия
+- [ ] [A] Debug: `log.info`-поток, ассерты `log.error`, «почему нет сетапа». — **частично:** log, ассерты, Inspect есть; формат лога ≠ CSV §19.1
 - [ ] [Q] VAC-15, журналы Normal == Debug (AC-09).
 
 ## P11 · QA, производительность, исправления

@@ -11,6 +11,19 @@ var map<string, int> setStats = map.new<string, int>()
 f_statAdd(string k) =>
     setStats.put(k, nz(setStats.get(k)) + 1)
 
+// Closed trades by grade (index GR_C 0 … GR_AP 3) and by model (4 Reversal, 5 Continuation):
+// count, wins (at least TP1) and the sum of realised R — does a higher grade really pay more (§20.4)?
+var array<float> outN = array.new<float>(6, 0.0)
+var array<float> outW = array.new<float>(6, 0.0)
+var array<float> outR = array.new<float>(6, 0.0)
+
+f_outcome(Setup s) =>
+    for k in array.from(s.grade, s.model == SM_REV ? 4 : 5)
+        outN.set(k, outN.get(k) + 1)
+        outW.set(k, outW.get(k) + (s.tpHit > 0 ? 1 : 0))
+        outR.set(k, outR.get(k) + s.rReal)
+    true
+
 // Ring of the last ATT_CAP attempts that ended without a trade (with or without a POI), for Inspect
 // ("why was there no setup here", §17.3): start and end time, and a one-line reason
 var array<int> attT0 = array.new<int>()
@@ -183,6 +196,7 @@ f_setPlan(Setup s, array<Liq> lv) =>
     s.nTp := 0
     s.drawLiq := false
     s.drawTxt := ""
+    s.drawPx := na
     if fail == ""
         // opposite liquidity beyond the entry, nearest first; the shift range extreme is the weak high / low
         array<float> px = array.new<float>()
@@ -225,6 +239,7 @@ f_setPlan(Setup s, array<Liq> lv) =>
                 // draw on liquidity: a major opposite target at least 2R away (§9.5)
                 if not s.drawLiq and maj.get(k) and dd >= 2 * risk
                     s.drawLiq := true
+                    s.drawPx := px.get(k)
                     s.drawTxt := tg.get(k) + " " + f_px(px.get(k)) + " (" + str.tostring(dd / risk, "0.0") + "R)"
         if i_tpMode == TpMode.rr
             s.tp1 := e + d * risk
@@ -335,7 +350,16 @@ f_setScore(Setup s, Ctx x, array<Zone> zs) =>
     if s.model == SM_CONT and x.ranging
         pen -= 0.5
         f := f_fac(f, "Ranging regime", -0.5)
-    s.score := math.max(0.0, math.min(10.0, gC + gL + gS + gP + gT + gR + pen))
+    // v0.8: without killzones (chart above 1H, or London and NY off) the Time factor cannot be earned;
+    // the other factors are scaled to the reachable maximum, so 4H / D setups are graded on the same
+    // 0–10 scale as intraday ones (Aggressive already reaches 10 without it)
+    float pos = gC + gL + gS + gP + gT + gR
+    float reach = math.min(10.0, agg ? 10.0 : 9.5)
+    if (not sesOk or not (i_lonOn or i_nyOn)) and reach < 10.0
+        float k = 10.0 / reach
+        pos := pos * k
+        f := f + "· no killzones on this timeframe: factors ×" + str.tostring(k, "0.00") + "\n"
+    s.score := math.max(0.0, math.min(10.0, pos + pen))
     s.grade := f_gradeFor(s.score)
     s.factors := f
     s.score
@@ -540,6 +564,7 @@ f_setAdvance(Core c, Setup s, StructState sw, StructState si, array<Liq> lv, arr
             s.state := s.tpHit > 0 ? SS_WIN : SS_SL
             s.reason := s.be ? "BE" : "SL"
             f_statAdd(s.tpHit > 0 ? "WIN" : "SL")
+            f_outcome(s)
             s.endBar := bar_index
             s.endT := time
             f_setEmit(c, s, EV_SETUP_SL, s.sl, rSl, s.rReal)
@@ -558,6 +583,7 @@ f_setAdvance(Core c, Setup s, StructState sw, StructState si, array<Liq> lv, arr
                 f_statAdd("WIN")
                 s.state := SS_WIN
                 s.reason := "TP" + str.tostring(s.nTp)
+                f_outcome(s)
                 s.endBar := bar_index
                 s.endT := time
             else if s.tpHit > 0
@@ -631,6 +657,25 @@ f_setupStep(Core c, array<Setup> ss, array<Setup> arch, StructState sw, StructSt
                         arch.push(done)
                         if arch.size() > SETUP_ARCH_CAP
                             arch.shift()
+    true
+
+// Debug self-checks (P11): a planned setup that is still READY or ACTIVE must have its stop on the
+// other side of the entry, the entry inside the POI, targets beyond the entry in order, and RR ≥ Min RR
+f_setupChecks(array<Setup> ss) =>
+    for s in ss
+        if not na(s.readyBar) and s.state <= SS_TP2
+            int d = s.dir
+            string id = "setup #" + str.tostring(s.id) + " "
+            float tick = syminfo.mintick
+            f_assert((s.entry - s.slInit) * d > 0, id + "stop not beyond the entry")
+            f_assert(s.entry >= s.entryBot - tick and s.entry <= s.entryTop + tick, id + "entry outside the POI")
+            f_assert((s.tp1 - s.entry) * d > 0, id + "TP1 not beyond the entry")
+            f_assert(s.nTp < 2 or (s.tp2 - s.tp1) * d > 0, id + "TP2 not beyond TP1")
+            f_assert(s.nTp < 3 or (s.tp3 - s.tp2) * d > 0, id + "TP3 not beyond TP2")
+            f_assert(s.rrFinal >= i_minRR - 0.01, id + "RR below Min RR")
+            f_assert(s.readyBar >= s.bornBar and s.stageBar >= s.readyBar, id + "stage bars out of order")
+    f_assert(outN.get(0) + outN.get(1) + outN.get(2) + outN.get(3) == outN.get(4) + outN.get(5), "trade counts by grade and by model differ")
+    f_assert(outN.get(4) + outN.get(5) == nz(setStats.get("WIN")) + nz(setStats.get("SL")), "trade counts differ from WIN + SL")
     true
 
 // Focus setup for the Ribbon, the Dashboard and the price-scale markers: the most advanced
