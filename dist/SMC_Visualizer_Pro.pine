@@ -1,6 +1,6 @@
 //@version=6
 // ═══════════════════════════════════════════════════════════════════════════════
-//  SMC Visualizer Pro · build 0.8.2 · 2026-10-07
+//  SMC Visualizer Pro · build 0.8.3 · 2026-10-07
 //  Structure, liquidity, zones and context. Setups live in the companion "SMC Pro · Setups" (ADR-13).
 //  Generated from /src by build/build.py. Do not edit dist/ by hand.
 //  Architecture: docs/02-architecture.md · Detectors: docs/appendix-a-detection-spec.md
@@ -8,7 +8,7 @@
 indicator("SMC Visualizer Pro", shorttitle = "SMC Pro", overlay = true, max_boxes_count = 500, max_lines_count = 500, max_labels_count = 500)
 
 // ═══ 01 · CONSTANTS ═════════════════════════════════════════════════════════════
-BUILD = "0.8.2"
+BUILD = "0.8.3"
 
 // Timeframe slots (docs §8.2). v0.1 computes the chart TF only; HTF arrives with the HTF Feed (P5).
 TF_CHART = 0
@@ -3399,8 +3399,8 @@ if barstate.islastconfirmedhistory or (barstate.isrealtime and barstate.isconfir
 // confirmed bar — the alert engine never recomputes detector logic (A-03). No alerts
 // during warm-up (AC-08). Chart-TF structure alerts ignore HTF events (separate conditions).
 // Sweep, OB-touch and FVG-fill alerts also fire for HTF objects: those happen on chart bars,
-// and their events carry tf = HTF1 for logs and the P9 webhook.
-// Setup alerts also send a detailed alert() message; the batched JSON webhook arrives with P9.
+// and their events carry tf = HTF1 for logs and the webhook.
+// SMC Pro · Setups also sends one alert() message per bar close (Text or the JSON envelope, 50_webhook).
 // SMC Visualizer Pro carries the structure / liquidity / zone conditions, SMC Pro · Setups the
 // setup conditions (ADR-13).
 bool alertOk = barstate.isconfirmed and core.warm and core.barEvents.size() > 0

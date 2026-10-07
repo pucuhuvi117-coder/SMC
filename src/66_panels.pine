@@ -176,6 +176,12 @@ f_qualityBar(float sc) =>
     int k = int(math.round(sc))
     str.repeat("▮", k) + str.repeat("▯", 10 - k)
 
+// One line of the trade table: count · share won · average realised R per trade
+f_outLine(string nm, int k) =>
+    float n = outN.get(k)
+    float r = n > 0 ? outR.get(k) / n : 0.0
+    n > 0 ? nm + "  " + str.tostring(n, "#") + " · " + str.tostring(100 * outW.get(k) / n, "#") + "% won · " + (r >= 0 ? "+" : "") + str.tostring(r, "0.00") + "R\n" : ""
+
 f_setupPanel(table tb, Ctx x, Core c, Setup fs, Setup ins) =>
     if not na(tb)
         string sz = panelSz
@@ -229,8 +235,12 @@ f_setupPanel(table tb, Ctx x, Core c, Setup fs, Setup ins) =>
                 topK := k
                 topV := v
         int nAs = assertN.get(0)
-        string stxt = (nAs > 0 ? "⚠" + str.tostring(nAs) + " asserts · " : "") + "READY " + str.tostring(nz(setStats.get("READY"))) + " · ✓" + str.tostring(nz(setStats.get("WIN"))) + " ✕" + str.tostring(nz(setStats.get("SL"))) + (topV > 0 ? " · " + str.lower(topK) + " " + str.tostring(topV) : "")
-        row := f_dashRow(tb, row, "STATS", stxt, C_NEUT, "Whole loaded history: setups that reached READY, trades won (✓, at least TP1) and stopped (✕), and the most frequent reason a setup ended without a trade.\n\n" + all + "\nGRADE_LOW: score below the preset's READY grade · RR_LOW: last target closer than Min RR · SL_TOO_WIDE / SL_TOO_TIGHT: stop outside the limits · NO_POI / POI_IN_PREMIUM / POI_IN_DISCOUNT: no zone of the shift leg on the right side · NO_SHIFT_IN_WINDOW: no CHoCH / BOS after the sweep · SUPERSEDED: replaced by a newer setup · TP1_BEFORE_ENTRY: price ran away (MISSED)", sz)
+        float nT = outN.get(4) + outN.get(5)
+        float rT = nT > 0 ? (outR.get(4) + outR.get(5)) / nT : 0.0
+        string avgT = nT > 0 ? " " + (rT >= 0 ? "+" : "") + str.tostring(rT, "0.0") + "R" : ""
+        string trd = nT > 0 ? "Closed trades (count · won · average R per trade):\n" + f_outLine("A+", 3) + f_outLine("A", 2) + f_outLine("B", 1) + f_outLine("C", 0) + f_outLine("Reversal", 4) + f_outLine("Continuation", 5) + "\n" : ""
+        string stxt = (nAs > 0 ? "⚠" + str.tostring(nAs) + " asserts · " : "") + "READY " + str.tostring(nz(setStats.get("READY"))) + " · ✓" + str.tostring(nz(setStats.get("WIN"))) + " ✕" + str.tostring(nz(setStats.get("SL"))) + avgT + (topV > 0 ? " · " + str.lower(topK) + " " + str.tostring(topV) : "")
+        row := f_dashRow(tb, row, "STATS", stxt, C_NEUT, trd + "Whole loaded history: setups that reached READY, trades won (✓, at least TP1) and stopped (✕), their average realised R, and the most frequent reason a setup ended without a trade. Analytical: entries at the plan price, no slippage or fees.\n\n" + all + "\nGRADE_LOW: score below the preset's READY grade · RR_LOW: last target closer than Min RR · SL_TOO_WIDE / SL_TOO_TIGHT: stop outside the limits · NO_POI / POI_IN_PREMIUM / POI_IN_DISCOUNT: no zone of the shift leg on the right side · NO_SHIFT_IN_WINDOW: no CHoCH / BOS after the sweep · SUPERSEDED: replaced by a newer setup · TP1_BEFORE_ENTRY: price ran away (MISSED)", sz)
         row := f_dashRow(tb, row, "CFG", str.tostring(cfgSig) + " · v" + BUILD, C_NEUT, "Settings signature: must equal the cfg number of SMC Visualizer Pro (Dashboard → CFG row). Different numbers mean the two indicators run the engines with different settings, and the setups do not match the structure on the chart.", sz)
         if row <= SET_PANEL_ROWS - 1
             table.clear(tb, 0, row, 1, SET_PANEL_ROWS - 1)

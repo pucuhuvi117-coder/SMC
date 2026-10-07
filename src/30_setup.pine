@@ -11,6 +11,19 @@ var map<string, int> setStats = map.new<string, int>()
 f_statAdd(string k) =>
     setStats.put(k, nz(setStats.get(k)) + 1)
 
+// Closed trades by grade (index GR_C 0 … GR_AP 3) and by model (4 Reversal, 5 Continuation):
+// count, wins (at least TP1) and the sum of realised R — does a higher grade really pay more (§20.4)?
+var array<float> outN = array.new<float>(6, 0.0)
+var array<float> outW = array.new<float>(6, 0.0)
+var array<float> outR = array.new<float>(6, 0.0)
+
+f_outcome(Setup s) =>
+    for k in array.from(s.grade, s.model == SM_REV ? 4 : 5)
+        outN.set(k, outN.get(k) + 1)
+        outW.set(k, outW.get(k) + (s.tpHit > 0 ? 1 : 0))
+        outR.set(k, outR.get(k) + s.rReal)
+    true
+
 // Ring of the last ATT_CAP attempts that ended without a trade (with or without a POI), for Inspect
 // ("why was there no setup here", §17.3): start and end time, and a one-line reason
 var array<int> attT0 = array.new<int>()
@@ -551,6 +564,7 @@ f_setAdvance(Core c, Setup s, StructState sw, StructState si, array<Liq> lv, arr
             s.state := s.tpHit > 0 ? SS_WIN : SS_SL
             s.reason := s.be ? "BE" : "SL"
             f_statAdd(s.tpHit > 0 ? "WIN" : "SL")
+            f_outcome(s)
             s.endBar := bar_index
             s.endT := time
             f_setEmit(c, s, EV_SETUP_SL, s.sl, rSl, s.rReal)
@@ -569,6 +583,7 @@ f_setAdvance(Core c, Setup s, StructState sw, StructState si, array<Liq> lv, arr
                 f_statAdd("WIN")
                 s.state := SS_WIN
                 s.reason := "TP" + str.tostring(s.nTp)
+                f_outcome(s)
                 s.endBar := bar_index
                 s.endT := time
             else if s.tpHit > 0
@@ -659,6 +674,8 @@ f_setupChecks(array<Setup> ss) =>
             f_assert(s.nTp < 3 or (s.tp3 - s.tp2) * d > 0, id + "TP3 not beyond TP2")
             f_assert(s.rrFinal >= i_minRR - 0.01, id + "RR below Min RR")
             f_assert(s.readyBar >= s.bornBar and s.stageBar >= s.readyBar, id + "stage bars out of order")
+    f_assert(outN.get(0) + outN.get(1) + outN.get(2) + outN.get(3) == outN.get(4) + outN.get(5), "trade counts by grade and by model differ")
+    f_assert(outN.get(4) + outN.get(5) == nz(setStats.get("WIN")) + nz(setStats.get("SL")), "trade counts differ from WIN + SL")
     true
 
 // Focus setup for the Ribbon, the Dashboard and the price-scale markers: the most advanced

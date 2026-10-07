@@ -1,6 +1,6 @@
 //@version=6
 // ═══════════════════════════════════════════════════════════════════════════════
-//  SMC Pro · Setups · build 0.8.2 · 2026-10-07
+//  SMC Pro · Setups · build 0.8.3 · 2026-10-07
 //  Companion of SMC Visualizer Pro: same engines and settings, plus the setup engine (ADR-13).
 //  Generated from /src by build/build.py. Do not edit dist/ by hand.
 //  Architecture: docs/02-architecture.md · Detectors: docs/appendix-a-detection-spec.md
@@ -8,7 +8,7 @@
 indicator("SMC Pro · Setups", shorttitle = "SMC Setups", overlay = true, max_boxes_count = 100, max_lines_count = 250, max_labels_count = 150)
 
 // ═══ 01 · CONSTANTS ═════════════════════════════════════════════════════════════
-BUILD = "0.8.2"
+BUILD = "0.8.3"
 
 // Timeframe slots (docs §8.2). v0.1 computes the chart TF only; HTF arrives with the HTF Feed (P5).
 TF_CHART = 0
@@ -2213,6 +2213,19 @@ var map<string, int> setStats = map.new<string, int>()
 f_statAdd(string k) =>
     setStats.put(k, nz(setStats.get(k)) + 1)
 
+// Closed trades by grade (index GR_C 0 … GR_AP 3) and by model (4 Reversal, 5 Continuation):
+// count, wins (at least TP1) and the sum of realised R — does a higher grade really pay more (§20.4)?
+var array<float> outN = array.new<float>(6, 0.0)
+var array<float> outW = array.new<float>(6, 0.0)
+var array<float> outR = array.new<float>(6, 0.0)
+
+f_outcome(Setup s) =>
+    for k in array.from(s.grade, s.model == SM_REV ? 4 : 5)
+        outN.set(k, outN.get(k) + 1)
+        outW.set(k, outW.get(k) + (s.tpHit > 0 ? 1 : 0))
+        outR.set(k, outR.get(k) + s.rReal)
+    true
+
 // Ring of the last ATT_CAP attempts that ended without a trade (with or without a POI), for Inspect
 // ("why was there no setup here", §17.3): start and end time, and a one-line reason
 var array<int> attT0 = array.new<int>()
@@ -2753,6 +2766,7 @@ f_setAdvance(Core c, Setup s, StructState sw, StructState si, array<Liq> lv, arr
             s.state := s.tpHit > 0 ? SS_WIN : SS_SL
             s.reason := s.be ? "BE" : "SL"
             f_statAdd(s.tpHit > 0 ? "WIN" : "SL")
+            f_outcome(s)
             s.endBar := bar_index
             s.endT := time
             f_setEmit(c, s, EV_SETUP_SL, s.sl, rSl, s.rReal)
@@ -2771,6 +2785,7 @@ f_setAdvance(Core c, Setup s, StructState sw, StructState si, array<Liq> lv, arr
                 f_statAdd("WIN")
                 s.state := SS_WIN
                 s.reason := "TP" + str.tostring(s.nTp)
+                f_outcome(s)
                 s.endBar := bar_index
                 s.endT := time
             else if s.tpHit > 0
@@ -2861,6 +2876,8 @@ f_setupChecks(array<Setup> ss) =>
             f_assert(s.nTp < 3 or (s.tp3 - s.tp2) * d > 0, id + "TP3 not beyond TP2")
             f_assert(s.rrFinal >= i_minRR - 0.01, id + "RR below Min RR")
             f_assert(s.readyBar >= s.bornBar and s.stageBar >= s.readyBar, id + "stage bars out of order")
+    f_assert(outN.get(0) + outN.get(1) + outN.get(2) + outN.get(3) == outN.get(4) + outN.get(5), "trade counts by grade and by model differ")
+    f_assert(outN.get(4) + outN.get(5) == nz(setStats.get("WIN")) + nz(setStats.get("SL")), "trade counts differ from WIN + SL")
     true
 
 // Focus setup for the Ribbon, the Dashboard and the price-scale markers: the most advanced
@@ -3529,6 +3546,12 @@ f_qualityBar(float sc) =>
     int k = int(math.round(sc))
     str.repeat("▮", k) + str.repeat("▯", 10 - k)
 
+// One line of the trade table: count · share won · average realised R per trade
+f_outLine(string nm, int k) =>
+    float n = outN.get(k)
+    float r = n > 0 ? outR.get(k) / n : 0.0
+    n > 0 ? nm + "  " + str.tostring(n, "#") + " · " + str.tostring(100 * outW.get(k) / n, "#") + "% won · " + (r >= 0 ? "+" : "") + str.tostring(r, "0.00") + "R\n" : ""
+
 f_setupPanel(table tb, Ctx x, Core c, Setup fs, Setup ins) =>
     if not na(tb)
         string sz = panelSz
@@ -3582,8 +3605,12 @@ f_setupPanel(table tb, Ctx x, Core c, Setup fs, Setup ins) =>
                 topK := k
                 topV := v
         int nAs = assertN.get(0)
-        string stxt = (nAs > 0 ? "⚠" + str.tostring(nAs) + " asserts · " : "") + "READY " + str.tostring(nz(setStats.get("READY"))) + " · ✓" + str.tostring(nz(setStats.get("WIN"))) + " ✕" + str.tostring(nz(setStats.get("SL"))) + (topV > 0 ? " · " + str.lower(topK) + " " + str.tostring(topV) : "")
-        row := f_dashRow(tb, row, "STATS", stxt, C_NEUT, "Whole loaded history: setups that reached READY, trades won (✓, at least TP1) and stopped (✕), and the most frequent reason a setup ended without a trade.\n\n" + all + "\nGRADE_LOW: score below the preset's READY grade · RR_LOW: last target closer than Min RR · SL_TOO_WIDE / SL_TOO_TIGHT: stop outside the limits · NO_POI / POI_IN_PREMIUM / POI_IN_DISCOUNT: no zone of the shift leg on the right side · NO_SHIFT_IN_WINDOW: no CHoCH / BOS after the sweep · SUPERSEDED: replaced by a newer setup · TP1_BEFORE_ENTRY: price ran away (MISSED)", sz)
+        float nT = outN.get(4) + outN.get(5)
+        float rT = nT > 0 ? (outR.get(4) + outR.get(5)) / nT : 0.0
+        string avgT = nT > 0 ? " " + (rT >= 0 ? "+" : "") + str.tostring(rT, "0.0") + "R" : ""
+        string trd = nT > 0 ? "Closed trades (count · won · average R per trade):\n" + f_outLine("A+", 3) + f_outLine("A", 2) + f_outLine("B", 1) + f_outLine("C", 0) + f_outLine("Reversal", 4) + f_outLine("Continuation", 5) + "\n" : ""
+        string stxt = (nAs > 0 ? "⚠" + str.tostring(nAs) + " asserts · " : "") + "READY " + str.tostring(nz(setStats.get("READY"))) + " · ✓" + str.tostring(nz(setStats.get("WIN"))) + " ✕" + str.tostring(nz(setStats.get("SL"))) + avgT + (topV > 0 ? " · " + str.lower(topK) + " " + str.tostring(topV) : "")
+        row := f_dashRow(tb, row, "STATS", stxt, C_NEUT, trd + "Whole loaded history: setups that reached READY, trades won (✓, at least TP1) and stopped (✕), their average realised R, and the most frequent reason a setup ended without a trade. Analytical: entries at the plan price, no slippage or fees.\n\n" + all + "\nGRADE_LOW: score below the preset's READY grade · RR_LOW: last target closer than Min RR · SL_TOO_WIDE / SL_TOO_TIGHT: stop outside the limits · NO_POI / POI_IN_PREMIUM / POI_IN_DISCOUNT: no zone of the shift leg on the right side · NO_SHIFT_IN_WINDOW: no CHoCH / BOS after the sweep · SUPERSEDED: replaced by a newer setup · TP1_BEFORE_ENTRY: price ran away (MISSED)", sz)
         row := f_dashRow(tb, row, "CFG", str.tostring(cfgSig) + " · v" + BUILD, C_NEUT, "Settings signature: must equal the cfg number of SMC Visualizer Pro (Dashboard → CFG row). Different numbers mean the two indicators run the engines with different settings, and the setups do not match the structure on the chart.", sz)
         if row <= SET_PANEL_ROWS - 1
             table.clear(tb, 0, row, 1, SET_PANEL_ROWS - 1)
@@ -3771,8 +3798,8 @@ if barstate.islastconfirmedhistory or (barstate.isrealtime and barstate.isconfir
 // confirmed bar — the alert engine never recomputes detector logic (A-03). No alerts
 // during warm-up (AC-08). Chart-TF structure alerts ignore HTF events (separate conditions).
 // Sweep, OB-touch and FVG-fill alerts also fire for HTF objects: those happen on chart bars,
-// and their events carry tf = HTF1 for logs and the P9 webhook.
-// Setup alerts also send a detailed alert() message; the batched JSON webhook arrives with P9.
+// and their events carry tf = HTF1 for logs and the webhook.
+// SMC Pro · Setups also sends one alert() message per bar close (Text or the JSON envelope, 50_webhook).
 // SMC Visualizer Pro carries the structure / liquidity / zone conditions, SMC Pro · Setups the
 // setup conditions (ADR-13).
 bool alertOk = barstate.isconfirmed and core.warm and core.barEvents.size() > 0
