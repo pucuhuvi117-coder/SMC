@@ -19,8 +19,8 @@
 | 0.6.0 | Analysis & Debug (P10): Event Timeline, Focus / Inspect, «почему нет сетапа» | План |
 
 **Быстрый старт (с v0.4.1 — два индикатора):**
-1. `dist/SMC_Visualizer_Pro.pine` → Pine Editor → New indicator → вставить → **Add to chart**. Структура, ликвидность, зоны, HTF, история, Ribbon, Dashboard, алерты структуры.
-2. `dist/SMC_Pro_Setups.pine` → ещё один новый индикатор → **Add to chart**. Сетапы Entry / SL / TP, скоринг, панель Setup, алерты сетапов.
+1. `dist/SMC_Visualizer_Pro.pine` → Pine Editor → New indicator → **Ctrl+A, Delete** (удалить шаблон редактора: иначе в скрипте два `indicator()`, ошибка CE10243) → вставить файл целиком → **Add to chart**. Структура, ликвидность, зоны, HTF, история, Ribbon, Dashboard, алерты структуры.
+2. `dist/SMC_Pro_Setups.pine` → ещё один новый индикатор → так же Ctrl+A, Delete → вставить → **Add to chart**. Сетапы Entry / SL / TP, скоринг, панель Setup, алерты сетапов.
 3. Настройки движков (структура, ликвидность, OB, FVG, диапазон, сессии, HTF, Advanced) в обоих должны совпадать: число **`cfg`** в панели Setup и в Dashboard SMC Visualizer Pro (Expanded → строка MODE) одинаковое. Иначе сетапы строятся по другой разметке, чем нарисована.
 
 Почему два: один скрипт v0.4.0 перестал укладываться в лимит времени компиляции TradingView (подробно — ADR-13 в [`docs/02-architecture.md`](docs/02-architecture.md#413-реестр-архитектурных-решений-adr)). Чек-лист проверки — [`tests/README.md`](tests/README.md). Как устроен код — [`DEVELOPMENT.md`](DEVELOPMENT.md). Изменения — [`CHANGELOG.md`](CHANGELOG.md).
