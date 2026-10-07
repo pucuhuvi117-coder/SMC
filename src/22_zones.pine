@@ -20,110 +20,113 @@ f_swingBefore(StructState st, int side, int beforeBar) =>
     p
 
 // Order block from a structure break (A.7)
-f_obFromBreak(Core c, array<Zone> zs, Brk b, StructState swSt) =>
-    int dir = b.dir
-    bool ok = bar_index - (b.origBar - OB_NPRE) <= MAXBACK_GUARD
+f_obFromBreak(Core c, array<Zone> zs, Brk b, StructState swSt, bool on) =>
     bool created = false
-    // d: first displacement bar of the impulse (fallback: first candle in break direction)
-    int d = b.firstDisp
-    if ok and na(d)
-        if b.origBar < bar_index
-            for k = b.origBar + 1 to bar_index
-                int off = bar_index - k
-                if (dir == 1 and close[off] > open[off]) or (dir == -1 and close[off] < open[off])
-                    d := k
-                    break
-        if na(d)
-            d := bar_index
-    // j: last opposite candle in [origin - nPre, d - 1]
-    int j = na
-    bool fb = false
-    if ok
-        int lo = math.max(b.origBar - OB_NPRE, d - OB_MAX_SEARCH)
-        int hi = d - 1
-        if hi >= lo
-            for k = hi to lo
-                int off = bar_index - k
-                if (dir == 1 and close[off] < open[off]) or (dir == -1 and close[off] > open[off])
-                    j := k
-                    break
-        if na(j)
-            j := b.origBar
-            fb := true
-    if ok and not na(j)
-        int offJ = bar_index - j
-        float o = open[offJ]
-        float cl = close[offJ]
-        float h = high[offJ]
-        float l = low[offJ]
-        float top = math.max(o, cl)
-        float bot = math.min(o, cl)
-        if i_obZone == ObZone.full
-            top := h
-            bot := l
-        else if i_obZone == ObZone.bodyWick
-            top := dir == 1 ? math.max(o, cl) : h
-            bot := dir == 1 ? l : math.min(o, cl)
-        float sz = top - bot
-        if sz > obMax * vu and i_obZone != ObZone.body
-            top := math.max(o, cl)
-            bot := math.min(o, cl)
-            sz := top - bot
-        bool pass = sz >= obMin * vu and sz <= obMax * vu and sz > 0
-        if pass and i_obReqDisp and b.disp < i_obDispMin
-            pass := false
-        // peak relative volume of the impulse
-        float vrMax = na
-        if pass and hasVolume and d <= bar_index
-            for k = d to bar_index
-                float vr = volRatio[bar_index - k]
-                if not na(vr)
-                    vrMax := na(vrMax) ? vr : math.max(vrMax, vr)
-        if pass and i_volFilter and hasVolume and not na(vrMax) and vrMax < i_volMult
-            pass := false
-        // integrity: closed through before birth → reject; traded into after the impulse → touched
-        bool touched = false
-        if pass and j < bar_index
-            for k = j + 1 to bar_index
-                int off = bar_index - k
-                if (dir == 1 and close[off] < bot) or (dir == -1 and close[off] > top)
-                    pass := false
-                    break
-                if k > d and ((dir == 1 and low[off] <= top) or (dir == -1 and high[off] >= bot))
-                    touched := true
-        // dedupe: the same candle from internal and swing breaks is one OB
-        int tJ = time[offJ]
-        if pass
-            int n = zs.size()
-            if n > 0
-                for i = n - 1 to 0
-                    Zone z = zs.get(i)
-                    if z.tf == TF_CHART and z.kind == ZK_OB and z.dir == dir and z.t == tJ
-                        pass := false
-                        if b.lvl > z.lvl
-                            z.lvl := b.lvl
+    // on: confirmed bar; shadowed internal breaks (a swing break on the same bar) make no OB
+    if on and not na(b) and not b.shadowed
+        int dir = b.dir
+        bool ok = bar_index - (b.origBar - OB_NPRE) <= MAXBACK_GUARD
+        // d: first displacement bar of the impulse (fallback: first candle in break direction)
+        int d = b.firstDisp
+        if ok and na(d)
+            if b.origBar < bar_index
+                for k = b.origBar + 1 to bar_index
+                    int off = bar_index - k
+                    if (dir == 1 and close[off] > open[off]) or (dir == -1 and close[off] < open[off])
+                        d := k
                         break
-        if pass
-            float extRef = b.lvl == LV_SWG ? na : f_swingBefore(swSt, dir, b.origBar)
-            float strength = f_zoneStrength(b.disp, sz, vrMax) * (fb ? 0.7 : 1.0)
-            Zone z = Zone.new(id = f_nextId(c), kind = ZK_OB, dir = dir, state = touched ? ZS_TOUCHED : ZS_FRESH, top = top, bottom = bot, bar = j, t = tJ, born = bar_index, bornT = time, touches = touched ? 1 : 0, strength = strength, disp = b.disp, extRef = extRef, legExt = b.legExt1, brkId = b.id, lvl = b.lvl, tf = TF_CHART, fallback = fb)
-            zs.push(z)
-            f_emit(c, EV_ZONE_NEW, dir, (top + bot) / 2, z.id, b.evId, 2, ZK_OB, top, bot, "OB")
-            created := true
+            if na(d)
+                d := bar_index
+        // j: last opposite candle in [origin - nPre, d - 1]
+        int j = na
+        bool fb = false
+        if ok
+            int lo = math.max(b.origBar - OB_NPRE, d - OB_MAX_SEARCH)
+            int hi = d - 1
+            if hi >= lo
+                for k = hi to lo
+                    int off = bar_index - k
+                    if (dir == 1 and close[off] < open[off]) or (dir == -1 and close[off] > open[off])
+                        j := k
+                        break
+            if na(j)
+                j := b.origBar
+                fb := true
+        if ok and not na(j)
+            int offJ = bar_index - j
+            float o = open[offJ]
+            float cl = close[offJ]
+            float h = high[offJ]
+            float l = low[offJ]
+            float top = math.max(o, cl)
+            float bot = math.min(o, cl)
+            if i_obZone == ObZone.full
+                top := h
+                bot := l
+            else if i_obZone == ObZone.bodyWick
+                top := dir == 1 ? math.max(o, cl) : h
+                bot := dir == 1 ? l : math.min(o, cl)
+            float sz = top - bot
+            if sz > obMax * vu and i_obZone != ObZone.body
+                top := math.max(o, cl)
+                bot := math.min(o, cl)
+                sz := top - bot
+            bool pass = sz >= obMin * vu and sz <= obMax * vu and sz > 0
+            if pass and i_obReqDisp and b.disp < i_obDispMin
+                pass := false
+            // peak relative volume of the impulse
+            float vrMax = na
+            if pass and hasVolume and d <= bar_index
+                for k = d to bar_index
+                    float vr = volRatio[bar_index - k]
+                    if not na(vr)
+                        vrMax := na(vrMax) ? vr : math.max(vrMax, vr)
+            if pass and i_volFilter and hasVolume and not na(vrMax) and vrMax < i_volMult
+                pass := false
+            // integrity: closed through before birth → reject; traded into after the impulse → touched
+            bool touched = false
+            if pass and j < bar_index
+                for k = j + 1 to bar_index
+                    int off = bar_index - k
+                    if (dir == 1 and close[off] < bot) or (dir == -1 and close[off] > top)
+                        pass := false
+                        break
+                    if k > d and ((dir == 1 and low[off] <= top) or (dir == -1 and high[off] >= bot))
+                        touched := true
+            // dedupe: the same candle from internal and swing breaks is one OB
+            int tJ = time[offJ]
+            if pass
+                int n = zs.size()
+                if n > 0
+                    for i = n - 1 to 0
+                        Zone z = zs.get(i)
+                        if z.tf == TF_CHART and z.kind == ZK_OB and z.dir == dir and z.t == tJ
+                            pass := false
+                            if b.lvl > z.lvl
+                                z.lvl := b.lvl
+                            break
+            if pass
+                float extRef = b.lvl == LV_SWG ? na : f_swingBefore(swSt, dir, b.origBar)
+                float strength = f_zoneStrength(b.disp, sz, vrMax) * (fb ? 0.7 : 1.0)
+                Zone z = Zone.new(id = f_nextId(c), kind = ZK_OB, dir = dir, state = touched ? ZS_TOUCHED : ZS_FRESH, top = top, bottom = bot, bar = j, t = tJ, born = bar_index, bornT = time, touches = touched ? 1 : 0, strength = strength, disp = b.disp, extRef = extRef, legExt = b.legExt1, brkId = b.id, lvl = b.lvl, tf = TF_CHART, fallback = fb)
+                zs.push(z)
+                f_emit(c, EV_ZONE_NEW, dir, (top + bot) / 2, z.id, b.evId, 2, ZK_OB, top, bot, "OB")
+                created := true
     created
 
 // Fair value gap on the current (third) candle (A.10)
-f_fvgNew(Core c, array<Zone> zs, int dir) =>
-    float top = dir == 1 ? low : low[2]
-    float bot = dir == 1 ? high[2] : high
-    float sz = top - bot
-    bool disp = dir == 1 ? isDispUp[1] : isDispDn[1]
-    float strength = 0.6 * (disp ? math.min(1.0, body[1] / vu / 2.0) : 0.2) + 0.4 * math.min(1.0, sz / vu)
-    Zone z = Zone.new(id = f_nextId(c), kind = ZK_FVG, dir = dir, state = ZS_FRESH, top = top, bottom = bot, bar = bar_index - 2, t = time[2], born = bar_index, bornT = time, unfilled = dir == 1 ? top : bot, strength = strength, disp = disp ? body[1] / vu : 0.0, lvl = LV_SWG, tf = TF_CHART)
-    zs.push(z)
-    int cause = disp ? (dir == 1 ? c.lastDispUpId : c.lastDispDnId) : na
-    f_emit(c, EV_ZONE_NEW, dir, (top + bot) / 2, z.id, cause, 2, ZK_FVG, top, bot, "FVG")
-    z
+f_fvgNew(Core c, array<Zone> zs, int dir, bool on) =>
+    if on
+        float top = dir == 1 ? low : low[2]
+        float bot = dir == 1 ? high[2] : high
+        float sz = top - bot
+        bool disp = dir == 1 ? isDispUp[1] : isDispDn[1]
+        float strength = 0.6 * (disp ? math.min(1.0, body[1] / vu / 2.0) : 0.2) + 0.4 * math.min(1.0, sz / vu)
+        Zone z = Zone.new(id = f_nextId(c), kind = ZK_FVG, dir = dir, state = ZS_FRESH, top = top, bottom = bot, bar = bar_index - 2, t = time[2], born = bar_index, bornT = time, unfilled = dir == 1 ? top : bot, strength = strength, disp = disp ? body[1] / vu : 0.0, lvl = LV_SWG, tf = TF_CHART)
+        zs.push(z)
+        int cause = disp ? (dir == 1 ? c.lastDispUpId : c.lastDispDnId) : na
+        f_emit(c, EV_ZONE_NEW, dir, (top + bot) / 2, z.id, cause, 2, ZK_FVG, top, bot, "FVG")
+    on
 
 f_zoneEvent(Core c, Zone z, int typ, int tier, float v2 = na) =>
     f_emit(c, typ, z.dir, close, z.id, na, tier, z.kind, v2, z.touches, f_kindTag(z.kind), z.tf)

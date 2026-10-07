@@ -4,6 +4,13 @@
 // with presets (§9.5–9.6). Runs on confirmed bars after the Context engine: it reads the event
 // bus and the registries and emits SETUP_* events. Analytical in v1.0: nothing is executed.
 
+// Outcome and rejection counters over the whole history, shown by the Setup panel ("why so few
+// setups", §19.1): READY, WIN / SL, and the first word of every reason a setup ended without a trade
+var map<string, int> setStats = map.new<string, int>()
+
+f_statAdd(string k) =>
+    setStats.put(k, nz(setStats.get(k)) + 1)
+
 f_modelName(int m) =>
     m == SM_REV ? "Sweep Reversal" : "Continuation"
 
@@ -41,6 +48,7 @@ f_setEmit(Core c, Setup s, int typ, float price, float v1 = na, float v2 = na, f
 // Terminal transition before entry (INVALID / EXPIRED / MISSED). Only setups that were shown
 // (a POI was chosen) report it on the bus.
 f_setEnd(Core c, Setup s, int st, string why) =>
+    f_statAdd(why == "" ? "UNKNOWN" : str.split(why, " ").first())
     s.state := st
     s.reason := why
     s.endBar := bar_index
@@ -475,6 +483,7 @@ f_setAdvance(Core c, Setup s, StructState sw, StructState si, array<Liq> lv, arr
                 s.stageBar := bar_index
                 s.readyBar := bar_index
                 s.readyT := time
+                f_statAdd("READY")
                 f_setEmit(c, s, EV_SETUP_READY, s.entry, s.score, s.rrFinal, s.grade, s.chain)
             else if bar_index - s.stageBar >= i_expiry
                 endSt := SS_EXPIRED
@@ -517,6 +526,7 @@ f_setAdvance(Core c, Setup s, StructState sw, StructState si, array<Liq> lv, arr
             s.rReal += left * rSl
             s.state := s.tpHit > 0 ? SS_WIN : SS_SL
             s.reason := s.be ? "BE" : "SL"
+            f_statAdd(s.tpHit > 0 ? "WIN" : "SL")
             s.endBar := bar_index
             s.endT := time
             f_setEmit(c, s, EV_SETUP_SL, s.sl, rSl, s.rReal)
@@ -532,6 +542,7 @@ f_setAdvance(Core c, Setup s, StructState sw, StructState si, array<Liq> lv, arr
                         s.sl := s.entry
                         s.be := true
             if s.tpHit >= s.nTp
+                f_statAdd("WIN")
                 s.state := SS_WIN
                 s.reason := "TP" + str.tostring(s.nTp)
                 s.endBar := bar_index

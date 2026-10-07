@@ -1,6 +1,6 @@
 //@version=6
 // ═══════════════════════════════════════════════════════════════════════════════
-//  SMC Visualizer Pro · build 0.5.0 · 2026-10-07
+//  SMC Visualizer Pro · build 0.5.1 · 2026-10-07
 //  Structure, liquidity, zones and context. Setups live in the companion "SMC Pro · Setups" (ADR-13).
 //  Generated from /src by build/build.py. Do not edit dist/ by hand.
 //  Architecture: docs/02-architecture.md · Detectors: docs/appendix-a-detection-spec.md
@@ -8,7 +8,7 @@
 indicator("SMC Visualizer Pro", shorttitle = "SMC Pro", overlay = true, max_boxes_count = 500, max_lines_count = 500, max_labels_count = 500)
 
 // ═══ 01 · CONSTANTS ═════════════════════════════════════════════════════════════
-BUILD = "0.5.0"
+BUILD = "0.5.1"
 
 // Timeframe slots (docs §8.2). v0.1 computes the chart TF only; HTF arrives with the HTF Feed (P5).
 TF_CHART = 0
@@ -118,7 +118,7 @@ GR_AP = 3
 SETUP_CAP = 12
 SETUP_ARCH_CAP = 80
 DASH_ROWS = 22
-SET_PANEL_ROWS = 6
+SET_PANEL_ROWS = 7
 
 // Fixed detector parameters (Appendix A.19)
 OB_NPRE = 3
@@ -1374,53 +1374,55 @@ f_makeSwing(Core c, StructState st, int side, float price) =>
     sw
 
 // Rebuild the up-leg tracker from the new reference high: origin = lowest low since the pivot
-f_resetUpLeg(StructState st) =>
-    int k0 = bar_index - st.refHigh.bar
-    float mn = na
-    int mb = na
-    int mt = na
-    for k = k0 to 0
-        if na(mn) or low[k] < mn
-            mn := low[k]
-            mb := bar_index - k
-            mt := time[k]
-    float lh = na
-    int fd = na
-    int k1 = bar_index - mb
-    for k = k1 to 0
-        lh := na(lh) ? high[k] : math.max(lh, high[k])
-        if k < k1 and na(fd) and isDispUp[k]
-            fd := bar_index - k
-    st.upOrigLow := mn
-    st.upOrigBar := mb
-    st.upOrigT := mt
-    st.upLegHigh := lh
-    st.upFirstDisp := fd
+f_resetUpLeg(StructState st, bool on) =>
+    if on
+        int k0 = bar_index - st.refHigh.bar
+        float mn = na
+        int mb = na
+        int mt = na
+        for k = k0 to 0
+            if na(mn) or low[k] < mn
+                mn := low[k]
+                mb := bar_index - k
+                mt := time[k]
+        float lh = na
+        int fd = na
+        int k1 = bar_index - mb
+        for k = k1 to 0
+            lh := na(lh) ? high[k] : math.max(lh, high[k])
+            if k < k1 and na(fd) and isDispUp[k]
+                fd := bar_index - k
+        st.upOrigLow := mn
+        st.upOrigBar := mb
+        st.upOrigT := mt
+        st.upLegHigh := lh
+        st.upFirstDisp := fd
     true
 
 // Mirror: down-leg origin = highest high since the reference low
-f_resetDnLeg(StructState st) =>
-    int k0 = bar_index - st.refLow.bar
-    float mx = na
-    int mb = na
-    int mt = na
-    for k = k0 to 0
-        if na(mx) or high[k] > mx
-            mx := high[k]
-            mb := bar_index - k
-            mt := time[k]
-    float ll = na
-    int fd = na
-    int k1 = bar_index - mb
-    for k = k1 to 0
-        ll := na(ll) ? low[k] : math.min(ll, low[k])
-        if k < k1 and na(fd) and isDispDn[k]
-            fd := bar_index - k
-    st.dnOrigHigh := mx
-    st.dnOrigBar := mb
-    st.dnOrigT := mt
-    st.dnLegLow := ll
-    st.dnFirstDisp := fd
+f_resetDnLeg(StructState st, bool on) =>
+    if on
+        int k0 = bar_index - st.refLow.bar
+        float mx = na
+        int mb = na
+        int mt = na
+        for k = k0 to 0
+            if na(mx) or high[k] > mx
+                mx := high[k]
+                mb := bar_index - k
+                mt := time[k]
+        float ll = na
+        int fd = na
+        int k1 = bar_index - mb
+        for k = k1 to 0
+            ll := na(ll) ? low[k] : math.min(ll, low[k])
+            if k < k1 and na(fd) and isDispDn[k]
+                fd := bar_index - k
+        st.dnOrigHigh := mx
+        st.dnOrigBar := mb
+        st.dnOrigT := mt
+        st.dnLegLow := ll
+        st.dnFirstDisp := fd
     true
 
 // Incremental leg tracking on every confirmed bar
@@ -1504,33 +1506,36 @@ f_breakDn(Core c, StructState st) =>
     st.newDn := b
     b
 
-// One confirmed-bar step for a structure level
-f_structStep(Core c, StructState st, float ph, float pl) =>
-    st.newUp := na
-    st.newDn := na
-    st.newHigh := na
-    st.newLow := na
-    f_trackLegs(st)
-    if not na(ph)
-        Swing swH = f_makeSwing(c, st, 1, ph)
-        st.refHigh := swH
-        st.newHigh := swH
-        f_resetUpLeg(st)
-    if not na(pl)
+// One confirmed-bar step for a structure level. Called on every calculation with on = confirmed
+// bar (CW10003): functions that read the bar history are never called from a conditional scope.
+f_structStep(Core c, StructState st, float ph, float pl, bool on) =>
+    if on
+        st.newUp := na
+        st.newDn := na
+        st.newHigh := na
+        st.newLow := na
+        f_trackLegs(st)
+        if not na(ph)
+            Swing swH = f_makeSwing(c, st, 1, ph)
+            st.refHigh := swH
+            st.newHigh := swH
+    f_resetUpLeg(st, on and not na(ph))
+    if on and not na(pl)
         Swing swL = f_makeSwing(c, st, -1, pl)
         st.refLow := swL
         st.newLow := swL
-        f_resetDnLeg(st)
-    float srcUp = i_brk == BreakSrc.wick ? high : close
-    float srcDn = i_brk == BreakSrc.wick ? low : close
-    Swing rh = st.refHigh
-    if not na(rh)
-        if not rh.broken and srcUp > rh.price
-            f_breakUp(c, st)
-    Swing rl = st.refLow
-    if not na(rl)
-        if not rl.broken and srcDn < rl.price
-            f_breakDn(c, st)
+    f_resetDnLeg(st, on and not na(pl))
+    if on
+        float srcUp = i_brk == BreakSrc.wick ? high : close
+        float srcDn = i_brk == BreakSrc.wick ? low : close
+        Swing rh = st.refHigh
+        if not na(rh)
+            if not rh.broken and srcUp > rh.price
+                f_breakUp(c, st)
+        Swing rl = st.refLow
+        if not na(rl)
+            if not rl.broken and srcDn < rl.price
+                f_breakDn(c, st)
     true
 
 // ═══ 21 · LIQUIDITY ENGINE ══════════════════════════════════════════════════════
@@ -1711,110 +1716,113 @@ f_swingBefore(StructState st, int side, int beforeBar) =>
     p
 
 // Order block from a structure break (A.7)
-f_obFromBreak(Core c, array<Zone> zs, Brk b, StructState swSt) =>
-    int dir = b.dir
-    bool ok = bar_index - (b.origBar - OB_NPRE) <= MAXBACK_GUARD
+f_obFromBreak(Core c, array<Zone> zs, Brk b, StructState swSt, bool on) =>
     bool created = false
-    // d: first displacement bar of the impulse (fallback: first candle in break direction)
-    int d = b.firstDisp
-    if ok and na(d)
-        if b.origBar < bar_index
-            for k = b.origBar + 1 to bar_index
-                int off = bar_index - k
-                if (dir == 1 and close[off] > open[off]) or (dir == -1 and close[off] < open[off])
-                    d := k
-                    break
-        if na(d)
-            d := bar_index
-    // j: last opposite candle in [origin - nPre, d - 1]
-    int j = na
-    bool fb = false
-    if ok
-        int lo = math.max(b.origBar - OB_NPRE, d - OB_MAX_SEARCH)
-        int hi = d - 1
-        if hi >= lo
-            for k = hi to lo
-                int off = bar_index - k
-                if (dir == 1 and close[off] < open[off]) or (dir == -1 and close[off] > open[off])
-                    j := k
-                    break
-        if na(j)
-            j := b.origBar
-            fb := true
-    if ok and not na(j)
-        int offJ = bar_index - j
-        float o = open[offJ]
-        float cl = close[offJ]
-        float h = high[offJ]
-        float l = low[offJ]
-        float top = math.max(o, cl)
-        float bot = math.min(o, cl)
-        if i_obZone == ObZone.full
-            top := h
-            bot := l
-        else if i_obZone == ObZone.bodyWick
-            top := dir == 1 ? math.max(o, cl) : h
-            bot := dir == 1 ? l : math.min(o, cl)
-        float sz = top - bot
-        if sz > obMax * vu and i_obZone != ObZone.body
-            top := math.max(o, cl)
-            bot := math.min(o, cl)
-            sz := top - bot
-        bool pass = sz >= obMin * vu and sz <= obMax * vu and sz > 0
-        if pass and i_obReqDisp and b.disp < i_obDispMin
-            pass := false
-        // peak relative volume of the impulse
-        float vrMax = na
-        if pass and hasVolume and d <= bar_index
-            for k = d to bar_index
-                float vr = volRatio[bar_index - k]
-                if not na(vr)
-                    vrMax := na(vrMax) ? vr : math.max(vrMax, vr)
-        if pass and i_volFilter and hasVolume and not na(vrMax) and vrMax < i_volMult
-            pass := false
-        // integrity: closed through before birth → reject; traded into after the impulse → touched
-        bool touched = false
-        if pass and j < bar_index
-            for k = j + 1 to bar_index
-                int off = bar_index - k
-                if (dir == 1 and close[off] < bot) or (dir == -1 and close[off] > top)
-                    pass := false
-                    break
-                if k > d and ((dir == 1 and low[off] <= top) or (dir == -1 and high[off] >= bot))
-                    touched := true
-        // dedupe: the same candle from internal and swing breaks is one OB
-        int tJ = time[offJ]
-        if pass
-            int n = zs.size()
-            if n > 0
-                for i = n - 1 to 0
-                    Zone z = zs.get(i)
-                    if z.tf == TF_CHART and z.kind == ZK_OB and z.dir == dir and z.t == tJ
-                        pass := false
-                        if b.lvl > z.lvl
-                            z.lvl := b.lvl
+    // on: confirmed bar; shadowed internal breaks (a swing break on the same bar) make no OB
+    if on and not na(b) and not b.shadowed
+        int dir = b.dir
+        bool ok = bar_index - (b.origBar - OB_NPRE) <= MAXBACK_GUARD
+        // d: first displacement bar of the impulse (fallback: first candle in break direction)
+        int d = b.firstDisp
+        if ok and na(d)
+            if b.origBar < bar_index
+                for k = b.origBar + 1 to bar_index
+                    int off = bar_index - k
+                    if (dir == 1 and close[off] > open[off]) or (dir == -1 and close[off] < open[off])
+                        d := k
                         break
-        if pass
-            float extRef = b.lvl == LV_SWG ? na : f_swingBefore(swSt, dir, b.origBar)
-            float strength = f_zoneStrength(b.disp, sz, vrMax) * (fb ? 0.7 : 1.0)
-            Zone z = Zone.new(id = f_nextId(c), kind = ZK_OB, dir = dir, state = touched ? ZS_TOUCHED : ZS_FRESH, top = top, bottom = bot, bar = j, t = tJ, born = bar_index, bornT = time, touches = touched ? 1 : 0, strength = strength, disp = b.disp, extRef = extRef, legExt = b.legExt1, brkId = b.id, lvl = b.lvl, tf = TF_CHART, fallback = fb)
-            zs.push(z)
-            f_emit(c, EV_ZONE_NEW, dir, (top + bot) / 2, z.id, b.evId, 2, ZK_OB, top, bot, "OB")
-            created := true
+            if na(d)
+                d := bar_index
+        // j: last opposite candle in [origin - nPre, d - 1]
+        int j = na
+        bool fb = false
+        if ok
+            int lo = math.max(b.origBar - OB_NPRE, d - OB_MAX_SEARCH)
+            int hi = d - 1
+            if hi >= lo
+                for k = hi to lo
+                    int off = bar_index - k
+                    if (dir == 1 and close[off] < open[off]) or (dir == -1 and close[off] > open[off])
+                        j := k
+                        break
+            if na(j)
+                j := b.origBar
+                fb := true
+        if ok and not na(j)
+            int offJ = bar_index - j
+            float o = open[offJ]
+            float cl = close[offJ]
+            float h = high[offJ]
+            float l = low[offJ]
+            float top = math.max(o, cl)
+            float bot = math.min(o, cl)
+            if i_obZone == ObZone.full
+                top := h
+                bot := l
+            else if i_obZone == ObZone.bodyWick
+                top := dir == 1 ? math.max(o, cl) : h
+                bot := dir == 1 ? l : math.min(o, cl)
+            float sz = top - bot
+            if sz > obMax * vu and i_obZone != ObZone.body
+                top := math.max(o, cl)
+                bot := math.min(o, cl)
+                sz := top - bot
+            bool pass = sz >= obMin * vu and sz <= obMax * vu and sz > 0
+            if pass and i_obReqDisp and b.disp < i_obDispMin
+                pass := false
+            // peak relative volume of the impulse
+            float vrMax = na
+            if pass and hasVolume and d <= bar_index
+                for k = d to bar_index
+                    float vr = volRatio[bar_index - k]
+                    if not na(vr)
+                        vrMax := na(vrMax) ? vr : math.max(vrMax, vr)
+            if pass and i_volFilter and hasVolume and not na(vrMax) and vrMax < i_volMult
+                pass := false
+            // integrity: closed through before birth → reject; traded into after the impulse → touched
+            bool touched = false
+            if pass and j < bar_index
+                for k = j + 1 to bar_index
+                    int off = bar_index - k
+                    if (dir == 1 and close[off] < bot) or (dir == -1 and close[off] > top)
+                        pass := false
+                        break
+                    if k > d and ((dir == 1 and low[off] <= top) or (dir == -1 and high[off] >= bot))
+                        touched := true
+            // dedupe: the same candle from internal and swing breaks is one OB
+            int tJ = time[offJ]
+            if pass
+                int n = zs.size()
+                if n > 0
+                    for i = n - 1 to 0
+                        Zone z = zs.get(i)
+                        if z.tf == TF_CHART and z.kind == ZK_OB and z.dir == dir and z.t == tJ
+                            pass := false
+                            if b.lvl > z.lvl
+                                z.lvl := b.lvl
+                            break
+            if pass
+                float extRef = b.lvl == LV_SWG ? na : f_swingBefore(swSt, dir, b.origBar)
+                float strength = f_zoneStrength(b.disp, sz, vrMax) * (fb ? 0.7 : 1.0)
+                Zone z = Zone.new(id = f_nextId(c), kind = ZK_OB, dir = dir, state = touched ? ZS_TOUCHED : ZS_FRESH, top = top, bottom = bot, bar = j, t = tJ, born = bar_index, bornT = time, touches = touched ? 1 : 0, strength = strength, disp = b.disp, extRef = extRef, legExt = b.legExt1, brkId = b.id, lvl = b.lvl, tf = TF_CHART, fallback = fb)
+                zs.push(z)
+                f_emit(c, EV_ZONE_NEW, dir, (top + bot) / 2, z.id, b.evId, 2, ZK_OB, top, bot, "OB")
+                created := true
     created
 
 // Fair value gap on the current (third) candle (A.10)
-f_fvgNew(Core c, array<Zone> zs, int dir) =>
-    float top = dir == 1 ? low : low[2]
-    float bot = dir == 1 ? high[2] : high
-    float sz = top - bot
-    bool disp = dir == 1 ? isDispUp[1] : isDispDn[1]
-    float strength = 0.6 * (disp ? math.min(1.0, body[1] / vu / 2.0) : 0.2) + 0.4 * math.min(1.0, sz / vu)
-    Zone z = Zone.new(id = f_nextId(c), kind = ZK_FVG, dir = dir, state = ZS_FRESH, top = top, bottom = bot, bar = bar_index - 2, t = time[2], born = bar_index, bornT = time, unfilled = dir == 1 ? top : bot, strength = strength, disp = disp ? body[1] / vu : 0.0, lvl = LV_SWG, tf = TF_CHART)
-    zs.push(z)
-    int cause = disp ? (dir == 1 ? c.lastDispUpId : c.lastDispDnId) : na
-    f_emit(c, EV_ZONE_NEW, dir, (top + bot) / 2, z.id, cause, 2, ZK_FVG, top, bot, "FVG")
-    z
+f_fvgNew(Core c, array<Zone> zs, int dir, bool on) =>
+    if on
+        float top = dir == 1 ? low : low[2]
+        float bot = dir == 1 ? high[2] : high
+        float sz = top - bot
+        bool disp = dir == 1 ? isDispUp[1] : isDispDn[1]
+        float strength = 0.6 * (disp ? math.min(1.0, body[1] / vu / 2.0) : 0.2) + 0.4 * math.min(1.0, sz / vu)
+        Zone z = Zone.new(id = f_nextId(c), kind = ZK_FVG, dir = dir, state = ZS_FRESH, top = top, bottom = bot, bar = bar_index - 2, t = time[2], born = bar_index, bornT = time, unfilled = dir == 1 ? top : bot, strength = strength, disp = disp ? body[1] / vu : 0.0, lvl = LV_SWG, tf = TF_CHART)
+        zs.push(z)
+        int cause = disp ? (dir == 1 ? c.lastDispUpId : c.lastDispDnId) : na
+        f_emit(c, EV_ZONE_NEW, dir, (top + bot) / 2, z.id, cause, 2, ZK_FVG, top, bot, "FVG")
+    on
 
 f_zoneEvent(Core c, Zone z, int typ, int tier, float v2 = na) =>
     f_emit(c, typ, z.dir, close, z.id, na, tier, z.kind, v2, z.touches, f_kindTag(z.kind), z.tf)
@@ -2479,6 +2487,10 @@ f_drawZone(BoxPool pz, LinePool pm, array<Tag> tags, Zone z, float r, int mergeN
     int borderBase = not liveNow ? OP_SOFT : z.state == ZS_FRESH ? (htf ? OP_STRONG : OP_MEDIUM) : OP_SOFT
     string bst = z.kind == ZK_BB or z.kind == ZK_IFVG ? line.style_dashed : z.kind == ZK_MB or z.kind == ZK_FVG or z.state == ZS_MITIGATED or not liveNow ? line.style_dotted : line.style_solid
     int fT = ghost ? F_GHOST : f_tr(fillBase, r)
+    // v0.5.1: a zone taller than 2 ATR (typically a higher-timeframe OB) keeps its border but only a
+    // wash fill, so it does not bury the chart-timeframe zones and setups inside it
+    if not ghost and z.top - z.bottom > 2.0 * vu
+        fT := math.max(fT, F_WASH)
     color fillC = color.new(hue, fT)
     color bdC = hasBorder ? color.new(hue, ghost ? f_tok(85) : f_tr(borderBase, r)) : color(na)
     float top = z.top
@@ -3102,10 +3114,11 @@ f_dashboard(table tb, Ctx x, Core c, StructState si, Range r, bool liveView) =>
         if exp
             string inT = x.inTrend == 1 ? "BULLISH" : x.inTrend == -1 ? "BEARISH" : "—"
             row := f_dashRow(tb, row, "INTERNAL", inT, f_dirColor(x.inTrend), "Internal structure trend", sz)
-            row := f_dashRow(tb, row, "MODE", str.tostring(i_mode) + " · v" + BUILD + " · cfg " + str.tostring(cfgSig), C_NEUT, "Display mode, build and the settings signature cfg: SMC Pro · Setups must show the same cfg number, otherwise its setups are built on different structure, liquidity or zone settings", sz)
+            row := f_dashRow(tb, row, "MODE", str.tostring(i_mode) + " · v" + BUILD, C_NEUT, "Display mode and build", sz)
         string stt = f_statusText(c, liveView)
         if stt != ""
             row := f_dashRow(tb, row, "STATUS", stt, C_WARN, "Signals and alerts are suppressed during warm-up", sz)
+        row := f_dashRow(tb, row, "CFG", str.tostring(cfgSig), C_NEUT, "Settings signature of the engines: SMC Pro · Setups must show the same cfg number in its panel, otherwise its setups are built on different structure, liquidity or zone settings", sz)
         if mc.labelLevel >= 3 and exp
             int nh = c.history.size()
             int shown = 0
@@ -3181,7 +3194,11 @@ var array<float> histClose = array.new<float>()
 var array<float> histAtr = array.new<float>()
 var int histBase = 0
 
-if barstate.isconfirmed
+// Engine steps that read the bar history are called on every calculation with the confirmed-bar
+// flag cf and do their work only when it is set (CW10003); everything else stays in `if cf` blocks.
+// The order of the steps is the fixed pipeline order (docs §4.5).
+bool cf = barstate.isconfirmed
+if cf
     core.barEvents.clear()
     confClose := close
     histClose.push(close)
@@ -3210,11 +3227,12 @@ if barstate.isconfirmed
     if sesOk
         for q = 0 to 2
             f_sessStep(core, q == 0 ? sAsia : q == 1 ? sLon : sNy, q == 0 ? inAsia : q == 1 ? inLon : inNy, liqs, sessHist)
-    // Structure: internal, then swing
-    for q = 0 to 1
-        f_structStep(core, q == 0 ? stI : stS, q == 0 ? phI : phS, q == 0 ? plI : plS)
-    Brk iUp = stI.newUp
-    Brk iDn = stI.newDn
+// Structure: internal, then swing
+f_structStep(core, stI, phI, plI, cf)
+f_structStep(core, stS, phS, plS, cf)
+Brk iUp = stI.newUp
+Brk iDn = stI.newDn
+if cf
     if not na(iUp) and not na(stS.newUp)
         iUp.shadowed := true
     if not na(iDn) and not na(stS.newDn)
@@ -3257,16 +3275,14 @@ if barstate.isconfirmed
             f_zoneAddHtf(core, zones, ZK_FVG, hFvgDir, hFvgTop, hFvgBot, hFvgT)
     // Zones: lifecycle of live zones (finished ones go to the archive), then births on this bar
     f_zoneStep(core, zones, zoneArch)
-    if fvgUp
-        f_fvgNew(core, zones, 1)
-    if fvgDn
-        f_fvgNew(core, zones, -1)
-    // order: swing up, swing down, then internal up, internal down (internal only if enabled and not shadowed by a swing break)
-    for q = 0 to 3
-        Brk obB = q == 0 ? stS.newUp : q == 1 ? stS.newDn : q == 2 ? iUp : iDn
-        if not na(obB) and (q < 2 or i_obInternal)
-            if not obB.shadowed
-                f_obFromBreak(core, zones, obB, stS)
+f_fvgNew(core, zones, 1, cf and fvgUp)
+f_fvgNew(core, zones, -1, cf and fvgDn)
+// order: swing up, swing down, then internal up, internal down (internal only if enabled and not shadowed by a swing break)
+f_obFromBreak(core, zones, stS.newUp, stS, cf)
+f_obFromBreak(core, zones, stS.newDn, stS, cf)
+f_obFromBreak(core, zones, iUp, stS, cf and i_obInternal)
+f_obFromBreak(core, zones, iDn, stS, cf and i_obInternal)
+if cf
     // Context
     f_rangeStep(core, rng, stS, rangeArch)
     float pdNow = f_pdStep(core, rng)

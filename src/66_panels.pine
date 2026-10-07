@@ -114,10 +114,11 @@ f_dashboard(table tb, Ctx x, Core c, StructState si, Range r, bool liveView) =>
         if exp
             string inT = x.inTrend == 1 ? "BULLISH" : x.inTrend == -1 ? "BEARISH" : "—"
             row := f_dashRow(tb, row, "INTERNAL", inT, f_dirColor(x.inTrend), "Internal structure trend", sz)
-            row := f_dashRow(tb, row, "MODE", str.tostring(i_mode) + " · v" + BUILD + " · cfg " + str.tostring(cfgSig), C_NEUT, "Display mode, build and the settings signature cfg: SMC Pro · Setups must show the same cfg number, otherwise its setups are built on different structure, liquidity or zone settings", sz)
+            row := f_dashRow(tb, row, "MODE", str.tostring(i_mode) + " · v" + BUILD, C_NEUT, "Display mode and build", sz)
         string stt = f_statusText(c, liveView)
         if stt != ""
             row := f_dashRow(tb, row, "STATUS", stt, C_WARN, "Signals and alerts are suppressed during warm-up", sz)
+        row := f_dashRow(tb, row, "CFG", str.tostring(cfgSig), C_NEUT, "Settings signature of the engines: SMC Pro · Setups must show the same cfg number in its panel, otherwise its setups are built on different structure, liquidity or zone settings", sz)
         if mc.labelLevel >= 3 and exp
             int nh = c.history.size()
             int shown = 0
@@ -197,6 +198,19 @@ f_setupPanel(table tb, Ctx x, Core c, bool liveView, Setup fs) =>
         string stt = f_statusText(c, liveView)
         if stt != ""
             row := f_dashRow(tb, row, "STATUS", stt, C_WARN, "Setups and alerts are suppressed during warm-up; the panel always describes the latest bar", sz)
+        // history: READY count, outcomes, and the most frequent reason a setup ended without a trade
+        string topK = ""
+        int topV = 0
+        string all = ""
+        array<string> ks = setStats.keys()
+        for k in ks
+            int v = setStats.get(k)
+            all := all + k + "  " + str.tostring(v) + "\n"
+            if k != "READY" and k != "WIN" and k != "SL" and v > topV
+                topK := k
+                topV := v
+        string stxt = "READY " + str.tostring(nz(setStats.get("READY"))) + " · ✓" + str.tostring(nz(setStats.get("WIN"))) + " ✕" + str.tostring(nz(setStats.get("SL"))) + (topV > 0 ? " · " + str.lower(topK) + " " + str.tostring(topV) : "")
+        row := f_dashRow(tb, row, "STATS", stxt, C_NEUT, "Whole loaded history: setups that reached READY, trades won (✓, at least TP1) and stopped (✕), and the most frequent reason a setup ended without a trade.\n\n" + all + "\nGRADE_LOW: score below the preset's READY grade · RR_LOW: last target closer than Min RR · SL_TOO_WIDE / SL_TOO_TIGHT: stop outside the limits · NO_POI / POI_IN_PREMIUM / POI_IN_DISCOUNT: no zone of the shift leg on the right side · NO_SHIFT_IN_WINDOW: no CHoCH / BOS after the sweep · SUPERSEDED: replaced by a newer setup · TP1_BEFORE_ENTRY: price ran away (MISSED)", sz)
         row := f_dashRow(tb, row, "CFG", str.tostring(cfgSig) + " · v" + BUILD, C_NEUT, "Settings signature: must equal the cfg number of SMC Visualizer Pro (Dashboard Expanded → MODE row). Different numbers mean the two indicators run the engines with different settings, and the setups do not match the structure on the chart.", sz)
         if row <= SET_PANEL_ROWS - 1
             table.clear(tb, 0, row, 1, SET_PANEL_ROWS - 1)
